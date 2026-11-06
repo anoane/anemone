@@ -1,0 +1,101 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Qualification records for the engine's two-parity, single-writer exchange protocol. */
+#ifndef TRANSPORT_MAILBOX_RECORDS_H
+#define TRANSPORT_MAILBOX_RECORDS_H
+#include <stdint.h>
+#include "anemone/exchange_records.h"
+
+#define TRANSPORT_PARTICIPANTS 2u
+#define TRANSPORT_THREADS 256u
+#define TRANSPORT_CONTROL_BYTES 4096u
+#define TRANSPORT_MAXIMUM_PAYLOAD (8u * 1024u * 1024u)
+#define TRANSPORT_HEADER_BYTES (2u * EXCHANGE_LINE_BYTES)
+#define TRANSPORT_SLOT_STRIDE                                 \
+	(TRANSPORT_HEADER_BYTES + TRANSPORT_MAXIMUM_PAYLOAD + \
+	 EXCHANGE_LINE_BYTES)
+#define TRANSPORT_MAILBOX_BYTES (TRANSPORT_CONTROL_BYTES + TRANSPORT_PARTICIPANTS * TRANSPORT_SLOT_STRIDE)
+#define TRANSPORT_CREDIT_OFFSET EXCHANGE_LINE_BYTES
+#define TRANSPORT_PAYLOAD_OFFSET TRANSPORT_HEADER_BYTES
+#define TRANSPORT_VECTOR_WORDS 4u
+#define TRANSPORT_PATTERN_MULTIPLIER 2654435761u
+#define TRANSPORT_PATTERN_SEED 0xa517c2d9u
+#define TRANSPORT_SITE 6u
+#define TRANSPORT_STATUS_BYTES 40u
+#define TRANSPORT_READY_OFFSET 128u
+#define TRANSPORT_ARGUMENT_BYTES 104u
+#define TRANSPORT_TEST_COUNT 10u
+#define TRANSPORT_SAMPLE_COUNT 20u
+#define TRANSPORT_WARMUP_SAMPLES 1u
+#define TRANSPORT_SMALL_ROUNDS 512u
+#define TRANSPORT_LARGE_ROUNDS 32u
+#define TRANSPORT_LARGE_BOUNDARY (256u * 1024u)
+#define TRANSPORT_NANOSECONDS_PER_SECOND 1000000000ull
+#define TRANSPORT_WAIT_NANOSECONDS 250000000ull
+#define TRANSPORT_HOST_WAIT_NANOSECONDS (60ull * TRANSPORT_NANOSECONDS_PER_SECOND)
+#define TRANSPORT_DECIMAL_BASE 10
+#define TRANSPORT_BUS_TEXT_BYTES 32u
+#define TRANSPORT_MICROSECONDS_PER_NANOSECOND 0.001
+#define TRANSPORT_WORD_BYTES 4u
+#define TRANSPORT_CORRUPT_SEQUENCE 2u
+#define TRANSPORT_VARIANT_COUNT 8u
+#define TRANSPORT_CHECK_ROUNDS 4u
+#define TRANSPORT_ARGUMENT_COUNT 5
+#define TRANSPORT_VMM_ARGUMENT_COUNT 6
+#define TRANSPORT_ARGUMENT_MAILBOX 2
+#define TRANSPORT_ARGUMENT_MODULE 3
+#define TRANSPORT_ARGUMENT_SENDER 4
+#define TRANSPORT_ARGUMENT_ROUTE 5
+#define TRANSPORT_HOST_POLL_NANOSECONDS 1000000
+#define TRANSPORT_TEN_KIB 10240u
+#define TRANSPORT_FORTY_KIB 40960u
+#define TRANSPORT_EIGHTY_KIB 81920u
+#define TRANSPORT_ONE_MIB 1048576u
+enum transport_kernel {
+    TRANSPORT_KERNEL_TIMED, TRANSPORT_KERNEL_CACHED, TRANSPORT_KERNEL_VALIDATE,
+    TRANSPORT_KERNEL_CACHED_VALIDATE, TRANSPORT_KERNEL_FAULT, TRANSPORT_KERNEL_COUNT
+};
+
+enum transport_fault {
+    TRANSPORT_FAULT_NONE,
+    TRANSPORT_FAULT_PAYLOAD,
+    TRANSPORT_FAULT_TRAILER_SEQUENCE,
+    TRANSPORT_FAULT_TRAILER_SIZE,
+    TRANSPORT_FAULT_AHEAD,
+    TRANSPORT_FAULT_MISSING_SENDER
+};
+enum transport_failure {
+    TRANSPORT_FAILURE_NONE,
+    TRANSPORT_FAILURE_LATE,
+    TRANSPORT_FAILURE_AHEAD,
+    TRANSPORT_FAILURE_TRAILER,
+    TRANSPORT_FAILURE_PAYLOAD
+};
+struct transport_status {
+    uint64_t sequence;
+    uint64_t seen;
+    uint64_t mismatched_vectors;
+    uint64_t elapsed_nanoseconds;
+    uint32_t completed;
+    uint32_t failure;
+};
+struct transport_arguments {
+    uint64_t mailbox;
+    uint64_t control;
+    uint64_t credit;
+    uint64_t input;
+    uint64_t output;
+    uint64_t status;
+    uint64_t sequence_base;
+    uint64_t deadline_nanoseconds;
+    uint64_t parity_stride;
+    uint64_t credit_parity_stride;
+    uint32_t byte_count;
+    uint32_t round_count;
+    uint32_t role;
+    uint32_t fault;
+    uint32_t sender;
+    uint32_t reserved_zero;
+};
+STEP_RECORD_HAS(transport_status, TRANSPORT_STATUS_BYTES);
+STEP_RECORD_HAS(transport_arguments, TRANSPORT_ARGUMENT_BYTES);
+#endif

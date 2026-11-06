@@ -1,0 +1,97 @@
+tests/check_cases/literal_lint/character_as_a_number.c:3: bare number '\x14'
+tests/check_cases/literal_lint/character_as_a_number.c:4: bare number '\024'
+tests/check_cases/literal_lint/code_after_a_table.c:4: bare number 42
+tests/check_cases/literal_lint/code_after_a_table.c:5: bare number 43
+tests/check_cases/literal_lint/code_after_a_table.c:6: bare number 45
+tests/check_cases/literal_lint/code_after_a_table.c:7: bare number 2
+tests/check_cases/literal_lint/comment_never_closes.c:3: a comment, string or character constant that does not close
+tests/check_cases/literal_lint/comment_never_closes.c:4: bare number 42
+tests/check_cases/literal_lint/define_inside_a_string.c:2: bare number 42
+tests/check_cases/literal_lint/define_inside_a_string.c:3: bare number 43
+tests/check_cases/literal_lint/digit_separators.cu:2: bare number 4'096
+tests/check_cases/literal_lint/digit_separators.cu:5: bare number 4096
+tests/check_cases/literal_lint/digit_separators.cu:5: bare number 77
+tests/check_cases/literal_lint/digit_separators.cu:7: bare number 1'000'000
+tests/check_cases/literal_lint/enum_cast_before_a_brace.c:8: bare number 250000
+tests/check_cases/literal_lint/enum_type_before_a_brace.c:4: bare number 37
+tests/check_cases/literal_lint/enum_type_before_a_brace.c:6: bare number 512
+tests/check_cases/literal_lint/forbidden_text.c:2: bare number 4096
+tests/check_cases/literal_lint/forbidden_text.c:2: forbidden text "NOLINT": it silences clang-tidy
+tests/check_cases/literal_lint/forbidden_text.c:3: forbidden text "NOLINT": it silences clang-tidy
+tests/check_cases/literal_lint/forbidden_text.c:4: forbidden text "cppcheck-suppress": it silences cppcheck
+tests/check_cases/literal_lint/forbidden_text.c:5: forbidden text "GCC diagnostic": it silences compiler warnings
+tests/check_cases/literal_lint/forbidden_text.c:6: forbidden text "GCC system_header": it silences compiler warnings
+tests/check_cases/literal_lint/forbidden_text.c:7: forbidden text "GCC optimize": it compiles one function with other flags
+tests/check_cases/literal_lint/forbidden_text.c:8: forbidden text "optimize(": it compiles one function with other flags
+tests/check_cases/literal_lint/forbidden_text.c:9: forbidden text "__optimize__(": it compiles one function with other flags
+tests/check_cases/literal_lint/forbidden_text.c:10: forbidden text "no_sanitize": it hides code from a sanitizer
+tests/check_cases/literal_lint/forbidden_text.c:11: forbidden text "no_sanitize": it hides code from a sanitizer
+tests/check_cases/literal_lint/forbidden_text.c:12: forbidden text "no_address_safety_analysis": it hides code from a sanitizer
+tests/check_cases/literal_lint/forbidden_text.c:13: forbidden text "<assert.h>": it is a second assertion: use ASSERT
+tests/check_cases/literal_lint/forbidden_text.c:14: forbidden text "<cassert>": it is a second assertion: use ASSERT
+tests/check_cases/literal_lint/forbidden_text.c:15: forbidden text "fast-math": it changes results
+tests/check_cases/literal_lint/forbidden_text.c:16: forbidden text "use_fast_math": it changes results
+tests/check_cases/literal_lint/forbidden_text.c:17: forbidden text "FP_CONTRACT": it changes results
+tests/check_cases/literal_lint/forbidden_text.c:18: a comment, string or character constant that does not close
+tests/check_cases/literal_lint/forbidden_text.c:18: forbidden text "GCC \ diagnostic": it silences compiler warnings
+tests/check_cases/literal_lint/function_like_macro.c:2: bare number 4095
+tests/check_cases/literal_lint/function_like_macro.c:2: bare number 4095ull
+tests/check_cases/literal_lint/function_like_macro.c:6: bare number 11
+tests/check_cases/literal_lint/function_like_macro.c:6: bare number 37
+tests/check_cases/literal_lint/function_like_macro.c:6: bare number 5
+tests/check_cases/literal_lint/hook_arguments.c:8: -- in the argument of a hook: a build without the hook does not evaluate it
+tests/check_cases/literal_lint/hook_arguments.c:9: ++ in the argument of a hook: a build without the hook does not evaluate it
+tests/check_cases/literal_lint/hook_arguments.c:10: = in the argument of a hook: a build without the hook does not evaluate it
+tests/check_cases/literal_lint/hook_arguments.c:11: += in the argument of a hook: a build without the hook does not evaluate it
+tests/check_cases/literal_lint/hook_arguments.c:12: <<= in the argument of a hook: a build without the hook does not evaluate it
+tests/check_cases/literal_lint/hook_arguments.c:13: -- in the argument of a hook: a build without the hook does not evaluate it
+tests/check_cases/literal_lint/hook_arguments.c:16: the argument list of a hook never closes
+tests/check_cases/literal_lint/not_a_constant_table.c:2: bare number 256
+tests/check_cases/literal_lint/not_a_constant_table.c:4: bare number 256
+tests/check_cases/literal_lint/not_a_constant_table.c:5: bare number 4
+tests/check_cases/literal_lint/not_a_constant_table.c:5: bare number 8
+tests/check_cases/literal_lint/number_spellings.c:2: bare number 20
+tests/check_cases/literal_lint/number_spellings.c:3: bare number 4096
+tests/check_cases/literal_lint/number_spellings.c:4: bare number 5
+tests/check_cases/literal_lint/number_spellings.c:5: bare number 1e9
+tests/check_cases/literal_lint/number_spellings.c:6: bare number 16u
+tests/check_cases/literal_lint/number_spellings.c:7: bare number 0x40
+tests/check_cases/literal_lint/number_spellings.c:8: bare number 0x1.8p4
+tests/check_cases/literal_lint/number_spellings.c:9: bare number 0b101010
+tests/check_cases/literal_lint/number_spellings.c:10: bare number 2.5f32
+tests/check_cases/literal_lint/number_spellings.c:11: bare number 1e-400L
+tests/check_cases/literal_lint/number_spellings.c:12: bare number 42uz
+tests/check_cases/literal_lint/number_spellings.c:13: bare number 0x0
+tests/check_cases/literal_lint/number_spellings.c:14: bare number 01
+tests/check_cases/literal_lint/number_spellings.c:15: bare number .5
+tests/check_cases/literal_lint/object_like_macro_of_code.c:2: bare number 4096
+tests/check_cases/literal_lint/object_like_macro_of_code.c:3: bare number 37
+tests/check_cases/literal_lint/object_like_macro_of_code.c:4: bare number 22
+tests/check_cases/literal_lint/object_like_macro_of_code.c:5: bare number 4
+tests/check_cases/literal_lint/object_like_macro_of_code.c:5: bare number 8
+tests/check_cases/literal_lint/other_file_type.inc: not a .c .h .cu .cuh file: this tool cannot read it
+tests/check_cases/literal_lint/outside_ascii.c:2: a character outside ASCII in code
+tests/check_cases/literal_lint/preprocessor_lines.c:2: bare number 8
+tests/check_cases/literal_lint/preprocessor_lines.c:3: bare number 15
+tests/check_cases/literal_lint/preprocessor_lines.c:5: bare number 200
+tests/check_cases/literal_lint/status_without_must_check.h:4: result_status returned without MUST_CHECK
+tests/check_cases/literal_lint/status_without_must_check.h:5: result_status returned without MUST_CHECK
+tests/check_cases/literal_lint/status_without_must_check.h:7: result_status returned without MUST_CHECK
+tests/check_cases/literal_lint/status_without_must_check.h:10: result_status returned without MUST_CHECK
+tests/check_cases/literal_lint/status_without_must_check.h:11: result_status returned without MUST_CHECK
+tests/check_cases/literal_lint/table_closed_under_a_condition.c:4: a preprocessor line inside a constant table or enumeration: it cannot be followed
+tests/check_cases/literal_lint/table_closed_under_a_condition.c:7: bare number 8
+tests/check_cases/literal_lint/template_arguments_in_a_table.cu:5: bare number 12 as a template argument
+tests/check_cases/literal_lint/template_arguments_in_a_table.cu:5: bare number 8 as a template argument
+tests/check_cases/literal_lint/template_arguments_in_a_table.cu:6: bare number 4096 as a template argument
+tests/check_cases/literal_lint/template_arguments_in_a_table.cu:8: bare number 65536 as a template argument
+tests/check_cases/literal_lint/template_arguments_in_a_table.cu:9: bare number 16
+tests/check_cases/literal_lint/two_openings_one_closing.c:4: a constant table or enumeration never closes: the rest of the file is unchecked
+tests/check_cases/literal_lint/two_openings_one_closing.c:5: a preprocessor line inside a constant table or enumeration: it cannot be followed
+tests/check_cases/literal_lint/two_openings_one_closing.c:6: a constant table or enumeration opens inside another one
+tests/check_cases/literal_lint/unclosed_literals.c:2: a comment, string or character constant that does not close
+tests/check_cases/literal_lint/unclosed_literals.c:2: bare number 42
+tests/check_cases/literal_lint/unclosed_literals.c:3: a comment, string or character constant that does not close
+tests/check_cases/literal_lint/unclosed_literals.c:3: bare number 43
+tests/check_cases/literal_lint/unclosed_literals.c:4: a comment, string or character constant that does not close
+tests/check_cases/literal_lint/unclosed_literals.c:5: a comment, string or character constant that does not close

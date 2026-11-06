@@ -1,0 +1,119 @@
+{
+  "SPDX_License_Identifier": "AGPL-3.0-or-later",
+  "engine_source": "1b0731a36b7482477b96d7a28b27c93e4dd49e3f",
+  "release_binary_sha256": "acdf429da22ae7a39504b897106e8cd56a22c3661bf086f60b5458ba5313f2af",
+  "executed_current_catalogue_subset": {
+    "catalogued_jobs": 86,
+    "attempted": 42,
+    "passed": 40,
+    "mixed_identity_failed": 1,
+    "unqualified_cleanup": 1,
+    "unattempted": 44,
+    "full_golden_jobs_excluded": 45,
+    "not_the_499_row_denominator": true,
+    "no_completion_percentage": true
+  },
+  "current_job_groups": {
+    "baseline_and_remaining": {
+      "executed": 27,
+      "passed": 26,
+      "identity_failed": 1,
+      "TP4_mixed_equal": 59,
+      "TP4_mixed_different": 37,
+      "non_solo_comparisons": 96,
+      "rates_withheld_for_failure": true
+    },
+    "Curtis_decode_and_SPARK": {
+      "executed": 6,
+      "passed": 6,
+      "T0_observations": 1071,
+      "T1_observations": 423,
+      "T1_identity_or_quality_equivalence": false
+    },
+    "Q_snapshot": {
+      "executed": 4,
+      "passed": 4,
+      "functional_only": true,
+      "rates_and_times_withheld": true,
+      "CPU_overlap": true,
+      "primary_native_prompt_tokens": 1048514,
+      "other_native_prompt_tokens": 7,
+      "restored_cached_tokens": 1048512,
+      "visible_one_token_equal": true
+    },
+    "capacity_loader": {
+      "attempted": 1,
+      "qualified": 0,
+      "job": 57,
+      "client_native_1M_one_slot_readiness": true,
+      "required_model_parent_wait_missing": true,
+      "owned_retirement_passed": false,
+      "actual_guard_wait_status": 1,
+      "actual_controller_parent_wait_status": 1,
+      "successors_58_60_started": false,
+      "rates_and_startup_timing_withheld": true
+    },
+    "Fraser_reasoning": {
+      "executed": 2,
+      "passed": 2,
+      "requests_per_placement": 9,
+      "low_high_max_native": [
+        50,
+        75,
+        100
+      ],
+      "full_output_identity_tested": false,
+      "golden_quality_tested": false
+    },
+    "100K_generate": {
+      "executed": 2,
+      "passed": 2,
+      "profiles": {
+        "501": {
+          "job": "mc1_20261106_501_tp4_exl3_generate_100k_v1",
+          "native_prompt_tokens": 99972,
+          "repetitions": 2,
+          "first_token_s": [
+            23.368,
+            23.478
+          ],
+          "prompt_per_first_token_s": [
+            4278.158165011982,
+            4258.113979044211
+          ],
+          "median_first_token_s": 23.423000000000002,
+          "median_prompt_per_first_token_s": 4268.136072028097,
+          "whole_job_elapsed_s": 130.88890324695967
+        },
+        "504": {
+          "job": "mc1_20261106_504_pp5_generate_100k_v1",
+          "native_prompt_tokens": 99972,
+          "repetitions": 2,
+          "first_token_s": [
+            45.997,
+            46.038
+          ],
+          "prompt_per_first_token_s": [
+            2173.4460943104987,
+            2171.5104913332466
+          ],
+          "median_first_token_s": 46.0175,
+          "median_prompt_per_first_token_s": 2172.478292821873,
+          "whole_job_elapsed_s": 199.87021573097445
+        }
+      }
+    }
+  },
+  "current_GPU_golden": {
+    "captured_cases_per_balanced_format": 0,
+    "planned_cases_per_balanced_format": 435,
+    "captured_positions_per_balanced_format": 0,
+    "planned_positions_per_balanced_format": 66409,
+    "metrics": null,
+    "deferred_jobs": 45,
+    "EXL3_jobs": 19,
+    "PP5_jobs": 26
+  },
+  "measurement_date": "2026-11-06",
+  "scope": "Recorded runtime evidence. Job counts, source reviews, conditional-head quality and whole-model qualification are distinct."
+}

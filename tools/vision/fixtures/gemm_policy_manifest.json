@@ -1,0 +1,213 @@
+{
+  "data_file": "gemm_policy.json",
+  "data_sha256": "a88c90cd9b5e4dd593a01b9f8083ce05f486f48c20f1f6d0eb06c8df5099cc4b",
+  "torch": "2.14.1+cu130",
+  "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+  "cuda": "13.0",
+  "reference_sources": {
+    "inference/vision.py": "5d49edc196a4ef22384abe76d35a40098cbe1e74b586c8f66a2edff4f076b26c",
+    "config.json": "8be45ce0476004a3f529fd896115a4a2e800a129ad2d3ec05b16050f52e21879"
+  },
+  "reference_controls": {
+    "matmul_allow_bf16_reduced_precision_reduction": true,
+    "reference_flags_changed": false,
+    "attention": "SDPBackend.FLASH_ATTENTION",
+    "default_equals_pinned": true
+  },
+  "source_maps": [
+    {
+      "receipt": "receipts/followup/matmul-full-cmp01.json",
+      "sha256": "2b577b69e28634c9839befc96aede965b99963cc4ee3e9a55251b40604b1414e",
+      "device": "NVIDIA CMP 170HX",
+      "torch": "2.14.1+cu130",
+      "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+      "cuda": "13.0",
+      "multiprocessors": 74
+    },
+    {
+      "receipt": "receipts/followup/matmul-ordinary-full-cmp0-02.json",
+      "sha256": "80ebf717ea912df08ddc8f6bfb0b01b590d9da08859076d5e750ddd340457de6",
+      "device": "NVIDIA CMP 170HX",
+      "torch": "2.14.1+cu130",
+      "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+      "cuda": "13.0",
+      "multiprocessors": 74
+    },
+    {
+      "receipt": "receipts/followup/matmul-full-pro01.json",
+      "sha256": "fe87423510bcd9e806bf62465025e141d5c62e7e51990f7a2600ae6bc4fb0fe3",
+      "device": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+      "torch": "2.14.1+cu130",
+      "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+      "cuda": "13.0",
+      "multiprocessors": 188
+    },
+    {
+      "receipt": "receipts/followup/matmul-ordinary-full-pro-02.json",
+      "sha256": "998d21cb033eedd2e0da6f4d1984a0c89e1753dc80f2f10821215807c7571aff",
+      "device": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+      "torch": "2.14.1+cu130",
+      "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+      "cuda": "13.0",
+      "multiprocessors": 188
+    }
+  ],
+  "layout": {
+    "boundary_fields": [
+      "inclusive_row_end",
+      "serial_parts",
+      "options"
+    ],
+    "options": {
+      "K64_when_width_differs_from_K32": 1,
+      "final_partition_bias_before_carry": 2,
+      "BF16_MMA_K8_pair": 4
+    },
+    "boundary_arrays": 10,
+    "boundary_records": 210,
+    "offset_arrays": 2,
+    "offset_entries": 18,
+    "projector_first_row_modulus": 8
+  },
+  "dispatch_scope": {
+    "patch_grid_rows": [
+      1022,
+      9216
+    ],
+    "projector_cells": [
+      164,
+      1024
+    ],
+    "products": [
+      "MLP_DOWN",
+      "PROJECTOR_FIRST",
+      "MLP_UP",
+      "QUERY_KEY_VALUE",
+      "ATTENTION_OUTPUT",
+      "PROJECTOR_SECOND"
+    ],
+    "arithmetic_classes": [
+      80,
+      120,
+      1200
+    ],
+    "raw_map_groups": 69004,
+    "class_role_row_checks": 103506,
+    "mismatches": 0,
+    "includes_mma_k8": true,
+    "validation_receipt": "receipts/followup/policy6-validation02.json",
+    "validation_receipt_sha256": "08124d257796a239d369d9339398789aa0bd11aff984c7653f3e720f2b0f9ffa"
+  },
+  "instruction_policy": {
+    "default": "BF16 m16n8k16",
+    "first_projector_odd_cells": "two ascending BF16 m16n8k8",
+    "selected_family": "s1688",
+    "K16_residue_prefix_first": true
+  },
+  "original_weight_scope": {
+    "parameters": 263,
+    "parameter_sha256": "1450c73b6024f2bfb2b447f24e2cb9d7d058ab1307958819611e1d79378bf7ef",
+    "checks": [
+      {
+        "device": "cmp0",
+        "grid": [
+          39,
+          39
+        ],
+        "output_shape": [
+          169,
+          5120
+        ],
+        "patch_sha256": "d8833cad0010beb146a94f7fac7e24bf1d84d6dd6a70fcad9f929188feb2af22",
+        "reference_manifest": "followup/receipts/original-final-small-cmp0-01/reference_trace/manifest.json",
+        "reference_manifest_sha256": "9b64e64d5c86459cbcb98bd87f7ae16958074bd214fe0e11f51d6a136a62540c",
+        "qualification_receipt": "receipts/followup/trace-final-small-cmp0-01-qualification.json",
+        "passes_compared": 358,
+        "intermediate_bf16_words": 1066371072,
+        "bitwise_mismatching_passes": 0,
+        "normal_forward_matches_final_trace": true,
+        "default_equals_pinned": true
+      },
+      {
+        "device": "pro",
+        "grid": [
+          39,
+          39
+        ],
+        "output_shape": [
+          169,
+          5120
+        ],
+        "patch_sha256": "d8833cad0010beb146a94f7fac7e24bf1d84d6dd6a70fcad9f929188feb2af22",
+        "reference_manifest": "followup/receipts/original-final-small-pro-01/reference_trace/manifest.json",
+        "reference_manifest_sha256": "97418dbf758241d35184d770e2d14733c51a44563b493b26a4d98fbfce68be3a",
+        "qualification_receipt": "receipts/followup/trace-final-small-pro-01-qualification.json",
+        "passes_compared": 358,
+        "intermediate_bf16_words": 1066371072,
+        "bitwise_mismatching_passes": 0,
+        "normal_forward_matches_final_trace": true,
+        "default_equals_pinned": true
+      },
+      {
+        "device": "cmp0",
+        "grid": [
+          42,
+          216
+        ],
+        "output_shape": [
+          1008,
+          5120
+        ],
+        "patch_sha256": "b68b0cc97f61212c6d4c5c8e4d64a34a6962adea3a8f23559bf5c680e0b08176",
+        "reference_manifest": "followup/receipts/original-final-maximum-cmp0-01/reference_trace/manifest.json",
+        "reference_manifest_sha256": "2f46e5ecba09043eccf631cc89a1f9e5e8b54a7ab50f7296f0cf56852e0b40ea",
+        "qualification_receipt": "receipts/followup/trace-final-maximum-cmp0-01-qualification.json",
+        "passes_compared": 358,
+        "intermediate_bf16_words": 6360367104,
+        "bitwise_mismatching_passes": 0,
+        "normal_forward_matches_final_trace": true,
+        "default_equals_pinned": true
+      },
+      {
+        "device": "pro",
+        "grid": [
+          42,
+          216
+        ],
+        "output_shape": [
+          1008,
+          5120
+        ],
+        "patch_sha256": "b68b0cc97f61212c6d4c5c8e4d64a34a6962adea3a8f23559bf5c680e0b08176",
+        "reference_manifest": "followup/receipts/trace-final-maximum-pro-01/reference_trace/manifest.json",
+        "reference_manifest_sha256": "60e92bf192ba6d26d7bb722fedaf070f1e7da13fdce62aa532dab74753f6d1d6",
+        "qualification_receipt": "receipts/followup/trace-final-maximum-pro-01-qualification.json",
+        "passes_compared": 358,
+        "intermediate_bf16_words": 6360367104,
+        "bitwise_mismatching_passes": 0,
+        "normal_forward_matches_final_trace": true,
+        "default_equals_pinned": true
+      }
+    ],
+    "total_passes_compared": 1432,
+    "total_intermediate_bf16_words": 14853476352,
+    "bitwise_mismatching_passes": 0,
+    "normal_forward_mismatches": 0
+  },
+  "build": {
+    "generator": "tools/build/embed_vision_gemm_policy.py",
+    "generated_include": "build/vision_gemm_policy.inc",
+    "emitted_content": "static const numeric array declarations only",
+    "lookup_and_descriptors": "hand-written C"
+  },
+  "qualification_scope": {
+    "dispatch": "mapped row domain",
+    "original_weight_bitwise": "four listed complete inputs"
+  },
+  "regenerate_after_changes_to": [
+    "reference/library epoch",
+    "reduced-precision options",
+    "table policy",
+    "instruction family"
+  ]
+}

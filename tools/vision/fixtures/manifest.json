@@ -1,0 +1,76 @@
+{
+  "reference_sha256": "5d49edc196a4ef22384abe76d35a40098cbe1e74b586c8f66a2edff4f076b26c",
+  "torch": "2.14.1+cu130",
+  "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+  "dtype": "bfloat16",
+  "device": "cuda",
+  "primary_test_attention": "SDPBackend.FLASH_ATTENTION",
+  "primary_comparison": "bitwise bfloat16 words",
+  "default_equals_pinned": true,
+  "retained_diagnostic_attention": "SDPBackend.MATH",
+  "primary_bfloat16_rtol": 0.0,
+  "primary_bfloat16_atol": 0.0,
+  "reference_bfloat16_rtol": 0.016,
+  "reference_bfloat16_atol": 1e-05,
+  "math_bfloat16_rtol": 0.0078125,
+  "math_bfloat16_atol": 0.000244140625,
+  "cases": [
+    {
+      "case": 0,
+      "grid": [
+        1,
+        1
+      ],
+      "shape": [
+        1,
+        16
+      ],
+      "sha256": "4eb049c48506ff2b2ca1824da76302511067c564042e31725879516ca0a78f7f",
+      "math_sha256": "4eb049c48506ff2b2ca1824da76302511067c564042e31725879516ca0a78f7f"
+    },
+    {
+      "case": 1,
+      "grid": [
+        2,
+        3
+      ],
+      "shape": [
+        1,
+        16
+      ],
+      "sha256": "d88866d3b55c21c76626113a539b1add1459da864f0b4260777a888be45568b9",
+      "math_sha256": "80b638c391d5c1c8475563ecaa45c6408e241402a1b3749bddf37b538d8b70f2"
+    },
+    {
+      "case": 2,
+      "grid": [
+        4,
+        5
+      ],
+      "shape": [
+        4,
+        16
+      ],
+      "sha256": "e5478da02813699fbd8fae6fe68e935ff8bd400adcf83f7a24eaf17720ab4660",
+      "math_sha256": "7b5986e3829777251a96188c8949822aedb2000e72aeb406e396fa274228c253"
+    },
+    {
+      "case": 3,
+      "grid": [
+        11,
+        12
+      ],
+      "shape": [
+        16,
+        16
+      ],
+      "sha256": "22360753552cf1d418a3d65287082331fb839c6151cb3009d4c5a84d300c7617",
+      "math_sha256": "d523978932e7d56c529378476752699e8904fbb2f1de93e5572185412ede1ea8"
+    }
+  ],
+  "card": "NVIDIA CMP 170HX",
+  "capability": [
+    8,
+    0
+  ]
+}

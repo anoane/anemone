@@ -1,0 +1,1194 @@
+[
+  {
+    "name": "card_order",
+    "variable": "card_order",
+    "least": "0",
+    "most": "ANEMONE_BACKEND_MAXIMUM_CARDS - 1",
+    "count": "ANEMONE_BACKEND_MAXIMUM_CARDS",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "live_stats",
+    "variable": "&live_stats_interval_ms",
+    "least": "0",
+    "most": "ANEMONE_LIVE_STATS_MOST_INTERVAL_MS",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "reader_threads_per_copy",
+    "variable": "&reader_threads_per_copy",
+    "least": "1",
+    "most": "ANEMONE_LOADER_MAXIMUM_READER_THREADS_PER_COPY",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_load_threads",
+    "variable": "&tp_load_threads",
+    "least": "0",
+    "most": "ANEMONE_TP_LOAD_MAXIMUM_WORKERS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "turbo_load",
+    "variable": "&turbo_load",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "map_reads",
+    "variable": "&map_reads",
+    "least": "0",
+    "most": "MAP_READS_AUTO",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_load_host_threads",
+    "variable": "&tp_load_host_threads",
+    "least": "0",
+    "most": "ANEMONE_TP_LOAD_MAXIMUM_WORKERS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_load_copy_split",
+    "variable": "&tp_load_copy_split",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_load_reads_per_copy",
+    "variable": "&tp_load_reads_per_copy",
+    "least": "0",
+    "most": "ANEMONE_TP_LOAD_MAXIMUM_WORKERS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "card_memory_kept_free_mib",
+    "variable": "&card_memory_kept_free_mib",
+    "least": "0",
+    "most": "MOST_CARD_MEMORY_KEPT_FREE_MIB",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "pro_emulation",
+    "variable": "&pro_emulation",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_code_wire",
+    "variable": "&tp_code_wire",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "exl3_expert_parts",
+    "variable": "&exl3_expert_parts",
+    "least": "EXL3_EXPERT_REFERENCE_PARTS",
+    "most": "EXL3_EXPERT_OPTIONAL_PARTS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_attention_owner",
+    "variable": "&tp_attention_owner",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_head_shards",
+    "variable": "&tp_head_shards",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_exact_dense",
+    "variable": "&tp_exact_dense",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_draft_shards",
+    "variable": "&tp_draft_shards",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_draft_layers",
+    "variable": "&tp_draft_layers",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_head_stream",
+    "variable": "&tp_head_stream",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "exl3_fast_products",
+    "variable": "&exl3_fast_products",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "exl3_wide_entry",
+    "variable": "&exl3_wide_entry",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "exl3_tc_moe",
+    "variable": "&exl3_tc_moe",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "exl3_tc_product_blocks",
+    "variable": "&exl3_tc_product_blocks",
+    "least": "0",
+    "most": "TC_PRODUCT_BLOCKS_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "exl3_expert_rotation",
+    "variable": "&exl3_expert_rotation",
+    "least": "0",
+    "most": "ANEMONE_EXL3_TC_ROTATION_THREE_WAY",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_head_mma",
+    "variable": "&tp_head_mma",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_trunk_mma",
+    "variable": "&tp_trunk_mma",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_trunk_mma_fused",
+    "variable": "&tp_trunk_mma_fused",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_trunk_mma_thin_splits",
+    "variable": "&tp_trunk_mma_thin_splits",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_router_mma",
+    "variable": "&tp_router_mma",
+    "least": "0",
+    "most": "2",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_gather_balance",
+    "variable": "&tp_gather_balance",
+    "least": "0",
+    "most": "ANEMONE_V41_GATHER_BALANCE_WEIGHTED",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_pool_chunk",
+    "variable": "&tp_pool_chunk",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_pool_gather",
+    "variable": "&tp_pool_gather",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_router_first_whole",
+    "variable": "&tp_router_first_whole",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "exl3_tcp_two_blocks",
+    "variable": "&exl3_tcp_two_blocks",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_queries_piece",
+    "variable": "&tp_queries_piece",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_index_span",
+    "variable": "&tp_index_span",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_core_compact_halves",
+    "variable": "&tp_core_compact_halves",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "dense_skinny_bf16",
+    "variable": "&dense_skinny_bf16",
+    "least": "0",
+    "most": "DENSE_SKINNY_MOST_OUTPUTS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "dense_skinny_f32",
+    "variable": "&dense_skinny_f32",
+    "least": "0",
+    "most": "DENSE_SKINNY_MOST_OUTPUTS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "dense_staged",
+    "variable": "&dense_staged",
+    "least": "0",
+    "most": "ANEMONE_DENSE_STAGED_MOST_OUTPUTS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "original_dense_staged",
+    "variable": "&original_dense_staged",
+    "least": "0",
+    "most": "ANEMONE_DENSE_STAGED_OUTPUTS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "original_wide_experts",
+    "variable": "&original_wide_experts",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_parallel_launch",
+    "variable": "&tp_parallel_launch",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_graph_parts",
+    "variable": "&tp_graph_parts",
+    "least": "1",
+    "most": "ANEMONE_TP_MOST_GRAPH_PARTS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_ordered_wide",
+    "variable": "&tp_ordered_wide",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_graph_branches",
+    "variable": "&tp_graph_branches",
+    "least": "0",
+    "most": "2",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_piece_rings",
+    "variable": "&tp_piece_rings",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_trunk_shape_slices",
+    "variable": "&tp_trunk_shape_slices",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_bf16_slab_rings",
+    "variable": "&tp_bf16_slab_rings",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_wide_exchange",
+    "variable": "&tp_wide_exchange",
+    "least": "0",
+    "most": "ANEMONE_V41_TP_EXCHANGE_CE_RINGS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_split_overlap",
+    "variable": "&tp_split_overlap",
+    "least": "0",
+    "most": "ANEMONE_V41_SPLIT_JOINT_DOWN",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_split_least_rows",
+    "variable": "&tp_split_least_rows",
+    "least": "0",
+    "most": "ANEMONE_V41_TP_SPLIT_MOST_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_launch_trims",
+    "variable": "&tp_launch_trims",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_full_split_overlap",
+    "variable": "&tp_full_split_overlap",
+    "least": "0",
+    "most": "ANEMONE_V41_SPLIT_JOINT_DOWN",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_chunk_core",
+    "variable": "&tp_chunk_core",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "original_chunk_core",
+    "variable": "&original_chunk_core",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "original_batch",
+    "variable": "&original_batch",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "tp_replicated_embedding",
+    "variable": "&tp_replicated_embedding",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "batch_rows",
+    "variable": "batch_rows",
+    "least": "1",
+    "most": "ANEMONE_PROGRAM_BATCH_MOST_ROWS",
+    "count": "MOST_BATCH_PROGRAMS",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_draft_rows",
+    "variable": "&batch_draft_rows",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_wide_head",
+    "variable": "&batch_wide_head",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_context_slabs",
+    "variable": "&batch_context_slabs",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_thin_bits",
+    "variable": "&batch_thin_bits",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_tc_paired",
+    "variable": "&batch_tc_paired",
+    "least": "0",
+    "most": "ANEMONE_PROGRAM_BATCH_MOST_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_draft_slots_head",
+    "variable": "&batch_draft_slots_head",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_row_sets",
+    "variable": "&batch_row_sets",
+    "least": "0",
+    "most": "MOST_BATCH_ROW_SETS",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_core_once",
+    "variable": "&batch_core_once",
+    "least": "0",
+    "most": "3",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "tp_front_branch",
+    "variable": "&tp_front_branch",
+    "least": "0",
+    "most": "2",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_core_heads",
+    "variable": "&tp_core_heads",
+    "least": "0",
+    "most": "MOST_CORE_HEADS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "tp_decode_round_once",
+    "variable": "&tp_decode_round_once",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "draft_bf16_rows",
+    "variable": "&draft_bf16_rows",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "batch_draft_wide",
+    "variable": "&batch_draft_wide",
+    "least": "0",
+    "most": "3",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_bf16_operands",
+    "variable": "&draft_bf16_operands",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "batch_grouped_rows",
+    "variable": "&batch_grouped_rows",
+    "least": "0",
+    "most": "MOST_BATCH_GROUPED_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "tp_ring_column_owners",
+    "variable": "&tp_ring_column_owners",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "batch_step_us",
+    "variable": "batch_step_us",
+    "least": "0",
+    "most": "ANEMONE_DRAFT_MOST_COST_US",
+    "count": "ANEMONE_SERVING_BATCH_COSTS",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_verifiers",
+    "variable": "batch_verifiers",
+    "least": "1",
+    "most": "ANEMONE_SERVING_SESSION_CAPACITY",
+    "count": "MOST_BATCH_PROGRAMS",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "tp_wire_bf16",
+    "variable": "&tp_wire_bf16",
+    "least": "ANEMONE_ORDERED_PUSH_FP32",
+    "most": "ANEMONE_ORDERED_PUSH_BF16",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "full_steps",
+    "variable": "&full_steps",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_first",
+    "variable": "&prefill_first",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_prompt_chunks",
+    "variable": "&prefill_prompt_chunks",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_learned_acceptance",
+    "variable": "&draft_learned_acceptance",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_session_acceptance",
+    "variable": "&draft_session_acceptance",
+    "least": "0",
+    "most": "11",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "batch_plan_ties",
+    "variable": "&batch_plan_ties",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_start_economic",
+    "variable": "&draft_start_economic",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "chunks_in_flight",
+    "variable": "&chunks_in_flight",
+    "least": "1",
+    "most": "ANEMONE_STEP_PIPELINE_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_margin",
+    "variable": "&prefill_margin",
+    "least": "1",
+    "most": "ANEMONE_SERVING_CONE_MARGIN",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_fast_plan",
+    "variable": "&prefill_fast_plan",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_prefix_stable",
+    "variable": "&prefill_prefix_stable",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_order",
+    "variable": "&prefill_order",
+    "least": "0",
+    "most": "ANEMONE_PREFILL_ORDER_SHORT_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_order_wait",
+    "variable": "&prefill_order_wait",
+    "least": "0",
+    "most": "PREFILL_ORDER_MOST_WAIT",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_decode_every",
+    "variable": "&prefill_decode_every",
+    "least": "0",
+    "most": "PREFILL_DECODE_MOST_EVERY",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_decode_waiters",
+    "variable": "&prefill_decode_waiters",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_decode_rounds",
+    "variable": "&prefill_decode_rounds",
+    "least": "1",
+    "most": "ANEMONE_PREFILL_DECODE_MOST_ROUNDS",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_chunk_rows",
+    "variable": "&prefill_chunk_rows",
+    "least": "0",
+    "most": "ANEMONE_MODEL_WIDE_MOST_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_decode_rows",
+    "variable": "&prefill_decode_rows",
+    "least": "0",
+    "most": "ANEMONE_MODEL_WIDE_MOST_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_cone_skip",
+    "variable": "&prefill_cone_skip",
+    "least": "0",
+    "most": "3",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_tail_rows",
+    "variable": "&prefill_tail_rows",
+    "least": "0",
+    "most": "TAIL_WIDEST_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_ladder_1024",
+    "variable": "&prefill_ladder_1024",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_ladder_1536",
+    "variable": "&prefill_ladder_1536",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_ladder_fine",
+    "variable": "&prefill_ladder_fine",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_front_tail",
+    "variable": "&prefill_front_tail",
+    "least": "0",
+    "most": "FRONT_TAIL_ALL",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_tail_overlay",
+    "variable": "&prefill_tail_overlay",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_tail_sets",
+    "variable": "&prefill_tail_sets",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_thin_tail",
+    "variable": "&prefill_thin_tail",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_dead_halves",
+    "variable": "&prefill_dead_halves",
+    "least": "0",
+    "most": "DEAD_ROWS_TRIMMED",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefix_reuse",
+    "variable": "&prefix_reuse",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefix_reuse_exact",
+    "variable": "&prefix_reuse_exact",
+    "least": "0",
+    "most": "ANEMONE_SERVER_PREFIX_COLD_PLAN",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "cache_scope",
+    "variable": "&cache_scope",
+    "least": "ANEMONE_SERVER_CACHE_SESSION",
+    "most": "ANEMONE_SERVER_CACHE_GLOBAL",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "session_fork",
+    "variable": "&session_fork",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "session_grace_seconds",
+    "variable": "&session_grace_seconds",
+    "least": "0",
+    "most": "ANEMONE_SERVER_MOST_GRACE_SECONDS",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "session_save_tokens",
+    "variable": "&session_save_tokens",
+    "least": "1",
+    "most": "ANEMONE_MODEL_CONTEXT_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "session_load_tokens",
+    "variable": "&session_load_tokens",
+    "least": "1",
+    "most": "ANEMONE_MODEL_CONTEXT_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "session_idle_save_seconds",
+    "variable": "&session_idle_save_seconds",
+    "least": "1",
+    "most": "ANEMONE_SERVER_MOST_IDLE_SAVE_SECONDS",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "session_slots",
+    "variable": "&session_slots",
+    "least": "1",
+    "most": "ANEMONE_SERVING_SESSION_CAPACITY",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "queue_depth",
+    "variable": "&queue_depth",
+    "least": "1",
+    "most": "ANEMONE_SERVER_MOST_WAITING",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "user_queue_depth",
+    "variable": "&user_queue_depth",
+    "least": "1",
+    "most": "ANEMONE_SERVER_MOST_WAITING",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "step_graphs",
+    "variable": "&step_graphs",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "engram_shared",
+    "variable": "&engram_shared",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "pipeline_steps",
+    "variable": "&pipeline_steps",
+    "least": "1",
+    "most": "ANEMONE_STEP_PIPELINE_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "tp_pipeline_overlap",
+    "variable": "&tp_pipeline_overlap",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "prefill_cone",
+    "variable": "&prefill_cone",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "wide_rows",
+    "variable": "&wide_rows",
+    "least": "0",
+    "most": "ANEMONE_MODEL_WIDE_MOST_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "rows",
+    "variable": "&step_rows",
+    "least": "1",
+    "most": "ANEMONE_LINEAR_MAXIMUM_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "context_tokens",
+    "variable": "&context_tokens",
+    "least": "1",
+    "most": "ANEMONE_MODEL_CONTEXT_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "generated_tokens",
+    "variable": "&generated_token_limit",
+    "least": "1",
+    "most": "UINT32_MAX",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "seed",
+    "variable": "&seed",
+    "least": "0",
+    "most": "UINT32_MAX",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "reasoning_effort",
+    "variable": "&reasoning_effort",
+    "least": "0",
+    "most": "ANEMONE_CHAT_TEMPLATE_HIGHEST_EFFORT",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "linear_profile",
+    "variable": "&linear_profile",
+    "least": "0",
+    "most": "ANEMONE_LINEAR_PROFILE_SPEED",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "linear_order",
+    "variable": "&linear_order",
+    "least": "0",
+    "most": "ANEMONE_LINEAR_ORDER_REFERENCE",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "official_hc_rows",
+    "variable": "&official_hc_rows",
+    "least": "0",
+    "most": "ANEMONE_LINEAR_MAXIMUM_ROWS",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "official_reference",
+    "variable": "&official_reference",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "ignore_eos",
+    "variable": "&ignore_eos",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "port",
+    "variable": "&port",
+    "least": "1",
+    "most": "ANEMONE_SERVER_MOST_PORT",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
+    "name": "speculative",
+    "variable": "&speculative",
+    "least": "SPECULATIVE_OFF",
+    "most": "SPECULATIVE_HYBRID",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_policy",
+    "variable": "&draft_policy.depth_policy",
+    "least": "ANEMONE_DRAFT_DEPTH_FIXED",
+    "most": "ANEMONE_DRAFT_DEPTH_ADAPTIVE",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_threshold",
+    "variable": "&draft_policy.threshold",
+    "least": "0",
+    "most": "ANEMONE_DRAFT_PROBABILITY_SCALE",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_base_us",
+    "variable": "&draft_policy.base_us",
+    "least": "1",
+    "most": "ANEMONE_DRAFT_MOST_COST_US",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_tail_us",
+    "variable": "&draft_policy.tail_us",
+    "least": "0",
+    "most": "ANEMONE_DRAFT_MOST_COST_US",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_row_us",
+    "variable": "&draft_policy.row_us",
+    "least": "1",
+    "most": "ANEMONE_DRAFT_MOST_COST_US",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_probe_rounds",
+    "variable": "&draft_policy.probe_rounds",
+    "least": "1",
+    "most": "ANEMONE_DRAFT_MOST_PROBE_ROUNDS",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "hybrid_lookup_prior",
+    "variable": "&draft_policy.lookup_prior",
+    "least": "0",
+    "most": "ANEMONE_DRAFT_PROBABILITY_SCALE",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "hybrid_lookup_min",
+    "variable": "&hybrid_lookup_min",
+    "least": "1",
+    "most": "DRAFT_LOOKUP_MOST_NGRAM",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_trace",
+    "variable": "&draft_trace",
+    "least": "0",
+    "most": "ANEMONE_TIMING_HOOKS_ENABLED",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_block",
+    "variable": "&draft_block",
+    "least": "ANEMONE_MODEL_DRAFT_BLOCK",
+    "most": "ANEMONE_STEP_DRAFT_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "draft_positions",
+    "variable": "&draft_positions",
+    "least": "1",
+    "most": "ANEMONE_SERVING_DRAFT_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "speculative_depth",
+    "variable": "&draft_positions",
+    "least": "1",
+    "most": "ANEMONE_SERVING_DRAFT_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "lookup_ngram_max",
+    "variable": "&lookup_ngram_max",
+    "least": "1",
+    "most": "DRAFT_LOOKUP_MOST_NGRAM",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "lookup_ngram_min",
+    "variable": "&lookup_ngram_min",
+    "least": "1",
+    "most": "DRAFT_LOOKUP_MOST_NGRAM",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  }
+]

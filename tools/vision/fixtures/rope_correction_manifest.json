@@ -1,0 +1,43 @@
+{
+  "torch": "2.14.1+cu130",
+  "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+  "gpu": "NVIDIA CMP 170HX",
+  "capability": [
+    8,
+    0
+  ],
+  "cubin_sha256": "2bbbd2ba949f27954baaab679d116eddbc0728a7e6a4dcd9b0761203bd5eb2b5",
+  "helper_sha256": "54f2ba28ebc9d1f40a91a42ce6b1843f37875c6c40f3fc834fc3204f43eac4d5",
+  "probe_source_sha256": "8eb6126ff7e356b91f3e454a3cffdb4115030175d5055be90d02d9afdac13e87",
+  "reference_source_sha256": "5d49edc196a4ef22384abe76d35a40098cbe1e74b586c8f66a2edff4f076b26c",
+  "python_source_sha256": "2be9c470ed43a7023b56bd4b8931b99327ffc4b1b7740b2b1d1745276f810aef",
+  "layout": "[position][frequency][sin,cos], float32 little-endian",
+  "positions": [
+    0,
+    3062
+  ],
+  "frequencies": 16,
+  "values": 98016,
+  "bitwise_differences": 17602,
+  "delta_definition": "signed(reference_uint32 - candidate_uint32)",
+  "minimum_raw_delta": -1,
+  "maximum_raw_delta": 1,
+  "raw_delta_histogram": {
+    "-1": 3955,
+    "0": 80414,
+    "1": 13647
+  },
+  "correction_emitted": true,
+  "correction_words": 9189,
+  "correction_bytes": 36756,
+  "correction_encoding": "3 bits/value; bit2 sign, bits1..0 magnitude; uint32 bitstream little-endian",
+  "files": {
+    "candidate.f32.bin": "df4d124d3ff4ea672811f277ab0638c88c5844b006440484991ee7c089b798f9",
+    "correction.bin": "29b841655be6d67bc457c0f26507871baf8448f3c138677479197aaaf208ec40",
+    "correction.hex": "4b582bf26b1ec2c4583ffc33ccedfaf126e1eb1f4419e544e40eb9b5e73dbbed",
+    "reference.f32.bin": "4bc3abbcf55f037445a04ad0c4f329f1d80774ebc8ecb692dc6e0118077f262e"
+  },
+  "data_file": "rope_correction.hex",
+  "qualification": "Complete default-theta FP32 trig domain; CMP and PRO raw words and corrections identical.",
+  "note": "Data maps the recorded bounded F64 helper to official CUDA float32 trig words. Regenerate after any helper, frequency, or reference-environment change."
+}

@@ -1,0 +1,9 @@
+include/outside_the_engine_directory.h: not a file the build compiles: only include/anemone/<lower_case_underscore name>.c, .h, .cu or .cuh
+include/anemone/one_wide_line.h:1: 121 columns, a line has at most 120
+source/deeper/: a directory the build does not compile
+source/Bad-Name.c: not a file the build compiles: only source/<lower_case_underscore name>.c, .h, .cu or .cuh
+source/table.inc: not a file the build compiles: only source/<lower_case_underscore name>.c, .h, .cu or .cuh
+tests/data/: a directory the build does not compile
+tests/Bad-Test-Name.c: not a file the build compiles: only tests/<lower_case_underscore name>.c, .h, .cu or .cuh
+tests/one_wide_line_test.c:1: 121 columns, a line has at most 120
+kernels/: a top-level directory this tool does not know: nothing checks what it holds

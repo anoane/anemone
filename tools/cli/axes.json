@@ -1,0 +1,2190 @@
+{
+  "schema_version": 1,
+  "source_epoch": {
+    "binary": "rnds_04",
+    "binary_sha256": "b02607bc92820e5be800e8fabd36e14aea1c1fa1e62a584eef8e754f5c240fab",
+    "settings_receipt": "evidence/xf_host/profile_help_settings_rnds04.json",
+    "meaning": "Frozen baseline values and scoped later S measurements are identified per strategy. Corrected sharded THIN and original-weight candidates have separate device gates. The all-balanced 2048-row candidate failed S05 allocation and remains held."
+  },
+  "axes": [
+    {
+      "name": "category",
+      "values": [
+        "code",
+        "prose",
+        "structured",
+        "vision",
+        "balanced"
+      ],
+      "meaning": "Workload kind; balanced is a mixed code/prose/structured measurement, with code winning ties."
+    },
+    {
+      "name": "exactness",
+      "values": [
+        "exact",
+        "balanced",
+        "fast"
+      ],
+      "meaning": "Reference arithmetic, current arithmetic, or a measured bounded-loss alternative. Exact uses official-exact logits unchanged at every temperature/top_p; defaults are temperature=0, top_p=1. Draw identity requires T=0 or matching RNG/sampler order; ours do not match the reference stochastic RNG/order."
+    },
+    {
+      "name": "concurrency",
+      "values": [
+        "single",
+        "multiple",
+        "balanced"
+      ],
+      "meaning": "C1/THIN, C2-C8/BATCH, or one measured compromise across both."
+    },
+    {
+      "name": "focus",
+      "values": [
+        "balanced",
+        "ttft",
+        "decode",
+        "prefill"
+      ],
+      "meaning": "Measured compromise, first-token latency, decode rate, or prefill rate."
+    }
+  ],
+  "weight_families": [
+    "original",
+    "exl3"
+  ],
+  "tiers": [
+    {
+      "name": "exact",
+      "error_class": "Original weights: official-reference arithmetic on the admitted PP THIN serial M1 scope. EXL3: reference arithmetic (EXL3: not official-exact).",
+      "hold": ""
+    },
+    {
+      "name": "balanced",
+      "error_class": "Current HC/current forms; no added lossy setting. Admitted single-user tuples use canonical fixed0: cost1 failed selected-F32 identity despite equal IDs. S06 EXL3 cached-eight target smoke has KLmean0.224/RMS0.966/top1=7/8 versus the pinned hybrid source; not corpus quality or official equality.",
+      "hold": ""
+    },
+    {
+      "name": "fast",
+      "error_class": "Measured bounded-loss arithmetic only; opt-in. Each selected lossy knob must carry paired numerical and whole-workload receipts.",
+      "hold": "No candidate has complete paired KL, logit deviation, held-out PPL, T=0 agreement and whole-workload speed evidence within an admitted error budget. Unqualified or excessive-loss settings remain raw CLI knobs only."
+    }
+  ],
+  "holds": {
+    "original": "This tuple has no qualified original rule. Legacy serial TP4_PRO and PP5depth2/5/8 exist, and main75 now parses overlap/original BATCH/wide/chunk-core/staged/HC selectors. Their independent evidence does not qualify arbitrary joins, mixed/balanced concurrency or prefill/TTFT envelopes. Query-piece/dense-shard selectors and complete reference forms remain separate dependencies. No placement or weights are silently replaced.",
+    "vision": "Vision-axis selection awaits a vision benchmark and applicable runtime/identity evidence.",
+    "compromise": "The one-recipe C1/C2-C8 compromise is not qualified. N policy/choice, non-code margins, Fraser median/worst and long-prefill pause comparisons remain required. The all-balanced tuple is the intended general-purpose recommendation after these gates."
+  },
+  "strategies": {
+    "empty": {
+      "description": "No knob values are applied while a dependency is held.",
+      "settings": "",
+      "serve_settings": "",
+      "generate_settings": "",
+      "error_class": "Current HC and current forms; same bits or draft-only relative to the pinned weight-family cold controls. No additional lossy setting. Official-error metrics for this S runtime remain unmeasured.",
+      "evidence": "Unmeasured full-engine tuple; dependency gates remain open.",
+      "numerical_class": "same_bits",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false
+    },
+    "batch_fixed": {
+      "description": "Full-depth code-first BATCH with the merged pool/deferred-slot core3; cold identity and current-source serving qualification are mandatory.",
+      "settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --draft_policy=0 --batch_core_once=3 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0",
+      "serve_settings": "--session_slots=8 --prefill_first=1 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_order=2",
+      "generate_settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8 --batch_verifiers=1 --batch_wide_head=1 --batch_draft_rows=1 --draft_policy=0 --batch_core_once=3 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0",
+      "error_class": "Draft-only relative to the pinned EXL3 family controls; current HC/current forms, no added lossy arithmetic. Official-model equality is unqualified; read the measured scope and identity gates.",
+      "evidence": "Measured frozen S10/e4c188e (base5029986), ordinary binary8d9b8b05, context65536/eight slots/four CMPs180W. C1 per stream; C2/C4/C8 aggregate. code C1/C2/C4/C8 265.854/296.834/377.388/469.537 tok/s. prose C1/C2/C4/C8 163.711/217.742/291.146/382.997 tok/s. structured C1/C2/C4/C8 339.241/452.462/613.633/787.722 tok/s. Fraser median/worst ms: C1 1579.20/1585.00; C4 4140.55/6846.50; C8 7763.70/14601.50; ten/three/three batches. Warm-short/all-short max SSE content gaps 0.480538/0.488661s; sampled native decode/prefill progress in both warm repetitions. These are not native token clocks or an isolated GPU pause. Minimum CMP free at readiness 425MiB. Full selected8/256 references and141 MiaAI request/text/native-count/finish signatures pass;35 M identities pass. Observed post-window device/cap restoration and full artifact/source closure pass. Own one-CPU low-priority build10:07:10-10:20:44 overlaps MiaAI and most M; Fraser begins after it. Sequential observations; no isolated causal or global-optimum claim. Cold prefill, full mixed traffic and1M work were not requested. No bounded-balanced admission or current-main default comparison follows from this window. Current S10 full-vocabulary/reference distance and PPL are unmeasured; the S06 cached-eight diagnostic remains separately sourced. Current HC/forms, no added lossy arithmetic; not official-exact. Source: evidence/gxf_s10_fixed_multiple_strict_s10_v1.json. Current raw tcb78/39980 control (not a selected axis): code C1/C2/C4/C8 239.200/284.234/388.513/438.798tok/s; prose C1/C2/C4/C8 169.926/258.172/373.774/446.555tok/s; structured C1/C2/C4/C8 340.663/453.337/613.833/791.158tok/s; Fraser C1/C4/C8 median/worst1578.10/1583.40,4110.05/6752.30,7620.10/14295.10ms; warm-short SSE max0.469012s. Code dominates the old adaptive/session control in all four cells; prose/structured stay within90% of observed best. This is not an independently proven zero-regression comparison or all-balanced admission. N build36 overlaps part of this control Fraser; no isolated causal inference. Source:evidence/gxf_tcb78_control_matrix_strict_xf18_v1.json. Fresh raw-main mixed comparison xf19: tcb78/39980, explicit65K; scenario order C1/C2burst/C2stagger/C4burst/C4stagger/C8burst/C8stagger. BATCH8 whole-window rates 128.661/145.732/133.334/161.279/159.154/181.848/179.383; trueTHIN1 122.756/122.618/119.106/122.719/122.579/122.622/122.647tok/s. These14.3k/0/690 controls use BATCHcore3 or THINwide1024/pipeline1/layers1, not the S10 axis settings. 112cross-family request/text/reason/native-count/finish signatures and96non-solo comparisons per arm pass; each has selected8/256+35M closure. M warm-short SSE gaps BATCH/THIN 0.473759/0.020419s; native overlap both warm True/False. Minimum CMP free 425/3203MiB. SSE gaps are not native token clocks; one-slot serialization is not pause-free overlap. BATCH90%mixed-floor screen=True; same-recipe SSE repeat delta +4.747ms with different preceding traffic. No latency gate waived or tuple admitted. S10freshmixed17 was not run; other concurrencies/full1M remain unmeasured. Source:evidence/xf19_raw_mixed_comparison_v1.json (both independently pinned strict summaries).",
+      "numerical_class": "draft_only",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false,
+      "measurement_source": {
+        "window": "gxf_s10_fixed_multiple",
+        "source_commit": "e4c188eb84ffed030187292dd15262d717c89b3a",
+        "binary_sha256": "8d9b8b054a427cb996a7870b38724a28dde49cdf51530a8515834329f3d92708",
+        "registry_sha256": "8ec868b50e9597d449739a89c02768d6bc4111af002a1bea26fa85bd9614150e",
+        "summary_sha256": "899f639b4eca49920cafd31d20dd946603181f5bad21086810b5043aa2bc4dc4",
+        "scope": "Complete requested observations on the independently pinned ordinary EXL3 binary only. Raw overrides are part of the measured recipe. C1 decode rates are per stream; C2/C4/C8 rates are aggregate. No timing from a prior source, optimum over unrequested tuples, balanced envelope, no-regression margin, official exactness, all-logit/state equality, full-context work or 1M fit is inferred. Selected references contain all 8/256 ordered first-four-field records, not the full vocabulary. Pause clocks are SSE content-event clocks; the unchanged M client records no finish_reason. Fraser stores native counts, finish and a truncated text digest rather than full output text. Source manifest and ordinary binary pins identify the frozen build; this read-only check is not a rebuild."
+      }
+    },
+    "batch_adaptive": {
+      "description": "BATCH with the measured row/verifier menu and adaptive draft prices.",
+      "settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --batch_step_us=19500,21500,28600,30000,32000,39000,46000,58000 --draft_policy=2 --batch_core_once=2 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0",
+      "serve_settings": "--session_slots=8 --prefill_first=1 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_order=2",
+      "generate_settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8 --batch_verifiers=1 --batch_wide_head=1 --batch_draft_rows=1 --batch_step_us=19500 --draft_policy=2 --batch_core_once=2 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0",
+      "error_class": "Same bits relative to the pinned EXL3 family controls; current HC/current forms, no added lossy arithmetic. Official-model equality is unqualified; read the measured scope and identity gates.",
+      "evidence": "Measured frozen S10/e4c188e (base5029986), ordinary binary8d9b8b05, context65536/eight slots/four CMPs180W. C1 per stream; C2/C4/C8 aggregate. code C1/C2/C4/C8 224.170/278.327/359.324/432.990 tok/s. prose C1/C2/C4/C8 167.648/274.233/361.298/450.231 tok/s. structured C1/C2/C4/C8 338.899/451.601/611.101/787.726 tok/s. Fraser median/worst ms: C1 1580.00/1586.60; C4 4105.00/6731.10; C8 7622.45/14307.60; ten/three/three batches. Warm-short/all-short max SSE content gaps 0.473398/0.483963s; sampled native decode/prefill progress in both warm repetitions. These are not native token clocks or an isolated GPU pause. Minimum CMP free at readiness 423MiB. Full selected8/256 references and141 MiaAI request/text/native-count/finish signatures pass;35 M identities pass. Observed post-window device/cap restoration and full artifact/source closure pass. Own one-CPU startup checks10:28:35-10:28:45 overlap MiaAI; M/Fraser follow later. Sequential observations; no isolated causal or global-optimum claim. Cold prefill, full mixed traffic and1M work were not requested. No bounded-balanced admission or current-main default comparison follows from this window. Current S10 full-vocabulary/reference distance and PPL are unmeasured; the S06 cached-eight diagnostic remains separately sourced. Current HC/forms, no added lossy arithmetic; not official-exact. Source: evidence/gxf_s10_adaptive_multiple_strict_s10_v1.json. Current raw tcb78/39980 control (not a selected axis): code C1/C2/C4/C8 239.200/284.234/388.513/438.798tok/s; prose C1/C2/C4/C8 169.926/258.172/373.774/446.555tok/s; structured C1/C2/C4/C8 340.663/453.337/613.833/791.158tok/s; Fraser C1/C4/C8 median/worst1578.10/1583.40,4110.05/6752.30,7620.10/14295.10ms; warm-short SSE max0.469012s. Code dominates the old adaptive/session control in all four cells; prose/structured stay within90% of observed best. This is not an independently proven zero-regression comparison or all-balanced admission. N build36 overlaps part of this control Fraser; no isolated causal inference. Source:evidence/gxf_tcb78_control_matrix_strict_xf18_v1.json. Fresh raw-main mixed comparison xf19: tcb78/39980, explicit65K; scenario order C1/C2burst/C2stagger/C4burst/C4stagger/C8burst/C8stagger. BATCH8 whole-window rates 128.661/145.732/133.334/161.279/159.154/181.848/179.383; trueTHIN1 122.756/122.618/119.106/122.719/122.579/122.622/122.647tok/s. These14.3k/0/690 controls use BATCHcore3 or THINwide1024/pipeline1/layers1, not the S10 axis settings. 112cross-family request/text/reason/native-count/finish signatures and96non-solo comparisons per arm pass; each has selected8/256+35M closure. M warm-short SSE gaps BATCH/THIN 0.473759/0.020419s; native overlap both warm True/False. Minimum CMP free 425/3203MiB. SSE gaps are not native token clocks; one-slot serialization is not pause-free overlap. BATCH90%mixed-floor screen=True; same-recipe SSE repeat delta +4.747ms with different preceding traffic. No latency gate waived or tuple admitted. S10freshmixed17 was not run; other concurrencies/full1M remain unmeasured. Source:evidence/xf19_raw_mixed_comparison_v1.json (both independently pinned strict summaries).",
+      "numerical_class": "same_bits",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false,
+      "measurement_source": {
+        "window": "gxf_s10_adaptive_multiple",
+        "source_commit": "e4c188eb84ffed030187292dd15262d717c89b3a",
+        "binary_sha256": "8d9b8b054a427cb996a7870b38724a28dde49cdf51530a8515834329f3d92708",
+        "registry_sha256": "8ec868b50e9597d449739a89c02768d6bc4111af002a1bea26fa85bd9614150e",
+        "summary_sha256": "e60f26ba329bdbd62c10d98900acb662a79d8ce64bde39f98e9d37c48138193c",
+        "scope": "Complete requested observations on the independently pinned ordinary EXL3 binary only. Raw overrides are part of the measured recipe. C1 decode rates are per stream; C2/C4/C8 rates are aggregate. No timing from a prior source, optimum over unrequested tuples, balanced envelope, no-regression margin, official exactness, all-logit/state equality, full-context work or 1M fit is inferred. Selected references contain all 8/256 ordered first-four-field records, not the full vocabulary. Pause clocks are SSE content-event clocks; the unchanged M client records no finish_reason. Fraser stores native counts, finish and a truncated text digest rather than full output text. Source manifest and ordinary binary pins identify the frozen build; this read-only check is not a rebuild."
+      },
+      "historical_evidence_before_xf11": "S06 full selected8/256 controls pass. Historical homogeneous matrix measurements remain source-scoped in the linked S04/S05 receipts, not refreshed by this mixed-only window. Measured fresh S06 M-arrival then unchanged full mixed client (no preceding MiaAI/cold/Fraser), context65536/eight slots. Mixed whole-scenario aggregate tok/s, TTFTp50/max seconds: c1_solo 124.04, 0.718/7.695; c2_burst 145.14, 1.063/8.416; c2_staggered 133.37, 0.745/8.159; c4_burst 161.86, 1.103/10.324; c4_staggered 159.46, 0.952/10.289; c8_burst 180.58, 1.653/19.171; c8_staggered 179.79, 0.979/17.291; 112/112 joint request/text/reasoning/native-count/finish matches (96 cross-solo). Both warm repetitions show native decode progress while the long prompt remains incomplete. SSE gaps are timing proxies, not native-token pauses. Source: evidence/gxf_s06_adaptive_mixed_summary_v1.json; detailed observations retained in evidence_appendices. No default-latency or bounded-compromise claim. Separate S06 target-only cached-eight diagnostic against R serial fixture: raw logit RMS0.965879/max6.407856, centered RMS0.935177, KL(original||candidate) mean0.223993/max1.107303 nats, teacher top1 7/8. Two independent repeats have zero changed F32 bits over1034240 logits and identical577536-byte canonical state. Combined weight/arithmetic/placement/head distance; not corpus PPL, generation agreement or official equality. Source: evidence/s06_batch_serial_logits_v1.json. Historical S05 homogeneous structured C1/C2/C4/C8 340.12/451.92/612.43/787.72, code224.40/278.59/359.54/432.76, prose167.55/274.70/361.03/451.00tok/s; cold3311tok/s, Fraser C1median/worst1577.9/1582.5ms. Those timings predate the fresh mixed window."
+    },
+    "batch_session": {
+      "description": "BATCH with session acceptance mode 5 and tied plan cuts.",
+      "settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --batch_step_us=19500,21500,28600,30000,32000,39000,46000,58000 --draft_policy=2 --draft_session_acceptance=5 --batch_plan_ties=1 --batch_core_once=2 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0",
+      "serve_settings": "--session_slots=8 --prefill_first=1 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_order=2",
+      "generate_settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8 --batch_verifiers=1 --batch_wide_head=1 --batch_draft_rows=1 --batch_step_us=19500 --draft_policy=2 --draft_session_acceptance=5 --batch_plan_ties=1 --batch_core_once=2 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0",
+      "error_class": "Draft-only relative to the pinned EXL3 family controls; current HC/current forms, no added lossy arithmetic. Official-model equality is unqualified; read the measured scope and identity gates.",
+      "evidence": "Measured frozen S10/e4c188e (base5029986), ordinary binary8d9b8b05, context65536/eight slots/four CMPs180W. C1 per stream; C2/C4/C8 aggregate. code C1/C2/C4/C8 227.868/283.425/369.675/433.150 tok/s. prose C1/C2/C4/C8 168.169/273.004/377.822/489.290 tok/s. structured C1/C2/C4/C8 339.781/451.463/612.148/787.766 tok/s. Fraser median/worst ms: C1 1578.35/1584.90; C4 4116.50/6760.10; C8 7628.85/14294.90; ten/three/three batches. Warm-short/all-short max SSE content gaps 0.473932/0.483005s; sampled native decode/prefill progress in both warm repetitions. These are not native token clocks or an isolated GPU pause. Minimum CMP free at readiness 423MiB. Full selected8/256 references and141 MiaAI request/text/native-count/finish signatures pass;35 M identities pass. Observed post-window device/cap restoration and full artifact/source closure pass. No own C build or host-test overlap. Sequential observations; no isolated causal or global-optimum claim. Cold prefill, full mixed traffic and1M work were not requested. No bounded-balanced admission or current-main default comparison follows from this window. Current S10 full-vocabulary/reference distance and PPL are unmeasured; the S06 cached-eight diagnostic remains separately sourced. Current HC/forms, no added lossy arithmetic; not official-exact. Source: evidence/gxf_s10_session_multiple_strict_s10_v1.json. Current raw tcb78/39980 control (not a selected axis): code C1/C2/C4/C8 239.200/284.234/388.513/438.798tok/s; prose C1/C2/C4/C8 169.926/258.172/373.774/446.555tok/s; structured C1/C2/C4/C8 340.663/453.337/613.833/791.158tok/s; Fraser C1/C4/C8 median/worst1578.10/1583.40,4110.05/6752.30,7620.10/14295.10ms; warm-short SSE max0.469012s. Code dominates the old adaptive/session control in all four cells; prose/structured stay within90% of observed best. This is not an independently proven zero-regression comparison or all-balanced admission. N build36 overlaps part of this control Fraser; no isolated causal inference. Source:evidence/gxf_tcb78_control_matrix_strict_xf18_v1.json. Fresh raw-main mixed comparison xf19: tcb78/39980, explicit65K; scenario order C1/C2burst/C2stagger/C4burst/C4stagger/C8burst/C8stagger. BATCH8 whole-window rates 128.661/145.732/133.334/161.279/159.154/181.848/179.383; trueTHIN1 122.756/122.618/119.106/122.719/122.579/122.622/122.647tok/s. These14.3k/0/690 controls use BATCHcore3 or THINwide1024/pipeline1/layers1, not the S10 axis settings. 112cross-family request/text/reason/native-count/finish signatures and96non-solo comparisons per arm pass; each has selected8/256+35M closure. M warm-short SSE gaps BATCH/THIN 0.473759/0.020419s; native overlap both warm True/False. Minimum CMP free 425/3203MiB. SSE gaps are not native token clocks; one-slot serialization is not pause-free overlap. BATCH90%mixed-floor screen=True; same-recipe SSE repeat delta +4.747ms with different preceding traffic. No latency gate waived or tuple admitted. S10freshmixed17 was not run; other concurrencies/full1M remain unmeasured. Source:evidence/xf19_raw_mixed_comparison_v1.json (both independently pinned strict summaries).",
+      "numerical_class": "draft_only",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false,
+      "measurement_source": {
+        "window": "gxf_s10_session_multiple",
+        "source_commit": "e4c188eb84ffed030187292dd15262d717c89b3a",
+        "binary_sha256": "8d9b8b054a427cb996a7870b38724a28dde49cdf51530a8515834329f3d92708",
+        "registry_sha256": "8ec868b50e9597d449739a89c02768d6bc4111af002a1bea26fa85bd9614150e",
+        "summary_sha256": "d1658dc46bf3f22206d32d7f2abf2a907f47a6ed893a7e10aad22d46b192ca2b",
+        "scope": "Complete requested observations on the independently pinned ordinary EXL3 binary only. Raw overrides are part of the measured recipe. C1 decode rates are per stream; C2/C4/C8 rates are aggregate. No timing from a prior source, optimum over unrequested tuples, balanced envelope, no-regression margin, official exactness, all-logit/state equality, full-context work or 1M fit is inferred. Selected references contain all 8/256 ordered first-four-field records, not the full vocabulary. Pause clocks are SSE content-event clocks; the unchanged M client records no finish_reason. Fraser stores native counts, finish and a truncated text digest rather than full output text. Source manifest and ordinary binary pins identify the frozen build; this read-only check is not a rebuild."
+      }
+    },
+    "thin_fixed": {
+      "description": "THIN with fixed full draft depth five, one serving slot and 2048-row prefill. Canonical sharded THIN head and draft-head strategy.",
+      "settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --draft_policy=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --batch_core_once=2",
+      "serve_settings": "--session_slots=1 --prefix_reuse=0",
+      "generate_settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --draft_policy=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --batch_core_once=2",
+      "error_class": "Draft-only relative to the pinned EXL3 family controls; current HC/current forms, no added lossy arithmetic. Official-model equality is unqualified; read the measured scope and identity gates.",
+      "evidence": "Measured frozen S10/e4c188e, ordinary binary8d9b8b05, context65536/one true-THIN slot, wide2048/pipeline2/tp_draft_layers0, four CMPs180W. C1 code 230.347tok/s. C1 prose 158.591tok/s. C1 structured 332.793tok/s. Fraser10cold median/worst 1381.35/1390.70ms; cold prefill9 median 3904tok/s, allcached0; minimum CMP free 3181MiB. Full selected8/256 references,15 MiaAI signatures,source/artifact closure and observed cap restoration pass. No own C build/test overlap. C2-C8, mixed, pause and full1M work unmeasured by this window. Separate S10 one1M-slot allocation/short window: C1 code 229.339, prose 157.465, structured 327.399tok/s; 15MiB minimum free, both2048/1024 mc_check2 pairs pass. Allocation/short work only, no full1M/pi proof; context1048576 is a raw override, never inserted by this axis. Source:evidence/gxf_s10_single_1m_strict_s10_v1.json. Current HC/forms, no added lossy arithmetic; not official-exact. Current full-vocabulary reference distance, corpusPPL and all-width bit equality unmeasured. Historical S06 eight-position numerics remain in the source registry. Source:evidence/gxf_s10_single_layers0_strict_xf18_v1.json. Fresh raw-main mixed comparison xf19: tcb78/39980, explicit65K; scenario order C1/C2burst/C2stagger/C4burst/C4stagger/C8burst/C8stagger. BATCH8 whole-window rates 128.661/145.732/133.334/161.279/159.154/181.848/179.383; trueTHIN1 122.756/122.618/119.106/122.719/122.579/122.622/122.647tok/s. These14.3k/0/690 controls use BATCHcore3 or THINwide1024/pipeline1/layers1, not the S10 axis settings. 112cross-family request/text/reason/native-count/finish signatures and96non-solo comparisons per arm pass; each has selected8/256+35M closure. M warm-short SSE gaps BATCH/THIN 0.473759/0.020419s; native overlap both warm True/False. Minimum CMP free 425/3203MiB. SSE gaps are not native token clocks; one-slot serialization is not pause-free overlap. BATCH90%mixed-floor screen=True; same-recipe SSE repeat delta +4.747ms with different preceding traffic. No latency gate waived or tuple admitted. S10freshmixed17 was not run; other concurrencies/full1M remain unmeasured. Source:evidence/xf19_raw_mixed_comparison_v1.json (both independently pinned strict summaries).",
+      "numerical_class": "draft_only",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false,
+      "measurement_source": {
+        "window": "gxf_s10_single_1m",
+        "source_commit": "e4c188eb84ffed030187292dd15262d717c89b3a",
+        "binary_sha256": "8d9b8b054a427cb996a7870b38724a28dde49cdf51530a8515834329f3d92708",
+        "registry_sha256": "8ec868b50e9597d449739a89c02768d6bc4111af002a1bea26fa85bd9614150e",
+        "summary_sha256": "fc2d7297a704025ad3a8cc70bd789e8f9aaef211ba9146feecc3e061f37c0432",
+        "capacity_tokens": 1048576,
+        "scope": "Complete requested observations on the independently pinned ordinary EXL3 binary only. Raw overrides are part of the measured recipe. C1 decode rates are per stream; C2/C4/C8 rates are aggregate. No timing from a prior source, optimum over unrequested tuples, balanced envelope, no-regression margin, official exactness, all-logit/state equality, full-context work or 1M fit is inferred. Selected references contain all 8/256 ordered first-four-field records, not the full vocabulary. Pause clocks are SSE content-event clocks; the unchanged M client records no finish_reason. Fraser stores native counts, finish and a truncated text digest rather than full output text. Source manifest and ordinary binary pins identify the frozen build; this read-only check is not a rebuild."
+      },
+      "main39980_continuity": "Explicitly retain frozen S10 THIN core selector2 after main39980 changed omitted EXL3 CLI core to3; inactive without BATCH. All other draft fields already explicit. CPU parsed-value continuity required; old GPU timings keep source e4c188e.",
+      "historical_evidence_before_s10": "Measured gxf_s06_code_single_short on rnds_06, four CMPs at 180 W; C1 rates are per stream and C2-C8 rates are aggregate. structured C1/C2/C4/C8 330.1/unmeasured/unmeasured/unmeasured tok/s; MiaAI median TTFT 50.7/unmeasured/unmeasured/unmeasured ms. code C1/C2/C4/C8 231.0/unmeasured/unmeasured/unmeasured tok/s; MiaAI median TTFT 67.8/unmeasured/unmeasured/unmeasured ms. prose C1/C2/C4/C8 159.0/unmeasured/unmeasured/unmeasured tok/s; MiaAI median TTFT 59.2/unmeasured/unmeasured/unmeasured ms. All 15/15 request/text/native-count/finish comparisons match. Fraser C1 median/worst TTFT 1379.4/1395.1 ms, aggregate E2E 198.00 tok/s. Cold prefill median of nine 3909 tok/s, all cached_tokens=0. Minimum CMP free memory at readiness 3181 MiB. Explicit context capacity 65536 tokens. Mixed-traffic speed and long-prefill pauses remain unmeasured in this window. 1M fit and pi qualification are not inferred from this capacity. The numerical class is relative to the pinned weight-family controls; this is not official-model equality or a qualified balanced margin/no-regression claim. Source: gnmac_port/evidence/gxf_s06_code_single_short; full client, startup and selected-record receipts retained.\n\nR serial-eight numerical observation, family thin1_sharded: pinned original cached-one-row actual-head fixture versus EXL3 target-only capture; eight teacher-forced inputs, 8x129280 finite stored F32 logits, widened for F64 arithmetic. Pooled raw logit RMS/max 0.965879499/6.40786219; per-row-centered RMS/max 0.935177891/6.23843359; F64 KL(original||candidate) mean/max 0.22399302/1.10730062 nats; teacher-forced top1 7/8. Seven-label adjacent-fixture NLL smoke only: original/candidate/delta mean 9.63326545/9.47033962/-0.16292583 nats; not corpus PPL or T=0 generation agreement. Repeat full payload/logit stored bits and canonical state/layout bytes agree. Sharded THIN1 retained; source M1 logical schedule matched, four output shards; equivalent GEMM arithmetic unproven. Combined weight/arithmetic/placement/head-strategy distance; not a weights-only attribution or established original-engine equality. Only the captured one-live-row schedule and thin1_sharded are observed; other verifier widths, prompt-eight/full8 forwards, drafting, generation, rollback and serving are unmeasured by this capture. No quality threshold is applied. Scoped observations only; prior S04 evidence is historical and remains intact. No automatic admission, margin relaxation, settings change or fast qualification. Complete per-position metrics: track_s_v1/evidence/s06_thin_serial_logits_v1.json; full provenance retained in evidence_appendices.",
+      "actual_observations_1m_allocation": {
+        "decode": {
+          "code-c1": {
+            "kind": "code",
+            "concurrency": 1,
+            "tok_s": 229.3394259363975,
+            "per_stream_tok_s": 229.3394259363975,
+            "ttft_ms": 68.64402606151998,
+            "runs": 5,
+            "streams": 5,
+            "text_equals_c1": 5,
+            "request_output_equals_c1": 5,
+            "completion_tokens_min": 95,
+            "completion_tokens_max": 95,
+            "unique_text_sha256": [
+              "3eac2789d7d62ac2fc818eebafe0dae480b1d442977eff5f672088c06057ff7c"
+            ],
+            "successful": true
+          },
+          "prose-c1": {
+            "kind": "prose",
+            "concurrency": 1,
+            "tok_s": 157.465171608213,
+            "per_stream_tok_s": 157.465171608213,
+            "ttft_ms": 59.91308600641787,
+            "runs": 5,
+            "streams": 5,
+            "text_equals_c1": 5,
+            "request_output_equals_c1": 5,
+            "completion_tokens_min": 400,
+            "completion_tokens_max": 400,
+            "unique_text_sha256": [
+              "124c6410274838b2a5511fa4772e8497262b9af63d40a8c41243b3210ce286ee"
+            ],
+            "successful": true
+          },
+          "structured-c1": {
+            "kind": "structured",
+            "concurrency": 1,
+            "tok_s": 327.3993854712947,
+            "per_stream_tok_s": 327.3993854712947,
+            "ttft_ms": 51.26724601723254,
+            "runs": 5,
+            "streams": 5,
+            "text_equals_c1": 5,
+            "request_output_equals_c1": 5,
+            "completion_tokens_min": 400,
+            "completion_tokens_max": 400,
+            "unique_text_sha256": [
+              "4e4e24a204771aa0fac78811e9b29b125bfd75046810db269a10ab9cebfe47d7"
+            ],
+            "successful": true
+          }
+        },
+        "fraser": {
+          "c1": {
+            "streams": 10,
+            "batches": 10,
+            "ttft_ms": 1435.85,
+            "per_stream_tok_s": 235.7,
+            "aggregate_decode_tok_s": 235.67865744266504,
+            "aggregate_e2e_tok_s": 201.17390641204128,
+            "all_cold": true,
+            "worst_ttft_ms": 1443.6,
+            "ttft_raw_ms": [
+              1437.4,
+              1443.6,
+              1429.9,
+              1435.2,
+              1433.6,
+              1436.5,
+              1442,
+              1433,
+              1439.6,
+              1431.6
+            ]
+          }
+        },
+        "cold_prefill": {
+          "tok_s": 3795.0,
+          "requests": 9,
+          "all_cold": true
+        },
+        "memory": {
+          "minimum_cmp_free_mib": 15.0,
+          "rows": [
+            {
+              "index": "0",
+              "pci.bus_id": "00000000:01:00.0",
+              "memory.used [MiB]": "63639 MiB",
+              "memory.free [MiB]": "1279 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1485 MHz"
+            },
+            {
+              "index": "1",
+              "pci.bus_id": "00000000:41:00.0",
+              "memory.used [MiB]": "64904 MiB",
+              "memory.free [MiB]": "15 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1485 MHz"
+            },
+            {
+              "index": "2",
+              "pci.bus_id": "00000000:81:00.0",
+              "memory.used [MiB]": "95 MiB",
+              "memory.free [MiB]": "97247 MiB",
+              "power.limit [W]": "400.00 W",
+              "clocks.current.sm [MHz]": "195 MHz"
+            },
+            {
+              "index": "3",
+              "pci.bus_id": "00000000:82:00.0",
+              "memory.used [MiB]": "54472 MiB",
+              "memory.free [MiB]": "10447 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1485 MHz"
+            },
+            {
+              "index": "4",
+              "pci.bus_id": "00000000:C1:00.0",
+              "memory.used [MiB]": "64904 MiB",
+              "memory.free [MiB]": "15 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1455 MHz"
+            }
+          ]
+        }
+      },
+      "historical_evidence_before_xf18": "Measured frozen S10/e4c188e (base5029986), ordinary binary8d9b8b05, with explicit context1048576 and one true-THIN slot, four CMPs180W. This capacity override is not inserted by the axes. C1 code 229.339tok/s, MiaAI medianTTFT 68.64ms. C1 prose 157.465tok/s, MiaAI medianTTFT 59.91ms. C1 structured 327.399tok/s, MiaAI medianTTFT 51.27ms. Cold prefill median9 3795tok/s, allcached0; Fraser10cold batches median/worst 1435.85/1443.60ms, aggregateE2E 201.174tok/s. Minimum CMP free at readiness 15MiB. Both2048/1024 mc_check2 reference pairs, full selected8/256 records,15 MiaAI request/text/native-count/finish signatures and nine native-count/text/finish cold requests pass. Source/artifact closure and observed all-five-device cap restoration pass. No own CPU compile/test overlaps this window. Allocation and short requests only: no full1M request, peak-memory envelope, pi, mixed/pause or C2-C8 proof. Not a65K timing replacement, default comparison, bounded compromise or focus-specific optimum. Current HC/forms, no added lossy knob; currentS10 full-vocabulary/reference distance and corpusPPL unmeasured. Source: evidence/gxf_s10_single_1m_strict_s10_v1.json.\n\nHistorical S06 R serial-eight numerical observation, family thin1_sharded: pinned original cached-one-row actual-head fixture versus EXL3 target-only capture; eight teacher-forced inputs, 8x129280 finite stored F32 logits, widened for F64 arithmetic. Pooled raw logit RMS/max 0.965879499/6.40786219; per-row-centered RMS/max 0.935177891/6.23843359; F64 KL(original||candidate) mean/max 0.22399302/1.10730062 nats; teacher-forced top1 7/8. Seven-label adjacent-fixture NLL smoke only: original/candidate/delta mean 9.63326545/9.47033962/-0.16292583 nats; not corpus PPL or T=0 generation agreement. Repeat full payload/logit stored bits and canonical state/layout bytes agree. Sharded THIN1 retained; source M1 logical schedule matched, four output shards; equivalent GEMM arithmetic unproven. Combined weight/arithmetic/placement/head-strategy distance; not a weights-only attribution or established original-engine equality. Only the captured one-live-row schedule and thin1_sharded are observed; other verifier widths, prompt-eight/full8 forwards, drafting, generation, rollback and serving are unmeasured by this capture. No quality threshold is applied. Scoped observations only; prior S04 evidence is historical and remains intact. No automatic admission, margin relaxation, settings change or fast qualification. Complete per-position metrics: track_s_v1/evidence/s06_thin_serial_logits_v1.json; full provenance retained in evidence_appendices.",
+      "measurement_source_65k": {
+        "window": "gxf_s10_single_layers0",
+        "source_commit": "e4c188eb84ffed030187292dd15262d717c89b3a",
+        "binary_sha256": "8d9b8b054a427cb996a7870b38724a28dde49cdf51530a8515834329f3d92708",
+        "registry_sha256": "8ec868b50e9597d449739a89c02768d6bc4111af002a1bea26fa85bd9614150e",
+        "summary_sha256": "86afcf434e8428745e8223e67abded2af7226f1425e6b79557b9cfe43dbd025b"
+      },
+      "actual_observations_65k": {
+        "decode": {
+          "code-c1": {
+            "kind": "code",
+            "concurrency": 1,
+            "tok_s": 230.34664759066425,
+            "per_stream_tok_s": 230.34664759066425,
+            "ttft_ms": 68.09419102501124,
+            "runs": 5,
+            "streams": 5,
+            "text_equals_c1": 5,
+            "request_output_equals_c1": 5,
+            "completion_tokens_min": 95,
+            "completion_tokens_max": 95,
+            "unique_text_sha256": [
+              "3eac2789d7d62ac2fc818eebafe0dae480b1d442977eff5f672088c06057ff7c"
+            ],
+            "successful": true
+          },
+          "prose-c1": {
+            "kind": "prose",
+            "concurrency": 1,
+            "tok_s": 158.59107888353122,
+            "per_stream_tok_s": 158.59107888353122,
+            "ttft_ms": 59.20360400341451,
+            "runs": 5,
+            "streams": 5,
+            "text_equals_c1": 5,
+            "request_output_equals_c1": 5,
+            "completion_tokens_min": 400,
+            "completion_tokens_max": 400,
+            "unique_text_sha256": [
+              "124c6410274838b2a5511fa4772e8497262b9af63d40a8c41243b3210ce286ee"
+            ],
+            "successful": true
+          },
+          "structured-c1": {
+            "kind": "structured",
+            "concurrency": 1,
+            "tok_s": 332.79307613771766,
+            "per_stream_tok_s": 332.79307613771766,
+            "ttft_ms": 50.01686606556177,
+            "runs": 5,
+            "streams": 5,
+            "text_equals_c1": 5,
+            "request_output_equals_c1": 5,
+            "completion_tokens_min": 400,
+            "completion_tokens_max": 400,
+            "unique_text_sha256": [
+              "4e4e24a204771aa0fac78811e9b29b125bfd75046810db269a10ab9cebfe47d7"
+            ],
+            "successful": true
+          }
+        },
+        "fraser": {
+          "c1": {
+            "streams": 10,
+            "batches": 10,
+            "ttft_ms": 1381.35,
+            "per_stream_tok_s": 239.35,
+            "aggregate_decode_tok_s": 239.33330920510093,
+            "aggregate_e2e_tok_s": 205.13864228460477,
+            "all_cold": true,
+            "worst_ttft_ms": 1390.7,
+            "ttft_raw_ms": [
+              1383.2,
+              1385.6,
+              1369.8,
+              1370.7,
+              1371.9,
+              1381.4,
+              1389.7,
+              1375.9,
+              1390.7,
+              1381.3
+            ]
+          }
+        },
+        "cold_prefill": {
+          "tok_s": 3904.0,
+          "requests": 9,
+          "all_cold": true
+        },
+        "memory": {
+          "minimum_cmp_free_mib": 3181.0,
+          "rows": [
+            {
+              "index": "0",
+              "pci.bus_id": "00000000:01:00.0",
+              "memory.used [MiB]": "60469 MiB",
+              "memory.free [MiB]": "4449 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1485 MHz"
+            },
+            {
+              "index": "1",
+              "pci.bus_id": "00000000:41:00.0",
+              "memory.used [MiB]": "61738 MiB",
+              "memory.free [MiB]": "3181 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1485 MHz"
+            },
+            {
+              "index": "2",
+              "pci.bus_id": "00000000:81:00.0",
+              "memory.used [MiB]": "95 MiB",
+              "memory.free [MiB]": "97247 MiB",
+              "power.limit [W]": "400.00 W",
+              "clocks.current.sm [MHz]": "180 MHz"
+            },
+            {
+              "index": "3",
+              "pci.bus_id": "00000000:82:00.0",
+              "memory.used [MiB]": "51306 MiB",
+              "memory.free [MiB]": "13613 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1485 MHz"
+            },
+            {
+              "index": "4",
+              "pci.bus_id": "00000000:C1:00.0",
+              "memory.used [MiB]": "61738 MiB",
+              "memory.free [MiB]": "3181 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1455 MHz"
+            }
+          ]
+        }
+      }
+    },
+    "batch_compromise": {
+      "description": "Qualification candidate: BATCH with 2048-row cold prefill and the current 1024-row active-prefill cap.",
+      "settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --batch_step_us=19500,21500,28600,30000,32000,39000,46000,58000 --draft_policy=2 --batch_core_once=2 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0",
+      "serve_settings": "--session_slots=8 --prefill_first=1 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_order=2",
+      "generate_settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8 --batch_verifiers=1 --batch_wide_head=1 --batch_draft_rows=1 --batch_step_us=19500 --draft_policy=2 --batch_core_once=2 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0",
+      "error_class": "Same bits relative to the pinned EXL3 family controls; current HC/current forms, no added lossy arithmetic. Official-model equality is unqualified; read the measured scope and identity gates.",
+      "evidence": "Measured S05 gxf_s05_mix2048: both full8/256 generate files equal the frozen BATCH family controls (30K24b0b22314d2, Fraserf49e8badff47). Eight-slot/65536-token serve fails the model memory planner before readiness; no serving rates, TTFT, pauses or memory-ready values are measured. The source candidate is held. This is a resource refusal, not a numerical mismatch. Source: gnmac_port/evidence/gxf_s05_mix2048.",
+      "numerical_class": "same_bits",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false
+    },
+    "original_tp_serial2": {
+      "description": "Original-weight native PRO tail with the existing serial four-CMP prefix, two pipeline steps and one serving slot.",
+      "settings": [
+        "--placement=tp4_pro",
+        "--numerics=exact",
+        "--cmp_order=reference",
+        "--linear_profile=0",
+        "--linear_order=1",
+        "--pro_emulation=0",
+        "--card_order=0,1,3,4,2",
+        "--rows=8",
+        "--wide_rows=1024",
+        "--full_steps=1",
+        "--prefill_cone=1",
+        "--chunks_in_flight=1",
+        "--step_graphs=1",
+        "--speculative=2",
+        "--draft_block=5",
+        "--draft_positions=5",
+        "--draft_policy=0",
+        "--card_memory_kept_free_mib=0",
+        "--pipeline_steps=2",
+        "--official_hc_rows=0",
+        "--tp_pipeline_overlap=0",
+        "--original_chunk_core=0",
+        "--original_dense_staged=0",
+        "--original_wide_experts=0",
+        "--draft_learned_acceptance=0",
+        "--draft_session_acceptance=0",
+        "--batch_plan_ties=0",
+        "--draft_base_us=12700",
+        "--draft_tail_us=2200",
+        "--draft_row_us=2700"
+      ],
+      "serve_settings": [
+        "--session_slots=1",
+        "--prefix_reuse=0",
+        "--prefill_order=0",
+        "--original_batch=0"
+      ],
+      "generate_settings": [
+        "--placement=tp4_pro",
+        "--numerics=exact",
+        "--cmp_order=reference",
+        "--linear_profile=0",
+        "--linear_order=1",
+        "--pro_emulation=0",
+        "--card_order=0,1,3,4,2",
+        "--rows=8",
+        "--wide_rows=1024",
+        "--full_steps=1",
+        "--prefill_cone=1",
+        "--chunks_in_flight=1",
+        "--step_graphs=1",
+        "--speculative=2",
+        "--draft_block=5",
+        "--draft_positions=5",
+        "--draft_policy=0",
+        "--card_memory_kept_free_mib=0",
+        "--pipeline_steps=2",
+        "--official_hc_rows=0",
+        "--tp_pipeline_overlap=0",
+        "--original_chunk_core=0",
+        "--original_dense_staged=0",
+        "--original_wide_experts=0",
+        "--draft_learned_acceptance=0",
+        "--draft_session_acceptance=0",
+        "--batch_plan_ties=0",
+        "--draft_base_us=12700",
+        "--draft_tail_us=2200",
+        "--draft_row_us=2700"
+      ],
+      "error_class": "Current original HC/current forms; selected-record preservation against the pinned original cold controls. Draft-only schedule; complete target logit/state and official-reference equality remain unproven.",
+      "evidence": "Measured frozen S10/e4c188e (base5029986), ordinary binary 8d9b8b05. Original pack, native PRO and four CMPs at 180 W, context 65536, 1 slot(s), prefix reuse off. C1 rates are per stream; C2/C4/C8 rates are aggregates. code C1/C2/C4/C8: 207.123/unmeasured/unmeasured/unmeasured tok/s. MiaAI median TTFT: 100.60/unmeasured/unmeasured/unmeasured ms (small decode prompts, not Fraser). prose C1/C2/C4/C8: 150.795/unmeasured/unmeasured/unmeasured tok/s. MiaAI median TTFT: 78.95/unmeasured/unmeasured/unmeasured ms (small decode prompts, not Fraser). structured C1/C2/C4/C8: 288.582/unmeasured/unmeasured/unmeasured tok/s. MiaAI median TTFT: 73.30/unmeasured/unmeasured/unmeasured ms (small decode prompts, not Fraser). Full selected 8/256 records and 15 MiaAI request/text/native-count/finish signatures pass. Minimum CMP free at readiness: 5503 MiB. Startup expansion, artifact/source pins, original-pack stat and device/cap restoration pass. Five C1 batches and three batches at each requested C2/C4/C8 cell. No own C-build/host-test overlap. Sequential observations, no causal or global-optimum claim. Cold prefill, Fraser, mixed traffic, long-prefill pauses, 1M fit and full-context work were not requested. Current HC/current forms; no added lossy arithmetic, not official-exact. Source: evidence/gxf_s10_original_single_strict_s10_v1.json. Historical original numerical diagnostic, O xo03/xo16: eight aligned cached-one teacher inputs, 1,034,240 F32 logits. PP5 and TP4_PRO captures are equal; against R original parent PRO2 with unchanged sparse core CMP0, mean/max KL 0.0407172/0.144973 nats, raw RMS/max 0.568391/4.276049, teacher top1 8/8. Source75 baseline replay preserves those captures. Not untouched all-PRO, corpus PPL, generated agreement or current-S10 full-vocabulary distance. See evidence/xo16_serial_reference_distance_v1.json and RND_O/S 5Nov09:26.",
+      "numerical_class": "draft_only",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false,
+      "measurement_source": {
+        "window": "gxf_s10_original_single",
+        "source_commit": "e4c188eb84ffed030187292dd15262d717c89b3a",
+        "binary_sha256": "8d9b8b054a427cb996a7870b38724a28dde49cdf51530a8515834329f3d92708",
+        "registry_sha256": "8ec868b50e9597d449739a89c02768d6bc4111af002a1bea26fa85bd9614150e",
+        "summary_sha256": "23c58b5293b783cbfa536c1f33ea979a4e9771a7b71648ad4234a8667b9f12e2",
+        "scope": "Independently pinned original-weight, current-arithmetic, decode-only observations. Prefix reuse is explicitly0; the unchanged MiaAI client still performs its own warmups. C1 is per stream and C2/C4/C8 rates are aggregate. Capacity65536 and actual slot count are launch settings, not full-context or capacity qualification. Selected first-four-field records and observed API outputs do not establish all-logit/state equality or official-reference exactness. Native PRO arithmetic depends on its assigned layers. No O09 timing transfer, cold-prefill, Fraser, TTFT optimization, pause, mixed, 1M, exact-tier, fast-tier or balanced-envelope claim."
+      },
+      "historical_evidence_before_s10": "Measured gxf_s07_original_single on S07/source7a066f2, original packed weights, native PRO and four CMPs at180W; prefix_reuse0, context65536, 1 slots. C1 is per stream; C2/C4/C8 are aggregate. code C1/C2/C4/C8 207.49/unmeasured/unmeasured/unmeasuredtok/s. prose C1/C2/C4/C8 150.90/unmeasured/unmeasured/unmeasuredtok/s. structured C1/C2/C4/C8 288.00/unmeasured/unmeasured/unmeasuredtok/s. Full selected8/256 control records agree; MiaAI request/text/native-count/finish 15/15 agree. Minimum CMP free memory at readiness 5450MiB. Fraser TTFT, cold prefill, pauses, mixed traffic, 1M work and the balanced envelope were not measured in this window. This is current arithmetic, not official-exact. First window's initial30s overlapped S's CPU build, which finished05:21:59; later windows did not overlap that build. Source: evidence/s07_original_axes_summary_v1.json and evidence/gxf_s07_original_single."
+    },
+    "original_pp_depth8": {
+      "description": "Original-weight PP5 placement at measured depth8 for all supported multiple-user decode categories; eight serving slots.",
+      "settings": [
+        "--placement=pp5",
+        "--numerics=exact",
+        "--cmp_order=reference",
+        "--linear_profile=0",
+        "--linear_order=1",
+        "--pro_emulation=0",
+        "--card_order=0,1,3,4,2",
+        "--rows=8",
+        "--wide_rows=1024",
+        "--full_steps=1",
+        "--prefill_cone=1",
+        "--chunks_in_flight=1",
+        "--step_graphs=1",
+        "--speculative=2",
+        "--draft_block=5",
+        "--draft_positions=5",
+        "--draft_policy=0",
+        "--card_memory_kept_free_mib=0",
+        "--pipeline_steps=8",
+        "--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4",
+        "--official_hc_rows=0",
+        "--tp_pipeline_overlap=0",
+        "--original_chunk_core=0",
+        "--original_dense_staged=0",
+        "--original_wide_experts=0",
+        "--draft_learned_acceptance=0",
+        "--draft_session_acceptance=0",
+        "--batch_plan_ties=0",
+        "--draft_base_us=12700",
+        "--draft_tail_us=2200",
+        "--draft_row_us=2700"
+      ],
+      "serve_settings": [
+        "--session_slots=8",
+        "--prefix_reuse=0",
+        "--prefill_order=0",
+        "--original_batch=0"
+      ],
+      "generate_settings": [
+        "--placement=pp5",
+        "--numerics=exact",
+        "--cmp_order=reference",
+        "--linear_profile=0",
+        "--linear_order=1",
+        "--pro_emulation=0",
+        "--card_order=0,1,3,4,2",
+        "--rows=8",
+        "--wide_rows=1024",
+        "--full_steps=1",
+        "--prefill_cone=1",
+        "--chunks_in_flight=1",
+        "--step_graphs=1",
+        "--speculative=2",
+        "--draft_block=5",
+        "--draft_positions=5",
+        "--draft_policy=0",
+        "--card_memory_kept_free_mib=0",
+        "--pipeline_steps=2",
+        "--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4",
+        "--official_hc_rows=0",
+        "--tp_pipeline_overlap=0",
+        "--original_chunk_core=0",
+        "--original_dense_staged=0",
+        "--original_wide_experts=0",
+        "--draft_learned_acceptance=0",
+        "--draft_session_acceptance=0",
+        "--batch_plan_ties=0",
+        "--draft_base_us=12700",
+        "--draft_tail_us=2200",
+        "--draft_row_us=2700"
+      ],
+      "error_class": "Current original HC/current forms; selected-record preservation against the pinned original cold controls. Draft-only schedule; complete target logit/state and official-reference equality remain unproven.",
+      "evidence": "Measured frozen S10/e4c188e (base5029986), ordinary binary 8d9b8b05. Original pack, native PRO and four CMPs at 180 W, context 65536, 8 slot(s), prefix reuse off. C1 rates are per stream; C2/C4/C8 rates are aggregates. code C1/C2/C4/C8: 171.738/250.459/347.808/406.960 tok/s. MiaAI median TTFT: 52.09/80.32/141.81/270.50 ms (small decode prompts, not Fraser). prose C1/C2/C4/C8: 125.831/245.219/404.221/408.524 tok/s. MiaAI median TTFT: 43.18/72.21/122.19/223.41 ms (small decode prompts, not Fraser). structured C1/C2/C4/C8: 248.989/472.013/763.691/783.115 tok/s. MiaAI median TTFT: 41.95/64.10/109.81/190.95 ms (small decode prompts, not Fraser). Full selected 8/256 records and 141 MiaAI request/text/native-count/finish signatures pass. Non-speculative 8/256 controls also pass. Minimum CMP free at readiness: 3253 MiB. Startup expansion, artifact/source pins, original-pack stat and device/cap restoration pass. Five C1 batches and three batches at each requested C2/C4/C8 cell. No own C-build/host-test overlap. Sequential observations, no causal or global-optimum claim. Cold prefill, Fraser, mixed traffic, long-prefill pauses, 1M fit and full-context work were not requested. Current HC/current forms; no added lossy arithmetic, not official-exact. Source: evidence/gxf_s10_original_multiple_strict_s10_v1.json. Historical original numerical diagnostic, O xo03/xo16: eight aligned cached-one teacher inputs, 1,034,240 F32 logits. PP5 and TP4_PRO captures are equal; against R original parent PRO2 with unchanged sparse core CMP0, mean/max KL 0.0407172/0.144973 nats, raw RMS/max 0.568391/4.276049, teacher top1 8/8. Source75 baseline replay preserves those captures. Not untouched all-PRO, corpus PPL, generated agreement or current-S10 full-vocabulary distance. See evidence/xo16_serial_reference_distance_v1.json and RND_O/S 5Nov09:26.",
+      "numerical_class": "draft_only",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false,
+      "measurement_source": {
+        "window": "gxf_s10_original_multiple",
+        "source_commit": "e4c188eb84ffed030187292dd15262d717c89b3a",
+        "binary_sha256": "8d9b8b054a427cb996a7870b38724a28dde49cdf51530a8515834329f3d92708",
+        "registry_sha256": "8ec868b50e9597d449739a89c02768d6bc4111af002a1bea26fa85bd9614150e",
+        "summary_sha256": "608bc8657e275fab9e94da84da621eeace2b13bea2e01b81162107d27bcf9c09",
+        "scope": "Independently pinned original-weight, current-arithmetic, decode-only observations. Prefix reuse is explicitly0; the unchanged MiaAI client still performs its own warmups. C1 is per stream and C2/C4/C8 rates are aggregate. Capacity65536 and actual slot count are launch settings, not full-context or capacity qualification. Selected first-four-field records and observed API outputs do not establish all-logit/state equality or official-reference exactness. Native PRO arithmetic depends on its assigned layers. No O09 timing transfer, cold-prefill, Fraser, TTFT optimization, pause, mixed, 1M, exact-tier, fast-tier or balanced-envelope claim."
+      },
+      "historical_evidence_before_s10": "Measured gxf_s07_original_code_multiple on S07/source7a066f2, original packed weights, native PRO and four CMPs at180W; prefix_reuse0, context65536, 8 slots. C1 is per stream; C2/C4/C8 are aggregate. code C1/C2/C4/C8 171.87/250.60/349.54/406.60tok/s. prose C1/C2/C4/C8 125.93/245.02/403.87/408.89tok/s. structured C1/C2/C4/C8 249.26/472.46/764.22/782.59tok/s. Full selected8/256 control records agree; MiaAI request/text/native-count/finish 141/141 agree. Non-speculative control also agrees on both full selected-record references; this does not prove every logit/state or official equality. Minimum CMP free memory at readiness 3200MiB. Fraser TTFT, cold prefill, pauses, mixed traffic, 1M work and the balanced envelope were not measured in this window. This is current arithmetic, not official-exact. First window's initial30s overlapped S's CPU build, which finished05:21:59; later windows did not overlap that build. Source: evidence/s07_original_axes_summary_v1.json and evidence/gxf_s07_original_code_multiple. Same-epoch S07 PP8 beats PP5 in all12 homogeneous cells; code C2/C8 +11.187%/+4.642%, prose and structured +0.013%..+0.523%. All141 cross-depth request/text/native-count/finish signatures match; both full selected8/256 references agree. Sequential runs, five C1 batches and three batches at each C2/C4/C8 cell; no latency or uncertainty gate inferred. Source: evidence/s07_original_pp_depth_selection_v1.json. Therefore all original multiple-user decode categories choose depth8; explicit pipeline_steps still overrides."
+    },
+    "original_pp_depth5": {
+      "description": "Original-weight PP5 placement, five pipeline steps and eight serving slots for multiple-user prose/structured decode.",
+      "settings": [
+        "--placement=pp5",
+        "--numerics=exact",
+        "--cmp_order=reference",
+        "--linear_profile=0",
+        "--linear_order=1",
+        "--pro_emulation=0",
+        "--card_order=0,1,3,4,2",
+        "--rows=8",
+        "--wide_rows=1024",
+        "--full_steps=1",
+        "--prefill_cone=1",
+        "--chunks_in_flight=1",
+        "--step_graphs=1",
+        "--speculative=2",
+        "--draft_block=5",
+        "--draft_positions=5",
+        "--draft_policy=0",
+        "--card_memory_kept_free_mib=0",
+        "--pipeline_steps=5",
+        "--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4",
+        "--official_hc_rows=0",
+        "--tp_pipeline_overlap=0",
+        "--original_chunk_core=0",
+        "--original_dense_staged=0",
+        "--original_wide_experts=0",
+        "--draft_learned_acceptance=0",
+        "--draft_session_acceptance=0",
+        "--batch_plan_ties=0",
+        "--draft_base_us=12700",
+        "--draft_tail_us=2200",
+        "--draft_row_us=2700"
+      ],
+      "serve_settings": [
+        "--session_slots=8",
+        "--prefix_reuse=0",
+        "--prefill_order=0",
+        "--original_batch=0"
+      ],
+      "generate_settings": [
+        "--placement=pp5",
+        "--numerics=exact",
+        "--cmp_order=reference",
+        "--linear_profile=0",
+        "--linear_order=1",
+        "--pro_emulation=0",
+        "--card_order=0,1,3,4,2",
+        "--rows=8",
+        "--wide_rows=1024",
+        "--full_steps=1",
+        "--prefill_cone=1",
+        "--chunks_in_flight=1",
+        "--step_graphs=1",
+        "--speculative=2",
+        "--draft_block=5",
+        "--draft_positions=5",
+        "--draft_policy=0",
+        "--card_memory_kept_free_mib=0",
+        "--pipeline_steps=2",
+        "--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4",
+        "--official_hc_rows=0",
+        "--tp_pipeline_overlap=0",
+        "--original_chunk_core=0",
+        "--original_dense_staged=0",
+        "--original_wide_experts=0",
+        "--draft_learned_acceptance=0",
+        "--draft_session_acceptance=0",
+        "--batch_plan_ties=0",
+        "--draft_base_us=12700",
+        "--draft_tail_us=2200",
+        "--draft_row_us=2700"
+      ],
+      "error_class": "Current original HC/current forms; selected-record preservation against the pinned original cold controls. Draft-only schedule; complete target logit/state and official-reference equality remain unproven.",
+      "evidence": "Measured gxf_s07_original_other_multiple on S07/source7a066f2, original packed weights, native PRO and four CMPs at180W; prefix_reuse0, context65536, 8 slots. C1 is per stream; C2/C4/C8 are aggregate. code C1/C2/C4/C8 171.69/225.38/348.57/388.56tok/s. prose C1/C2/C4/C8 125.79/244.86/403.40/406.76tok/s. structured C1/C2/C4/C8 249.23/471.77/762.82/780.20tok/s. Full selected8/256 control records agree; MiaAI request/text/native-count/finish 141/141 agree. Minimum CMP free memory at readiness 3202MiB. Fraser TTFT, cold prefill, pauses, mixed traffic, 1M work and the balanced envelope were not measured in this window. This is current arithmetic, not official-exact. First window's initial30s overlapped S's CPU build, which finished05:21:59; later windows did not overlap that build. Source: evidence/s07_original_axes_summary_v1.json and evidence/gxf_s07_original_other_multiple.",
+      "numerical_class": "draft_only",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false,
+      "measurement_source": {
+        "window": "gxf_s07_original_other_multiple",
+        "summary_sha256": "184e235f249b7564a3d8da7385f7ebd000bb432c5903cdd5557d4ec75a2443e1",
+        "binary_sha256": "f26e173c66c4ad49788936dc4a34d63ae64f48063b6bbfef271f4afedd224908",
+        "source_commit": "7a066f266432b51f7074f2a3e95acbfe79ebc8ae",
+        "scope": "S07 original-weight, current-arithmetic, decode-only observations. Prefix reuse is explicitly0; the unchanged MiaAI client still performs its own warmups. C1 is per stream and C2/C4/C8 rates are aggregate. Capacity65536 and actual slot count are launch settings, not full-context or capacity qualification. Selected first-four-field records and observed API outputs do not establish all-logit/state equality or official-reference exactness. Native PRO arithmetic depends on its assigned layers. No O09 timing transfer, cold-prefill, Fraser, TTFT optimization, pause, mixed, 1M, exact-tier, fast-tier or balanced-envelope claim."
+      }
+    },
+    "thin_full_layers": {
+      "settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --draft_policy=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --batch_core_once=2",
+      "generate_settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --draft_policy=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --batch_core_once=2",
+      "serve_settings": "--session_slots=1 --prefix_reuse=0",
+      "error_class": "Draft-only relative to the pinned EXL3 family controls; current HC/current forms, no added lossy arithmetic. Official-model equality is unqualified; read the measured scope and identity gates.",
+      "numerical_class": "draft_only",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false,
+      "description": "Single-user code decode: full fixed draft depth five with layer drafting enabled.",
+      "evidence": "Measured frozen S10/e4c188e, ordinary binary8d9b8b05, context65536/one true-THIN slot, wide2048/pipeline2/tp_draft_layers1, four CMPs180W. C1 code 258.344tok/s. C1 prose 163.744tok/s. C1 structured 338.442tok/s. Fraser10cold median/worst 1384.35/1393.90ms; cold prefill9 median 3901tok/s, allcached0; minimum CMP free 823MiB. Full selected8/256 references,15 MiaAI signatures,source/artifact closure and observed cap restoration pass. No own C build/test overlap. C2-C8, mixed, pause and full1M work unmeasured by this window. Compared with matched layer0: code +12.15%; prose/structured also increase; Fraser median/worst +3.00/+3.20ms. FAIL strict no-worse TTFT for a balanced-focus choice; selected only for explicit code/single/decode. No1M capacity inference: this arm has2358MiB less free memory at65K. Current HC/forms, no added lossy arithmetic; not official-exact. Current full-vocabulary reference distance, corpusPPL and all-width bit equality unmeasured. Historical S06 eight-position numerics remain in the source registry. Source:evidence/gxf_s10_single_layers1_strict_xf18_v1.json. Fresh raw-main mixed comparison xf19: tcb78/39980, explicit65K; scenario order C1/C2burst/C2stagger/C4burst/C4stagger/C8burst/C8stagger. BATCH8 whole-window rates 128.661/145.732/133.334/161.279/159.154/181.848/179.383; trueTHIN1 122.756/122.618/119.106/122.719/122.579/122.622/122.647tok/s. These14.3k/0/690 controls use BATCHcore3 or THINwide1024/pipeline1/layers1, not the S10 axis settings. 112cross-family request/text/reason/native-count/finish signatures and96non-solo comparisons per arm pass; each has selected8/256+35M closure. M warm-short SSE gaps BATCH/THIN 0.473759/0.020419s; native overlap both warm True/False. Minimum CMP free 425/3203MiB. SSE gaps are not native token clocks; one-slot serialization is not pause-free overlap. BATCH90%mixed-floor screen=True; same-recipe SSE repeat delta +4.747ms with different preceding traffic. No latency gate waived or tuple admitted. S10freshmixed17 was not run; other concurrencies/full1M remain unmeasured. Source:evidence/xf19_raw_mixed_comparison_v1.json (both independently pinned strict summaries).",
+      "measurement_source_65k": {
+        "window": "gxf_s10_single_layers1",
+        "source_commit": "e4c188eb84ffed030187292dd15262d717c89b3a",
+        "binary_sha256": "8d9b8b054a427cb996a7870b38724a28dde49cdf51530a8515834329f3d92708",
+        "registry_sha256": "8ec868b50e9597d449739a89c02768d6bc4111af002a1bea26fa85bd9614150e",
+        "summary_sha256": "3c5aeab1c0a6366103694c01b0c9a3cc34f67c38e2ef92576e1804fd8b4e172f"
+      },
+      "actual_observations_65k": {
+        "decode": {
+          "code-c1": {
+            "kind": "code",
+            "concurrency": 1,
+            "tok_s": 258.3439099022833,
+            "per_stream_tok_s": 258.3439099022833,
+            "ttft_ms": 67.80839199200273,
+            "runs": 5,
+            "streams": 5,
+            "text_equals_c1": 5,
+            "request_output_equals_c1": 5,
+            "completion_tokens_min": 95,
+            "completion_tokens_max": 95,
+            "unique_text_sha256": [
+              "3eac2789d7d62ac2fc818eebafe0dae480b1d442977eff5f672088c06057ff7c"
+            ],
+            "successful": true
+          },
+          "prose-c1": {
+            "kind": "prose",
+            "concurrency": 1,
+            "tok_s": 163.7442702130442,
+            "per_stream_tok_s": 163.7442702130442,
+            "ttft_ms": 58.887994033284485,
+            "runs": 5,
+            "streams": 5,
+            "text_equals_c1": 5,
+            "request_output_equals_c1": 5,
+            "completion_tokens_min": 400,
+            "completion_tokens_max": 400,
+            "unique_text_sha256": [
+              "124c6410274838b2a5511fa4772e8497262b9af63d40a8c41243b3210ce286ee"
+            ],
+            "successful": true
+          },
+          "structured-c1": {
+            "kind": "structured",
+            "concurrency": 1,
+            "tok_s": 338.4415736700324,
+            "per_stream_tok_s": 338.4415736700324,
+            "ttft_ms": 49.777776934206486,
+            "runs": 5,
+            "streams": 5,
+            "text_equals_c1": 5,
+            "request_output_equals_c1": 5,
+            "completion_tokens_min": 400,
+            "completion_tokens_max": 400,
+            "unique_text_sha256": [
+              "4e4e24a204771aa0fac78811e9b29b125bfd75046810db269a10ab9cebfe47d7"
+            ],
+            "successful": true
+          }
+        },
+        "fraser": {
+          "c1": {
+            "streams": 10,
+            "batches": 10,
+            "ttft_ms": 1384.35,
+            "per_stream_tok_s": 238.1,
+            "aggregate_decode_tok_s": 238.07845377188545,
+            "aggregate_e2e_tok_s": 204.0367716643844,
+            "all_cold": true,
+            "worst_ttft_ms": 1393.9,
+            "ttft_raw_ms": [
+              1384.7,
+              1388.3,
+              1384,
+              1387.3,
+              1383.6,
+              1379.3,
+              1393.9,
+              1377.3,
+              1389.6,
+              1380.2
+            ]
+          }
+        },
+        "cold_prefill": {
+          "tok_s": 3901.0,
+          "requests": 9,
+          "all_cold": true
+        },
+        "memory": {
+          "minimum_cmp_free_mib": 823.0,
+          "rows": [
+            {
+              "index": "0",
+              "pci.bus_id": "00000000:01:00.0",
+              "memory.used [MiB]": "54785 MiB",
+              "memory.free [MiB]": "10133 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1485 MHz"
+            },
+            {
+              "index": "1",
+              "pci.bus_id": "00000000:41:00.0",
+              "memory.used [MiB]": "64096 MiB",
+              "memory.free [MiB]": "823 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1485 MHz"
+            },
+            {
+              "index": "2",
+              "pci.bus_id": "00000000:81:00.0",
+              "memory.used [MiB]": "95 MiB",
+              "memory.free [MiB]": "97247 MiB",
+              "power.limit [W]": "400.00 W",
+              "clocks.current.sm [MHz]": "180 MHz"
+            },
+            {
+              "index": "3",
+              "pci.bus_id": "00000000:82:00.0",
+              "memory.used [MiB]": "53276 MiB",
+              "memory.free [MiB]": "11643 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1485 MHz"
+            },
+            {
+              "index": "4",
+              "pci.bus_id": "00000000:C1:00.0",
+              "memory.used [MiB]": "64096 MiB",
+              "memory.free [MiB]": "823 MiB",
+              "power.limit [W]": "180.00 W",
+              "clocks.current.sm [MHz]": "1455 MHz"
+            }
+          ]
+        }
+      }
+    },
+    "original_reference_serial_m1": {
+      "description": "Original-weight official-reference arithmetic on the PP THIN serial M1 schedule with capacity512; default off. Standard batched prompts, physical ring wrap, rollback and TP remain open scope.",
+      "settings": [
+        "--placement=pp5",
+        "--numerics=exact",
+        "--cmp_order=reference",
+        "--linear_profile=0",
+        "--linear_order=1",
+        "--pro_emulation=0",
+        "--official_hc_rows=1",
+        "--official_reference=1",
+        "--card_order=0,1,3,4,2",
+        "--rows=1",
+        "--context_tokens=512",
+        "--wide_rows=0",
+        "--full_steps=0",
+        "--chunks_in_flight=1",
+        "--pipeline_steps=1",
+        "--step_graphs=1",
+        "--speculative=0",
+        "--tp_pipeline_overlap=0",
+        "--original_chunk_core=0",
+        "--original_dense_staged=0",
+        "--original_wide_experts=0",
+        "--card_memory_kept_free_mib=0",
+        "--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4"
+      ],
+      "serve_settings": [
+        "--session_slots=1",
+        "--prefix_reuse=0",
+        "--prefix_reuse_exact=0",
+        "--session_fork=0",
+        "--prefill_order=0",
+        "--original_batch=0"
+      ],
+      "generate_settings": [
+        "--placement=pp5",
+        "--numerics=exact",
+        "--cmp_order=reference",
+        "--linear_profile=0",
+        "--linear_order=1",
+        "--pro_emulation=0",
+        "--official_hc_rows=1",
+        "--official_reference=1",
+        "--card_order=0,1,3,4,2",
+        "--rows=1",
+        "--context_tokens=512",
+        "--wide_rows=0",
+        "--full_steps=0",
+        "--chunks_in_flight=1",
+        "--pipeline_steps=1",
+        "--step_graphs=1",
+        "--speculative=0",
+        "--tp_pipeline_overlap=0",
+        "--original_chunk_core=0",
+        "--original_dense_staged=0",
+        "--original_wide_experts=0",
+        "--card_memory_kept_free_mib=0",
+        "--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4"
+      ],
+      "numerical_class": "reference_arithmetic",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": false,
+      "error_class": "Original weights: official-reference arithmetic on the admitted PP THIN serial M1 scope. EXL3: reference arithmetic (EXL3: not official-exact).",
+      "evidence": "The original-weight reference recipe uses PP THIN serial M1, one session, context capacity 512. XR57 qualifies the production prepared-program prelude over 263 positions: all 34,000,640 full-vocabulary F32 logits and the first-eight-position block/carry endpoints across all 40 layers match the pinned original serial source. Two autonomous 256-draw real CLI arms match every source token ID and selected F32 logit bit; exact and control repeats pass. The fixed horizon includes post-EOS draws with --ignore_eos=1; ordinary EOS stopping remains the default. XR59 preserves canonical mc_check2 hashes 41eeb9c16e10/f49e8badff47 at both 2048/1024 widths. XR50b and XR53 provide the stated release linear/core/router and state/site/Engram/projection component proofs, including BF16 carrier and all-visible-index controls. Earlier XR48/XR49 retain their scoped packet source/state/cache proofs; those do not become a new production general-cache claim. Final-binary CLI/server/default and quiet-cost receipts, including final C1 cost, are maintained externally in COSTS.md and REPORT_v4.md and must pass before shipping. Prefix reuse/forks, speculative decoding, standard batched-prompt prefill, longer contexts, physical ring wrap, rollback, TP and image execution are outside this initial recipe. No balanced/default arithmetic or profile promotion is selected.",
+      "measurement_source": {
+        "scope": "Original weights, PP THIN serial M1, one session, context capacity 512; the recorded source and component proof scopes apply.",
+        "raw_runtime": {
+          "source": "evidence/xr57/review.json",
+          "sha256": "3a1c8fbc39bd775792350933a604e1fdeed2247acf25f704346ec2ab2e8e02d7"
+        },
+        "production_prelude": {
+          "source": "evidence/xr57/teacher_prelude.review.json",
+          "sha256": "62c3a86a5ae79cf3e2ea150574e433ca52ba05946b63ef5852c9beb25f186810"
+        },
+        "canonical_defaults": {
+          "source": "evidence/xr59/review.json",
+          "sha256": "2bcf02e1086b0bedd3da8e5a7a3fac8d4945f54cbc7cce2cc1a452f05703f639"
+        },
+        "linear_core_router_components": {
+          "source": "evidence/xr50b/review/xr50b_independent_components_v1.json",
+          "sha256": "7ba94a69b59978a741d1068b86a1207965bfe5d8495e106d26859482259a0eaa"
+        },
+        "state_site_engram_components": {
+          "source": "evidence/xr53/review/xr53_independent_scope_v1.json",
+          "sha256": "30dd989060dcd5f335b6023237a85faf860ba1cd005fe208f742382f0371fdb7"
+        },
+        "final_cost_and_release_receipts": [
+          "COSTS.md",
+          "REPORT_v4.md"
+        ],
+        "release_requirements": "Final-binary CLI/server/default and quiet-cost receipts must pass before shipping. Final C1 cost and receipts are maintained externally in COSTS.md/REPORT_v4.md; default-off behavior must remain unchanged."
+      }
+    }
+  },
+  "balanced_exl3_rules": [
+    {
+      "match": {
+        "category": [
+          "code"
+        ],
+        "concurrency": [
+          "single"
+        ],
+        "focus": [
+          "balanced"
+        ]
+      },
+      "strategy": "thin_fixed"
+    },
+    {
+      "match": {
+        "category": [
+          "code"
+        ],
+        "concurrency": [
+          "single"
+        ],
+        "focus": [
+          "decode"
+        ]
+      },
+      "strategy": "thin_full_layers"
+    },
+    {
+      "match": {
+        "category": [
+          "code"
+        ],
+        "concurrency": [
+          "single"
+        ],
+        "focus": [
+          "ttft",
+          "prefill"
+        ]
+      },
+      "strategy": "thin_fixed"
+    },
+    {
+      "match": {
+        "category": [
+          "code"
+        ],
+        "concurrency": [
+          "multiple"
+        ],
+        "focus": [
+          "decode"
+        ]
+      },
+      "strategy": "batch_fixed"
+    },
+    {
+      "match": {
+        "category": [
+          "code"
+        ],
+        "concurrency": [
+          "multiple"
+        ],
+        "focus": [
+          "balanced"
+        ],
+        "exactness": [
+          "balanced"
+        ]
+      },
+      "strategy": "batch_session",
+      "qualification_candidate": true,
+      "hold": "Held after xf18 current-main control: this older balanced-focus recipe fails the strict no-worse Fraser median/worst and SSE-gap screen against tcb78/39980. The90% non-code floor does not waive latency. Replacement current-N recipe awaits complete mixed comparison and final source/axis boot qualification; no performance limit is relaxed. See evidence/xf18_current_default_screen_v1.json."
+    },
+    {
+      "match": {
+        "category": [
+          "code"
+        ],
+        "concurrency": [
+          "multiple"
+        ],
+        "focus": [
+          "ttft",
+          "prefill"
+        ]
+      },
+      "strategy": "batch_adaptive"
+    },
+    {
+      "match": {
+        "category": [
+          "prose",
+          "structured",
+          "balanced"
+        ],
+        "concurrency": [
+          "single"
+        ],
+        "focus": [
+          "balanced",
+          "ttft",
+          "decode",
+          "prefill"
+        ]
+      },
+      "strategy": "thin_fixed"
+    },
+    {
+      "match": {
+        "category": [
+          "prose"
+        ],
+        "concurrency": [
+          "multiple"
+        ],
+        "focus": [
+          "balanced"
+        ],
+        "exactness": [
+          "balanced"
+        ]
+      },
+      "strategy": "batch_adaptive",
+      "qualification_candidate": true,
+      "hold": "Held after xf18 current-main control: this older balanced-focus recipe fails the strict no-worse Fraser median/worst and SSE-gap screen against tcb78/39980. The90% non-code floor does not waive latency. Replacement current-N recipe awaits complete mixed comparison and final source/axis boot qualification; no performance limit is relaxed. See evidence/xf18_current_default_screen_v1.json."
+    },
+    {
+      "match": {
+        "category": [
+          "structured"
+        ],
+        "concurrency": [
+          "multiple"
+        ],
+        "focus": [
+          "balanced"
+        ],
+        "exactness": [
+          "balanced"
+        ]
+      },
+      "strategy": "batch_adaptive",
+      "qualification_candidate": true,
+      "hold": "Held after xf18 current-main control: this older balanced-focus recipe fails the strict no-worse Fraser median/worst and SSE-gap screen against tcb78/39980. The90% non-code floor does not waive latency. Replacement current-N recipe awaits complete mixed comparison and final source/axis boot qualification; no performance limit is relaxed. See evidence/xf18_current_default_screen_v1.json."
+    },
+    {
+      "match": {
+        "category": [
+          "balanced"
+        ],
+        "concurrency": [
+          "multiple"
+        ],
+        "focus": [
+          "balanced"
+        ],
+        "exactness": [
+          "balanced"
+        ]
+      },
+      "strategy": "batch_adaptive",
+      "qualification_candidate": true,
+      "hold": "Held after xf18 current-main control: this older balanced-focus recipe fails the strict no-worse Fraser median/worst and SSE-gap screen against tcb78/39980. The90% non-code floor does not waive latency. Replacement current-N recipe awaits complete mixed comparison and final source/axis boot qualification; no performance limit is relaxed. See evidence/xf18_current_default_screen_v1.json."
+    },
+    {
+      "match": {
+        "category": [
+          "prose",
+          "structured",
+          "balanced"
+        ],
+        "concurrency": [
+          "multiple"
+        ],
+        "focus": [
+          "ttft",
+          "decode",
+          "prefill"
+        ]
+      },
+      "strategy": "batch_adaptive"
+    },
+    {
+      "match": {
+        "category": [
+          "balanced"
+        ],
+        "exactness": [
+          "balanced"
+        ],
+        "concurrency": [
+          "balanced"
+        ],
+        "focus": [
+          "balanced"
+        ]
+      },
+      "strategy": "batch_compromise",
+      "qualification_candidate": true,
+      "hold": "S05 gxf_s05_mix2048 preserves both complete generate references (8/256 records), but eight-slot serve at65536 context refuses out of memory in the TP shard/state planner before readiness. This2048-row recipe is not admitted. A1024-row compromise requires its own mixed C1/C2-C8 and latency/pause evidence; no limit is relaxed."
+    }
+  ],
+  "quality_budget": {
+    "status": "Proposed conservative incremental screen, not an established quality guarantee or an owner-selected default. No lossy candidate has passed; exactness=fast remains held.",
+    "required_metrics": [
+      "Paired token-weighted KL and worst-row KL against current balanced arithmetic.",
+      "Full-logit deviation with input, call shape and rounding scope recorded.",
+      "Held-out teacher-forced PPL/NLL fixture and its token denominator.",
+      "T=0 selected-token and full-output agreement rate, including native counts and finish.",
+      "Reference-tier comparison where an applicable R target exists.",
+      "Whole-workload speed benefit under the same request/capacity/runtime conditions.",
+      "Apply every limit separately to code/prose/structured and context strata; predeclare held-out inputs and unique-request/token denominators.",
+      "Report raw and row-offset-removed logit errors, tail/worst strata and uncertainty; no corpus-PPL claim from an eight-token smoke probe.",
+      "Reject a candidate exceeding any limit from every axis tuple; raw low-level use remains outside the qualified table."
+    ],
+    "limits": {
+      "mean_KL_nats_max": 0.001,
+      "p99_KL_nats_max": 0.01,
+      "PPL_ratio_vs_balanced_max": 1.01,
+      "row_offset_removed_logit_RMS_max": 0.02,
+      "row_offset_removed_logit_absolute_max": 0.1,
+      "teacher_forced_top1_agreement_min": 0.999,
+      "complete_T0_response_agreement_min": 0.99,
+      "pinned_reference_tool_schema_cases_agreement_min": 1.0
+    },
+    "admitted": false,
+    "reference_available": false,
+    "required_strata": [
+      "code/short",
+      "code/long",
+      "prose/short",
+      "prose/long",
+      "structured/short",
+      "structured/long"
+    ]
+  },
+  "notes": [
+    "With no axes selected, existing CLI behavior is unchanged. Unset axes have no implicit owner-selected defaults.",
+    "Original versus EXL3 is a weight-family admission condition, not a fifth preset axis. The runtime uses explicit placement or the existing PP5 default.",
+    "Explicit low-level knobs override inserted settings; ordinary validation still refuses invalid combinations. Overrides change the measured recipe.",
+    "All balanced choices retain current HC/current forms and add no new lossy arithmetic. A separate R component result is not a complete S official-error measurement.",
+    "Category balanced needs the full mixed-user benchmark. The complete EXL3 all-balanced development candidate is held after its eight-slot memory refusal; other balanced-concurrency rows remain held. No axes are selected by default.",
+    "Balanced-code selection must maximize code among feasible choices: non-code margins and no-worse default Fraser median/worst/pause comparisons require same-epoch measurements.",
+    "The table contains full tuples only. The parser handles partial selections without inventing an axis default.",
+    "Seven-bucket entries are targets for the recorded scope; every unlisted bucket and every missing accuracy/capacity gate remains unqualified.",
+    "Measured drafting priors and BATCH core mode are explicit in the table. A later raw CLI default change does not silently change these recorded recipes; explicit user controls still win.",
+    "Legacy original TP4_PRO and PP5 routes existed in main7d86c45. The current table also pins newer O/HC controls to zero and therefore requires the merged main75/S parser. PP5 layouts remain single argv items with embedded spaces; generated settings use newline separators, never shell parsing. S07 cold-prefix measurements are source-scoped separately from inherited O warm results. Generate keeps its one-slot default and pipeline2; serve selects one serial TP slot or eight PP5 slots at measured depth8.",
+    "Selecting only --exactness=exact on original weights resolves to the supported text, single-session PP THIN serial M1 recipe. Explicit vision or multiple/balanced concurrency remains held. Recipe arithmetic/placement overrides must retain the admitted exact values; balanced-axis override behavior is unchanged."
+  ],
+  "fast_exl3_rules": [],
+  "exact_exl3_rules": [
+    {
+      "match": {
+        "category": [
+          "code",
+          "prose",
+          "structured",
+          "vision",
+          "balanced"
+        ],
+        "exactness": [
+          "exact"
+        ],
+        "concurrency": [
+          "single",
+          "multiple",
+          "balanced"
+        ],
+        "focus": [
+          "balanced",
+          "ttft",
+          "decode",
+          "prefill"
+        ]
+      },
+      "strategy": "empty",
+      "hold": "reference arithmetic (EXL3: not official-exact)"
+    }
+  ],
+  "performance_envelope": {
+    "status": "Proposed 10% performance envelope for paired qualification. The all-balanced2048 EXL3 candidate failed server memory admission and is held. A replacement must pass its own paired gates before becoming a recommendation; no CLI axis default is selected.",
+    "limits": {
+      "mixed_C1_rate_vs_best_THIN_min": 0.9,
+      "mixed_C2_C4_C8_rate_vs_best_BATCH_min": 0.9,
+      "code_balanced_non_code_rate_vs_own_best_min": 0.9,
+      "Fraser_median_TTFT_delta_vs_default_ms_max": 0,
+      "Fraser_worst_TTFT_delta_vs_default_ms_max": 0,
+      "long_prefill_decode_pause_delta_vs_default_s_max": 0
+    },
+    "protocol": "Apply the mixed floor separately at C1/C2/C4/C8 and the non-code floor separately to prose and structured at each code-balanced cell. Use paired default/candidate controls with the same binary, client, prompts and capacity; record cold/warm scope, input identities, repetitions and uncertainty. Fraser median/worst TTFT and the long-prefill decode pause must be no worse than the default. A failed envelope restores a nonempty candidate hold without changing the limits.",
+    "motivation": "S04 gxf11 fixed-depth versus gxf12 session-adaptive measurements give prose C4 290.6 versus 377.5 tok/s (23.0% lower) and C8 381.8 versus 488.8 (21.9% lower), rejecting that fixed-depth multiple-user compromise at 10%. C1 prose 163.6 versus 167.8 is 2.5% lower and fits the proposed margin. Those C1 points are BATCH measurements, not proof against best THIN. The new current-math candidate must prove the actual mixed C1/C2-C8 envelope, memory, identity and latency objectives."
+  },
+  "original_rules": [
+    {
+      "match": {
+        "category": [
+          "code",
+          "prose",
+          "structured"
+        ],
+        "exactness": [
+          "balanced"
+        ],
+        "concurrency": [
+          "single"
+        ],
+        "focus": [
+          "decode"
+        ]
+      },
+      "strategy": "original_tp_serial2"
+    },
+    {
+      "match": {
+        "category": [
+          "code"
+        ],
+        "exactness": [
+          "balanced"
+        ],
+        "concurrency": [
+          "multiple"
+        ],
+        "focus": [
+          "decode"
+        ]
+      },
+      "strategy": "original_pp_depth8"
+    },
+    {
+      "match": {
+        "category": [
+          "prose",
+          "structured"
+        ],
+        "exactness": [
+          "balanced"
+        ],
+        "concurrency": [
+          "multiple"
+        ],
+        "focus": [
+          "decode"
+        ]
+      },
+      "strategy": "original_pp_depth8"
+    },
+    {
+      "match": {
+        "category": [
+          "code",
+          "prose",
+          "structured",
+          "balanced"
+        ],
+        "exactness": [
+          "exact"
+        ],
+        "concurrency": [
+          "single"
+        ],
+        "focus": [
+          "balanced",
+          "ttft",
+          "decode",
+          "prefill"
+        ]
+      },
+      "strategy": "original_reference_serial_m1",
+      "hold": ""
+    }
+  ],
+  "rejected_strategies": {
+    "thin_cost_policy1": {
+      "description": "THIN, one serving slot, 2048-row prefill and two pipeline steps. Canonical sharded THIN head and draft-head strategy.",
+      "settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=0 --draft_policy=1 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0",
+      "serve_settings": "--session_slots=1 --prefix_reuse=0",
+      "generate_settings": "--placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=0 --draft_policy=1 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0",
+      "error_class": "Raw-only width-sensitive target arithmetic: selected-F32 preservation fails despite equal IDs; no automatic axis admission.",
+      "evidence": "S06 same-binary canonical THIN policy0 versus policy1 preserves all8 IDs but changes6 selectedF32 values, maximum7.63e-5. Policy1 records also equal the older unsharded S04 policy1 records, so sharding is not an isolated cause. N/R identify possible target program/head width dependence but require matched operands and actual dispatch to isolate it. Full cached-eight numerical repeats are independent completed diagnostics; this failed candidate is excluded from all axes. Source: evidence/xf_axes_numerics_v3/thin_current_30k and RND_N/RND_R5Nov05:12\u201305:32.",
+      "numerical_class": "sum_order",
+      "lossy_knobs": [],
+      "quality_receipts": {},
+      "raw_only": true,
+      "hold": "Same-binary target selected-F32 identity fails:8IDs equal but6/8selected logits differ max7.63e-5 versuscanonicalfixed0; target-width explanation pendingN/R. Not selectedbyanyaxis."
+    }
+  },
+  "current_main_control": {
+    "path": "evidence/gxf_tcb78_control_matrix_strict_xf18_v1.json",
+    "sha256": "23ef38109f0920620fb4215ecb3e3b4f5b6763a606c87265abd7254792486122",
+    "scope": "Raw installed tcb78/39980, not an axis expansion; mixed/compromise admission awaits xf19.",
+    "observations": {
+      "decode": {
+        "code-c1": {
+          "kind": "code",
+          "concurrency": 1,
+          "tok_s": 239.19993463173472,
+          "per_stream_tok_s": 239.19993463173472,
+          "ttft_ms": 61.11410993617028,
+          "runs": 5,
+          "streams": 5,
+          "text_equals_c1": 5,
+          "request_output_equals_c1": 5,
+          "completion_tokens_min": 95,
+          "completion_tokens_max": 95,
+          "unique_text_sha256": [
+            "3eac2789d7d62ac2fc818eebafe0dae480b1d442977eff5f672088c06057ff7c"
+          ],
+          "successful": true
+        },
+        "code-c2": {
+          "kind": "code",
+          "concurrency": 2,
+          "tok_s": 284.2339861554853,
+          "per_stream_tok_s": 167.0401399684982,
+          "ttft_ms": 93.91661948757246,
+          "runs": 3,
+          "streams": 6,
+          "text_equals_c1": 6,
+          "request_output_equals_c1": 6,
+          "completion_tokens_min": 95,
+          "completion_tokens_max": 95,
+          "unique_text_sha256": [
+            "3eac2789d7d62ac2fc818eebafe0dae480b1d442977eff5f672088c06057ff7c"
+          ],
+          "successful": true
+        },
+        "code-c4": {
+          "kind": "code",
+          "concurrency": 4,
+          "tok_s": 388.5131824568619,
+          "per_stream_tok_s": 118.40258283597609,
+          "ttft_ms": 159.55640852916986,
+          "runs": 3,
+          "streams": 12,
+          "text_equals_c1": 12,
+          "request_output_equals_c1": 12,
+          "completion_tokens_min": 95,
+          "completion_tokens_max": 95,
+          "unique_text_sha256": [
+            "3eac2789d7d62ac2fc818eebafe0dae480b1d442977eff5f672088c06057ff7c"
+          ],
+          "successful": true
+        },
+        "code-c8": {
+          "kind": "code",
+          "concurrency": 8,
+          "tok_s": 438.798005548133,
+          "per_stream_tok_s": 69.68276729598821,
+          "ttft_ms": 292.6910170353949,
+          "runs": 3,
+          "streams": 24,
+          "text_equals_c1": 24,
+          "request_output_equals_c1": 24,
+          "completion_tokens_min": 95,
+          "completion_tokens_max": 95,
+          "unique_text_sha256": [
+            "3eac2789d7d62ac2fc818eebafe0dae480b1d442977eff5f672088c06057ff7c"
+          ],
+          "successful": true
+        },
+        "prose-c1": {
+          "kind": "prose",
+          "concurrency": 1,
+          "tok_s": 169.92638242377814,
+          "per_stream_tok_s": 169.92638242377814,
+          "ttft_ms": 50.019671907648444,
+          "runs": 5,
+          "streams": 5,
+          "text_equals_c1": 5,
+          "request_output_equals_c1": 5,
+          "completion_tokens_min": 400,
+          "completion_tokens_max": 400,
+          "unique_text_sha256": [
+            "124c6410274838b2a5511fa4772e8497262b9af63d40a8c41243b3210ce286ee"
+          ],
+          "successful": true
+        },
+        "prose-c2": {
+          "kind": "prose",
+          "concurrency": 2,
+          "tok_s": 258.17162637147186,
+          "per_stream_tok_s": 133.39987180796842,
+          "ttft_ms": 79.62840201798826,
+          "runs": 3,
+          "streams": 6,
+          "text_equals_c1": 6,
+          "request_output_equals_c1": 6,
+          "completion_tokens_min": 400,
+          "completion_tokens_max": 400,
+          "unique_text_sha256": [
+            "124c6410274838b2a5511fa4772e8497262b9af63d40a8c41243b3210ce286ee"
+          ],
+          "successful": true
+        },
+        "prose-c4": {
+          "kind": "prose",
+          "concurrency": 4,
+          "tok_s": 373.77372384141097,
+          "per_stream_tok_s": 97.43864551705343,
+          "ttft_ms": 140.6465070322156,
+          "runs": 3,
+          "streams": 12,
+          "text_equals_c1": 12,
+          "request_output_equals_c1": 12,
+          "completion_tokens_min": 400,
+          "completion_tokens_max": 400,
+          "unique_text_sha256": [
+            "124c6410274838b2a5511fa4772e8497262b9af63d40a8c41243b3210ce286ee"
+          ],
+          "successful": true
+        },
+        "prose-c8": {
+          "kind": "prose",
+          "concurrency": 8,
+          "tok_s": 446.55482178144325,
+          "per_stream_tok_s": 59.52495395269085,
+          "ttft_ms": 268.42160598607734,
+          "runs": 3,
+          "streams": 24,
+          "text_equals_c1": 24,
+          "request_output_equals_c1": 24,
+          "completion_tokens_min": 400,
+          "completion_tokens_max": 400,
+          "unique_text_sha256": [
+            "124c6410274838b2a5511fa4772e8497262b9af63d40a8c41243b3210ce286ee"
+          ],
+          "successful": true
+        },
+        "structured-c1": {
+          "kind": "structured",
+          "concurrency": 1,
+          "tok_s": 340.66285605333974,
+          "per_stream_tok_s": 340.66285605333974,
+          "ttft_ms": 44.462883030064404,
+          "runs": 5,
+          "streams": 5,
+          "text_equals_c1": 5,
+          "request_output_equals_c1": 5,
+          "completion_tokens_min": 400,
+          "completion_tokens_max": 400,
+          "unique_text_sha256": [
+            "4e4e24a204771aa0fac78811e9b29b125bfd75046810db269a10ab9cebfe47d7"
+          ],
+          "successful": true
+        },
+        "structured-c2": {
+          "kind": "structured",
+          "concurrency": 2,
+          "tok_s": 453.3367965572898,
+          "per_stream_tok_s": 236.50420870599908,
+          "ttft_ms": 68.44934896798804,
+          "runs": 3,
+          "streams": 6,
+          "text_equals_c1": 6,
+          "request_output_equals_c1": 6,
+          "completion_tokens_min": 400,
+          "completion_tokens_max": 400,
+          "unique_text_sha256": [
+            "4e4e24a204771aa0fac78811e9b29b125bfd75046810db269a10ab9cebfe47d7"
+          ],
+          "successful": true
+        },
+        "structured-c4": {
+          "kind": "structured",
+          "concurrency": 4,
+          "tok_s": 613.8334572886333,
+          "per_stream_tok_s": 162.485979960672,
+          "ttft_ms": 121.47182051558048,
+          "runs": 3,
+          "streams": 12,
+          "text_equals_c1": 12,
+          "request_output_equals_c1": 12,
+          "completion_tokens_min": 400,
+          "completion_tokens_max": 400,
+          "unique_text_sha256": [
+            "4e4e24a204771aa0fac78811e9b29b125bfd75046810db269a10ab9cebfe47d7"
+          ],
+          "successful": true
+        },
+        "structured-c8": {
+          "kind": "structured",
+          "concurrency": 8,
+          "tok_s": 791.1582609145868,
+          "per_stream_tok_s": 107.89264831438072,
+          "ttft_ms": 241.44222994800657,
+          "runs": 3,
+          "streams": 24,
+          "text_equals_c1": 24,
+          "request_output_equals_c1": 24,
+          "completion_tokens_min": 400,
+          "completion_tokens_max": 400,
+          "unique_text_sha256": [
+            "4e4e24a204771aa0fac78811e9b29b125bfd75046810db269a10ab9cebfe47d7"
+          ],
+          "successful": true
+        }
+      },
+      "fraser": {
+        "c1": {
+          "streams": 10,
+          "batches": 10,
+          "ttft_ms": 1578.1,
+          "per_stream_tok_s": 243.55,
+          "aggregate_decode_tok_s": 243.5795145712611,
+          "aggregate_e2e_tok_s": 204.04435637532717,
+          "all_cold": true,
+          "worst_ttft_ms": 1583.4,
+          "ttft_raw_ms": [
+            1580.7,
+            1578.7,
+            1557.4,
+            1577.5,
+            1583.4,
+            1575,
+            1574.5,
+            1579.8,
+            1579.3,
+            1577.3
+          ]
+        },
+        "c4": {
+          "streams": 12,
+          "batches": 3,
+          "ttft_ms": 4110.05,
+          "per_stream_tok_s": 95.9,
+          "aggregate_decode_tok_s": 338.24292045335176,
+          "aggregate_e2e_tok_s": 316.89864437087573,
+          "all_cold": true,
+          "worst_ttft_ms": 6752.3,
+          "ttft_raw_ms": [
+            1562.4,
+            4956,
+            3243.6,
+            6716,
+            1578.4,
+            4971.6,
+            3257.9,
+            6752.3,
+            6730.5,
+            1582.8,
+            3264.1,
+            4974.4
+          ]
+        },
+        "c8": {
+          "streams": 24,
+          "batches": 3,
+          "ttft_ms": 7620.099999999999,
+          "per_stream_tok_s": 57.85,
+          "aggregate_decode_tok_s": 384.2398805921866,
+          "aggregate_e2e_tok_s": 370.0982782996091,
+          "all_cold": true,
+          "worst_ttft_ms": 14295.1,
+          "ttft_raw_ms": [
+            1575.4,
+            3253,
+            8518.7,
+            4969.5,
+            6730.9,
+            12361.3,
+            14287.8,
+            10433.8,
+            1571.2,
+            4959.6,
+            3243.7,
+            6727.9,
+            8509.3,
+            10423.1,
+            14284.7,
+            12351.9,
+            1580.7,
+            6723.9,
+            4965.6,
+            3257.1,
+            10420.3,
+            8509.7,
+            14295.1,
+            12349.3
+          ]
+        }
+      },
+      "cold_prefill": {
+        "tok_s": 3313.0,
+        "requests": 9,
+        "all_cold": true
+      },
+      "memory": {
+        "minimum_cmp_free_mib": 425.0,
+        "rows": [
+          {
+            "index": "0",
+            "pci.bus_id": "00000000:01:00.0",
+            "memory.used [MiB]": "55181 MiB",
+            "memory.free [MiB]": "9737 MiB",
+            "power.limit [W]": "180.00 W",
+            "clocks.current.sm [MHz]": "1485 MHz"
+          },
+          {
+            "index": "1",
+            "pci.bus_id": "00000000:41:00.0",
+            "memory.used [MiB]": "64492 MiB",
+            "memory.free [MiB]": "427 MiB",
+            "power.limit [W]": "180.00 W",
+            "clocks.current.sm [MHz]": "1485 MHz"
+          },
+          {
+            "index": "2",
+            "pci.bus_id": "00000000:81:00.0",
+            "memory.used [MiB]": "95 MiB",
+            "memory.free [MiB]": "97247 MiB",
+            "power.limit [W]": "400.00 W",
+            "clocks.current.sm [MHz]": "180 MHz"
+          },
+          {
+            "index": "3",
+            "pci.bus_id": "00000000:82:00.0",
+            "memory.used [MiB]": "53670 MiB",
+            "memory.free [MiB]": "11249 MiB",
+            "power.limit [W]": "180.00 W",
+            "clocks.current.sm [MHz]": "1485 MHz"
+          },
+          {
+            "index": "4",
+            "pci.bus_id": "00000000:C1:00.0",
+            "memory.used [MiB]": "64494 MiB",
+            "memory.free [MiB]": "425 MiB",
+            "power.limit [W]": "180.00 W",
+            "clocks.current.sm [MHz]": "1455 MHz"
+          }
+        ]
+      }
+    },
+    "cpu_activity": "No own C build/test overlap. N reports build36 make-j8 at13:21:14-13:23:51, overlapping part of this control Fraser phase (RND_N13:29). Sequential observation, no isolated causal optimum or sub-millisecond non-regression confidence.",
+    "mixed_comparison": {
+      "source_commit": "39980c76023fb2bcd8f4fbc2e3b20cf2c7845f99",
+      "binary_sha256": "de617b4f61dc44f88fe765b1c66af4173ec0769a4942c2be3a72535c8b5b7543",
+      "records": {
+        "batch": {
+          "path": "evidence/gxf_tcb78_batch_mixed_strict_xf19_v1.json",
+          "sha256": "804c9e05b70c7184e3aa19114ba61f9b96c62f4fd3737c7a959fd99cd13cb21c",
+          "source_commit": "39980c76023fb2bcd8f4fbc2e3b20cf2c7845f99",
+          "binary_sha256": "de617b4f61dc44f88fe765b1c66af4173ec0769a4942c2be3a72535c8b5b7543",
+          "recipe_sha256": "0b568bca68b2f6c4f0401fdfcd10229f49155c9a5fe2e609c3a5b071ef46c358",
+          "mixed": {
+            "scenarios": [
+              {
+                "id": "c1_solo",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 73.33223130414262,
+                  "decode_window_s": 52.14147786912508,
+                  "aggregate_tok_s": 128.66102438460788,
+                  "aggregate_decode_tok_s": 180.94999193697222,
+                  "per_stream_median_tok_s": 196.4129764523555,
+                  "ttft_p50_s": 0.7166518225567415,
+                  "ttft_p90_s": 2.467119951499626,
+                  "ttft_max_s": 7.7045019620563835,
+                  "equal": 0,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.02371363900601864,
+                "reasoning_equal": 0,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c2_burst",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 64.74213958578184,
+                  "decode_window_s": 59.82962826313451,
+                  "aggregate_tok_s": 145.73197704562796,
+                  "aggregate_decode_tok_s": 157.69778743241176,
+                  "per_stream_median_tok_s": 137.28343134376863,
+                  "ttft_p50_s": 0.9286930464440957,
+                  "ttft_p90_s": 4.055990995489992,
+                  "ttft_max_s": 8.447728558909148,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.4929140879539773,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c2_staggered",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 70.76210890419316,
+                  "decode_window_s": 58.157661790028214,
+                  "aggregate_tok_s": 133.33407025466576,
+                  "aggregate_decode_tok_s": 162.2314190357931,
+                  "per_stream_median_tok_s": 171.58697775861847,
+                  "ttft_p50_s": 0.7456418675137684,
+                  "ttft_p90_s": 2.5516104354755953,
+                  "ttft_max_s": 8.182488191057928,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.49509201804175973,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c4_burst",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 58.50101894803811,
+                  "decode_window_s": 56.12033229600638,
+                  "aggregate_tok_s": 161.27924213389127,
+                  "aggregate_decode_tok_s": 168.12088620992378,
+                  "per_stream_median_tok_s": 67.59556191862814,
+                  "ttft_p50_s": 1.4384870094945654,
+                  "ttft_p90_s": 6.311619732936379,
+                  "ttft_max_s": 10.384312032954767,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.4982374180108309,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c4_staggered",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 59.282136584981345,
+                  "decode_window_s": 55.72411696903873,
+                  "aggregate_tok_s": 159.15418275241925,
+                  "aggregate_decode_tok_s": 169.31627656374073,
+                  "per_stream_median_tok_s": 89.61914168944105,
+                  "ttft_p50_s": 0.9539705170318484,
+                  "ttft_p90_s": 5.0628984165377915,
+                  "ttft_max_s": 10.259449243079871,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.4995824680663645,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c8_burst",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 51.88393572194036,
+                  "decode_window_s": 51.252179033937864,
+                  "aggregate_tok_s": 181.8481938333407,
+                  "aggregate_decode_tok_s": 184.08973389701904,
+                  "per_stream_median_tok_s": 38.394635168338716,
+                  "ttft_p50_s": 1.6551914485171437,
+                  "ttft_p90_s": 8.231142970034853,
+                  "ttft_max_s": 19.113511771080084,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.5365066980011761,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c8_staggered",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 52.59693480900023,
+                  "decode_window_s": 52.149511169991456,
+                  "aggregate_tok_s": 179.38307687058432,
+                  "aggregate_decode_tok_s": 180.92211774037125,
+                  "per_stream_median_tok_s": 39.96804639831993,
+                  "ttft_p50_s": 0.9774894265574403,
+                  "ttft_p90_s": 6.015977338014636,
+                  "ttft_max_s": 17.300160666927695,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.5371724880533293,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              }
+            ],
+            "identity_fields": [
+              "request_id",
+              "text",
+              "reasoning_text",
+              "completion_tokens",
+              "finish_reason"
+            ],
+            "qualified_text_identity": true
+          },
+          "pause": {
+            "complete_records": 35,
+            "all_text_native_counts_match_solo": true,
+            "max_content_event_gap_s": 0.4801796179963276,
+            "max_warm_short_content_event_gap_s": 0.4737593779573217,
+            "native_token_clock": false,
+            "gpu_prefill_overlap_qualification": "requires engine_stats analysis"
+          },
+          "native_overlap_both_warm": true,
+          "minimum_cmp_free_mib": 425.0,
+          "source_to_binary_rebuild_proved": false,
+          "axis_optimum_qualified": false
+        },
+        "thin": {
+          "path": "evidence/gxf_tcb78_thin_mixed_strict_xf19_v1.json",
+          "sha256": "90c2edeb62f968e300822e02846c6fb92c1d6e9317ed64d625c817510d014dce",
+          "source_commit": "39980c76023fb2bcd8f4fbc2e3b20cf2c7845f99",
+          "binary_sha256": "de617b4f61dc44f88fe765b1c66af4173ec0769a4942c2be3a72535c8b5b7543",
+          "recipe_sha256": "be09660c1304a7ee6b96208854b89831a03fc02ad2dfb1db1ca66955aa6c3168",
+          "mixed": {
+            "scenarios": [
+              {
+                "id": "c1_solo",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 76.85999208595604,
+                  "decode_window_s": 55.62948560039513,
+                  "aggregate_tok_s": 122.7556722806894,
+                  "aggregate_decode_tok_s": 169.60430063608183,
+                  "per_stream_median_tok_s": 187.3934240316747,
+                  "ttft_p50_s": 0.7195091029861942,
+                  "ttft_p90_s": 2.463024907046929,
+                  "ttft_max_s": 7.709044407005422,
+                  "equal": 0,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.023991244030185044,
+                "reasoning_equal": 0,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c2_burst",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 76.94644738128409,
+                  "decode_window_s": 71.01193172088824,
+                  "aggregate_tok_s": 122.61774677195692,
+                  "aggregate_decode_tok_s": 132.86499566135143,
+                  "per_stream_median_tok_s": 187.1418722924426,
+                  "ttft_p50_s": 1.8843069724971429,
+                  "ttft_p90_s": 7.400212677021045,
+                  "ttft_max_s": 10.284458208014257,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.02130865305662155,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c2_staggered",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 79.21539220202249,
+                  "decode_window_s": 62.91561593313236,
+                  "aggregate_tok_s": 119.1056401758131,
+                  "aggregate_decode_tok_s": 149.9627693389771,
+                  "per_stream_median_tok_s": 187.17702017305083,
+                  "ttft_p50_s": 1.6661078020115383,
+                  "ttft_p90_s": 7.5600334430346265,
+                  "ttft_max_s": 10.178391590015963,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.021407732972875237,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c4_burst",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 76.88271698995959,
+                  "decode_window_s": 75.25897307496052,
+                  "aggregate_tok_s": 122.71938830195288,
+                  "aggregate_decode_tok_s": 125.36711058497193,
+                  "per_stream_median_tok_s": 187.31366516167913,
+                  "ttft_p50_s": 7.0826439805096015,
+                  "ttft_p90_s": 16.50744916248368,
+                  "ttft_max_s": 20.00197294203099,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.024714163970202208,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c4_staggered",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 76.97096108493861,
+                  "decode_window_s": 65.98875529307406,
+                  "aggregate_tok_s": 122.57869548475998,
+                  "aggregate_decode_tok_s": 142.9789053922383,
+                  "per_stream_median_tok_s": 187.2070055289663,
+                  "ttft_p50_s": 7.163903733424377,
+                  "ttft_p90_s": 14.167997410986573,
+                  "ttft_max_s": 17.74456773500424,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.024218683945946395,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c8_burst",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 76.94398200104479,
+                  "decode_window_s": 76.77613013295922,
+                  "aggregate_tok_s": 122.62167559604448,
+                  "aggregate_decode_tok_s": 122.88975731989451,
+                  "per_stream_median_tok_s": 187.0831323264523,
+                  "ttft_p50_s": 14.864954375021625,
+                  "ttft_p90_s": 26.108112959074788,
+                  "ttft_max_s": 36.309699172968976,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.024745984002947807,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              },
+              {
+                "id": "c8_staggered",
+                "metrics": {
+                  "requests": 16,
+                  "successful": 16,
+                  "errors": 0,
+                  "completion_tokens": 9435,
+                  "wall_s": 76.92829018691555,
+                  "decode_window_s": 76.43457539600786,
+                  "aggregate_tok_s": 122.64668793593914,
+                  "aggregate_decode_tok_s": 123.43890119251955,
+                  "per_stream_median_tok_s": 187.15673714845946,
+                  "ttft_p50_s": 13.022437358973548,
+                  "ttft_p90_s": 30.42731919750804,
+                  "ttft_max_s": 34.80733387602959,
+                  "equal": 16,
+                  "different": 0,
+                  "uncomparable": 0
+                },
+                "max_content_event_gap_s": 0.021417173906229436,
+                "reasoning_equal": 16,
+                "request_output_equals_solo": 16
+              }
+            ],
+            "identity_fields": [
+              "request_id",
+              "text",
+              "reasoning_text",
+              "completion_tokens",
+              "finish_reason"
+            ],
+            "qualified_text_identity": true
+          },
+          "pause": {
+            "complete_records": 35,
+            "all_text_native_counts_match_solo": true,
+            "max_content_event_gap_s": 0.020418729982338846,
+            "max_warm_short_content_event_gap_s": 0.020418729982338846,
+            "native_token_clock": false,
+            "gpu_prefill_overlap_qualification": "requires engine_stats analysis"
+          },
+          "native_overlap_both_warm": false,
+          "minimum_cmp_free_mib": 3203.0,
+          "source_to_binary_rebuild_proved": false,
+          "axis_optimum_qualified": false
+        }
+      },
+      "scenarios": [
+        {
+          "scenario": "c1_solo",
+          "whole_window_tok_s": {
+            "batch": 128.66102438460788,
+            "thin": 122.7556722806894
+          },
+          "median_ttft_s": {
+            "batch": 0.7166518225567415,
+            "thin": 0.7195091029861942
+          },
+          "batch_vs_best_observed_ratio": 1.0,
+          "proposed90pct_floor_pass": true
+        },
+        {
+          "scenario": "c2_burst",
+          "whole_window_tok_s": {
+            "batch": 145.73197704562796,
+            "thin": 122.61774677195692
+          },
+          "median_ttft_s": {
+            "batch": 0.9286930464440957,
+            "thin": 1.8843069724971429
+          },
+          "batch_vs_best_observed_ratio": 1.0,
+          "proposed90pct_floor_pass": true
+        },
+        {
+          "scenario": "c2_staggered",
+          "whole_window_tok_s": {
+            "batch": 133.33407025466576,
+            "thin": 119.1056401758131
+          },
+          "median_ttft_s": {
+            "batch": 0.7456418675137684,
+            "thin": 1.6661078020115383
+          },
+          "batch_vs_best_observed_ratio": 1.0,
+          "proposed90pct_floor_pass": true
+        },
+        {
+          "scenario": "c4_burst",
+          "whole_window_tok_s": {
+            "batch": 161.27924213389127,
+            "thin": 122.71938830195288
+          },
+          "median_ttft_s": {
+            "batch": 1.4384870094945654,
+            "thin": 7.0826439805096015
+          },
+          "batch_vs_best_observed_ratio": 1.0,
+          "proposed90pct_floor_pass": true
+        },
+        {
+          "scenario": "c4_staggered",
+          "whole_window_tok_s": {
+            "batch": 159.15418275241925,
+            "thin": 122.57869548475998
+          },
+          "median_ttft_s": {
+            "batch": 0.9539705170318484,
+            "thin": 7.163903733424377
+          },
+          "batch_vs_best_observed_ratio": 1.0,
+          "proposed90pct_floor_pass": true
+        },
+        {
+          "scenario": "c8_burst",
+          "whole_window_tok_s": {
+            "batch": 181.8481938333407,
+            "thin": 122.62167559604448
+          },
+          "median_ttft_s": {
+            "batch": 1.6551914485171437,
+            "thin": 14.864954375021625
+          },
+          "batch_vs_best_observed_ratio": 1.0,
+          "proposed90pct_floor_pass": true
+        },
+        {
+          "scenario": "c8_staggered",
+          "whole_window_tok_s": {
+            "batch": 179.38307687058432,
+            "thin": 122.64668793593914
+          },
+          "median_ttft_s": {
+            "batch": 0.9774894265574403,
+            "thin": 13.022437358973548
+          },
+          "batch_vs_best_observed_ratio": 1.0,
+          "proposed90pct_floor_pass": true
+        }
+      ],
+      "cross_family_request_signatures_equal": 112,
+      "within_family_non_solo_signatures_equal": 96,
+      "all_mixed90pct_floors_pass": true,
+      "raw_same_recipe_pause_repeat_delta_s": 0.0047474149614572525,
+      "repeat_satisfies_literal_zero_limit": false,
+      "matched_latency_protocol": false,
+      "scope": "Raw current-main controls only, not an axis expansion or optimum. Rates use completion_tokens/wall_s including TTFT and staggered arrivals, not aggregate_decode_tok_s. Floors compare these two observed recipes only. Earlier matrix control had decode before M; these fresh windows run M then mixed. The same-recipe SSE repeat delta is preserved, not a paired regression or a waived zero limit. No Fraser, full1M, new-source axis boot, full-logit/state or official equality is inferred."
+    }
+  }
+}

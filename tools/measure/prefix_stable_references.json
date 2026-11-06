@@ -1,0 +1,28 @@
+{
+  "contract": "T=0 selected token/logit text-line MD5, 8/256/8 outputs; explicit TP4 EXL3 BF16 recipe, both wide_rows 1024 and 2048",
+  "default_form": {
+    "prefill_prefix_stable": 0,
+    "long_30k": "41eeb9c16e10706e4694f76055c7e6cd",
+    "fraser": "f49e8badff477ba894da6a65ee900958",
+    "short_1905": "757ac7d97af7fc9f019a3050a61bb1c7"
+  },
+  "prefix_stable_form": {
+    "prefill_prefix_stable": 1,
+    "long_30k": "0f3c057191b0092c8b78a33ae33bc0fe",
+    "fraser": "a6cea2ad356d4f07535488bce442f5fc",
+    "short_1905": "cf1bb195286fd9abececce382554c4d0"
+  },
+  "stable_admission": "TP4 EXL3 BF16, CE rings, column owners, fixed 1024/2048 programs, one chunk, zero chunk/decode caps, reserved prefill, margin >=7, no images or imported snapshots",
+  "evidence": {
+    "source": "4942b8a40c7c9499e3f69c721466d801a2403c55",
+    "gate": "xc28",
+    "scope": "six old and six new reference files, both widths, finite selected logits; prefix-stable changes cold bits"
+  },
+  "selection": {
+    "raw_default": 0,
+    "exactness": "exact cache form by owner decision, pending merge qualification; no original-weight-equivalence claim",
+    "category": "code/prose/structured/balanced text; vision excluded",
+    "concurrency": "qualified fixed THIN/BATCH recipes only; other topologies held",
+    "focus": "balanced/ttft/decode/prefill require their independent performance gates; no no-axis default change"
+  }
+}

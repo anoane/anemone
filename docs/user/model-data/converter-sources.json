@@ -1,0 +1,38 @@
+[
+  {
+    "file": "tools/convert/engram_tables.py",
+    "bytes": 53757,
+    "sha256": "83e27b47d42a8461eb2d30178cf73665a7c5cecd445f0de9ce4b4e65a7ab876d",
+    "already_in_target": true
+  },
+  {
+    "file": "tools/convert/front_end_tables.py",
+    "bytes": 15163,
+    "sha256": "1baff63328e93c6a8c864e4567584236d06c1b23a1a4140385331f5cdeb81f70",
+    "already_in_target": true
+  },
+  {
+    "file": "tools/convert/kernel_layouts.py",
+    "bytes": 64498,
+    "sha256": "6a91a9dd7025531d8fd496ce83e8acc3c3b83f9deab36c32cd1988a8102f23be",
+    "already_in_target": true
+  },
+  {
+    "file": "tools/convert/make_pack.py",
+    "bytes": 64286,
+    "sha256": "3e59e81634bcb45f76c07dac42286cedf13f2059ecd54a80e7c770beb0564831",
+    "already_in_target": true
+  },
+  {
+    "file": "tools/convert/make_pack_copies.sh",
+    "bytes": 2616,
+    "sha256": "e0c7db7c788a0ee52a0a69d53b5efc7ce3c8202b7cbc633484bbdbfee879f60d",
+    "already_in_target": true
+  },
+  {
+    "file": "tools/convert/w4a16_pack_scan.py",
+    "bytes": 63882,
+    "sha256": "7e6d52cc115bf7525c6cab61f4f7120a12856d3d1eca100cd54ae34836fc7daf",
+    "already_in_target": true
+  }
+]

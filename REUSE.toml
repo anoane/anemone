@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Data and deliberately malformed fixtures retain their exact format and bytes.
+version = 1
+
+[[annotations]]
+path = [
+    "tests/check_cases/**",
+    "docs/SERVER_PROFILE_COMMANDS.json",
+    "docs/results/*.json",
+    "docs/user/model-data/*.json",
+    "docs/user/model-data/*.sha256",
+    "tools/cli/*.json",
+    "tools/measure/prefix_stable_references.json",
+    "tools/vision/fixtures/**",
+]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Fabiano Anemone <fabiano.anemone@gmail.com>"
+SPDX-License-Identifier = "AGPL-3.0-or-later"

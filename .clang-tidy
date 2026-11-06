@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# What clang-tidy enforces in `make analysis`. An option whose name is misspelt is ignored without a word, so every
+# option below that changes a default has a case under tests/check_cases/clang_tidy/ which `make self_test` shows
+# failing.
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  misc-unused-parameters,
+  readability-identifier-naming,
+  readability-magic-numbers,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-tagged-union-member-count,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -cert-arr39-c,
+  -cert-con36-c,
+  -cert-con54-cpp,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -cert-err34-c,
+  -cert-exp42-c,
+  -cert-flp37-c,
+  -cert-msc24-c,
+  -cert-msc33-c,
+  -cert-msc50-cpp,
+  -cert-msc51-cpp,
+  -cert-msc54-cpp,
+  -cert-pos44-c,
+  -cert-sig30-c,
+  -cert-str34-c
+# bugprone-tagged-union-member-count is off: it takes any struct that holds one enumeration and one mutex (a union
+# in the C library) for a tagged union, and its report then surfaces as a number inside a system header.
+# The cert checks above are aliases of checks already on (bugprone-reserved-identifier and its two names,
+# bugprone-sizeof-expression, -spuriously-wake-up-functions, -unchecked-string-to-number-conversion,
+# -suspicious-memory-comparison, -unsafe-functions, -bad-signal-to-kill-thread, -signal-handler, -signed-char-misuse;
+# cert-msc50-cpp and -msc51-cpp of cert-msc30-c and -msc32-c): an alias runs its check again, so every diagnostic,
+# those inside the C library's headers included, is made once a name. Those inside system headers are never shown
+# (non-user code), but clang-tidy still counts them: the reserved identifiers of glibc's headers alone, three times
+# over, were half of the million "warnings generated" a `make check` printed.
+WarningsAsErrors: '*'
+# Diagnostics inside the engine's own headers are kept, wherever the build found them (relative or absolute path).
+HeaderFilterRegex: '(^|/)(include/anemone|source|tests)/'
+CheckOptions:
+  - { key: readability-identifier-naming.FunctionCase, value: lower_case }
+  - { key: readability-identifier-naming.VariableCase, value: lower_case }
+  - { key: readability-identifier-naming.ParameterCase, value: lower_case }
+  - { key: readability-identifier-naming.StructCase, value: lower_case }
+  - { key: readability-identifier-naming.UnionCase, value: lower_case }
+  - { key: readability-identifier-naming.EnumCase, value: lower_case }
+  - { key: readability-identifier-naming.TypedefCase, value: lower_case }
+  - { key: readability-identifier-naming.MemberCase, value: lower_case }
+  - { key: readability-identifier-naming.EnumConstantCase, value: UPPER_CASE }
+  - { key: readability-identifier-naming.MacroDefinitionCase, value: UPPER_CASE }
+  # A side effect inside ASSERT is lost where assertions are compiled out. Function calls are not counted
+  # as side effects (CheckFunctionCalls stays off): an assertion may call a predicate, and the test of the hooks
+  # proves through a counting function that a compiled-out assertion evaluates nothing.
+  - { key: bugprone-assert-side-effect.AssertMacros, value: 'ASSERT' }
+  # Only 0 and 1 may appear in code: no other value is ignored, a power of two and the width of a bit field included.
+  - { key: readability-magic-numbers.IgnoredIntegerValues, value: '0;1' }
+  - { key: readability-magic-numbers.IgnoredFloatingPointValues, value: '0.0;1.0' }
+  - { key: readability-magic-numbers.IgnorePowersOf2IntegerValues, value: false }
+  - { key: readability-magic-numbers.IgnoreBitFieldsWidths, value: false }

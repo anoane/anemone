@@ -1,0 +1,142 @@
+{
+  "elapsed_seconds": 10.554007786908187,
+  "pack_bytes": 517258440704,
+  "tensors": 48504,
+  "extents": 15794,
+  "slices": [
+    {
+      "name": "header",
+      "bytes": 4096,
+      "offset": 0,
+      "sha256": "c332b7fbbb42477eb074ef59c90db57fe9a6882b3657e58d86dae37e3bcd9db9",
+      "identical": true
+    },
+    {
+      "name": "index",
+      "bytes": 5394432,
+      "offset": 4096,
+      "sha256": "75ce19ee8568d99c393acc5c7e49a88129fd7b34b1815c27cc8b950025165709",
+      "identical": true
+    },
+    {
+      "name": "aligner.w1.bias",
+      "bytes": 10240,
+      "offset": 5398528,
+      "sha256": "418ffbc92856a09e04142f18e4b4d333d9f95e56da8955ae600f5cafd007dae4",
+      "identical": true
+    },
+    {
+      "name": "vision.patch_embed.proj.weight",
+      "bytes": 1204224,
+      "offset": 974731264,
+      "sha256": "44cd9830f9a692b8b848e8b2a4a5851ebc0ade8d187acedc7b84f564f6a5e113",
+      "identical": true
+    },
+    {
+      "name": "layers.0.attn.wkv.weight",
+      "bytes": 2624000,
+      "offset": 2299768576,
+      "sha256": "e5edd4edef21dbb6405ff2ace8a62b5c0f797bcc7b0b330c2782b52d7a90eac5",
+      "identical": true
+    },
+    {
+      "name": "mtp.2.ffn.shared_experts.w3.weight",
+      "bytes": 11808000,
+      "offset": 304978862592,
+      "sha256": "15ca02986b4cb2a0404d6416dbac92f0102b54d458b8f4798850c1ffb99d1517",
+      "identical": true
+    },
+    {
+      "name": "front_end.tables",
+      "bytes": 2979103,
+      "offset": 307533492224,
+      "sha256": "a5ce9880ee5e314fe5c0892b3ff49fd7c2dbc36e14ce7236b63570eaf79df9c8",
+      "identical": true
+    },
+    {
+      "name": "engram.multipliers",
+      "bytes": 64,
+      "offset": 517257920512,
+      "sha256": "7345f44ec93e965df6581af59c78a5dd6efba7be2e855486450a6594d7ebd7c6",
+      "identical": true
+    },
+    {
+      "name": "engram.offsets",
+      "bytes": 384,
+      "offset": 517257920576,
+      "sha256": "edf229962df441c86f9c20cbc126579dd548421e231250b146ee6f5bea0b2f8b",
+      "identical": true
+    },
+    {
+      "name": "engram.pad_id",
+      "bytes": 4,
+      "offset": 517257920960,
+      "sha256": "26b25d457597a7b0463f9620f666dd10aa2c4373a505967c7c8d70922a2d6ece",
+      "identical": true
+    },
+    {
+      "name": "engram.primes",
+      "bytes": 384,
+      "offset": 517257921024,
+      "sha256": "ed542f58c4b3593c4120e899620231785b695dfc61bcc3d04b61b113abd9cf9e",
+      "identical": true
+    },
+    {
+      "name": "engram.row_counts",
+      "bytes": 16,
+      "offset": 517257921408,
+      "sha256": "d9c36c87510d08ea09571a3a5a5dde8b1e49b0174a6375c1a101fc1bd644b2a3",
+      "identical": true
+    },
+    {
+      "name": "engram.table_units",
+      "bytes": 8,
+      "offset": 517257921472,
+      "sha256": "e002960714e26de8f75f0ff7cbdff558a7ddba26ce3931d4d56ebfcc458c269d",
+      "identical": true
+    },
+    {
+      "name": "engram.token_map",
+      "bytes": 517120,
+      "offset": 517257921536,
+      "sha256": "c60a86322ec17b4142bfef3c57a8d81fb428550cdf487f88a4320cb59fe46481",
+      "identical": true
+    },
+    {
+      "name": "mtp.0.attn.kv_norm.weight",
+      "bytes": 1024,
+      "offset": 299600609536,
+      "sha256": "576474ac9d838a9b65ce5e0bf9fc702ce02e237d538778893d26afc98a4b8fcf",
+      "identical": true
+    },
+    {
+      "name": "layers.1.engram.embed.rows-block-0",
+      "bytes": 4096,
+      "offset": 307536474112,
+      "sha256": "e165a3a0fd04a075f39dd247d5ab1c8c6b0de3ec75ea62bc04f0deceec189b5a",
+      "identical": true
+    },
+    {
+      "name": "layers.1.engram.embed.rows-block-25600411",
+      "bytes": 4096,
+      "offset": 412395757568,
+      "sha256": "a5b11fdabec42e118caa866e176b933ebdeaa356a317574e19274f57b9ed6aed",
+      "identical": true
+    },
+    {
+      "name": "layers.14.engram.embed.rows-block-0",
+      "bytes": 4096,
+      "offset": 412395761664,
+      "sha256": "bb036fcfc3f1a74921ac7bb8d551b9e80d026d13a0d6274cf390a77d9e59bf2f",
+      "identical": true
+    },
+    {
+      "name": "layers.14.engram.embed.rows-block-25601112",
+      "bytes": 4096,
+      "offset": 517257916416,
+      "sha256": "01810d9b5c644b3c8c1d1ca75d74cf01cec63555cba88ac6053150f5fdacf4f6",
+      "identical": true
+    }
+  ],
+  "index_scope": "Every layout record regenerated. Unselected extent digests retained from the reference index; omitted payloads not reconverted."
+}
