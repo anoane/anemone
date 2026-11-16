@@ -67,10 +67,9 @@ int main(void)
 							    fake_prepare };
 	struct device_card card = { 0 };
 	struct bb_exl3_output_shard_plan plan;
-	if (bb_exl3_output_shard_prepare(TEST_OUTER_SIZE, TEST_INNER_SIZE,
-					 EXL3_MAXIMUM_BITS, BB_EXL3_TP_RANKS, 1,
-					 BB_EXL3_REFERENCE_ORDER,
-					 &plan) != STATUS_OK) {
+	if (bb_exl3_output_shard_prepare(
+		    TEST_OUTER_SIZE, TEST_INNER_SIZE, EXL3_K3, BB_EXL3_TP_RANKS,
+		    1, BB_EXL3_REFERENCE_ORDER, &plan) != STATUS_OK) {
 		return 1;
 	}
 	struct bb_exl3_pass_description description = {
@@ -84,7 +83,7 @@ int main(void)
 			    .pair_count = TEST_PAIR_COUNT,
 			    .pairs_per_row = TEST_PAIR_COUNT,
 			    .job_count = 1,
-			    .bits_per_weight = EXL3_MAXIMUM_BITS,
+			    .bits_per_weight = EXL3_K3,
 			    .activation_limit = TEST_ACTIVATION_LIMIT },
 		.arena_bytes = TEST_ARENA_BYTES,
 		.weight_offset = TEST_WEIGHT_OFFSET,
@@ -232,6 +231,36 @@ int main(void)
 			    EXL3_PRODUCT_SLICES * EXL3_WARP;
 		failures += memcmp(product_launch.argument, expected_record,
 				   sizeof(expected_record)) != 0;
+	}
+	/* Every width names its own retained and decode_c entries; the plan's width must be the record's. */
+	static const struct {
+		uint32_t width;
+		const char *retained, *product;
+	} widths[] = { { EXL3_K2, "exl3_down_k2", "exl3_c_down_k2_t1_g1" },
+		       { EXL3_K2_5, "exl3_down_k2_5",
+			 "exl3_c_down_k2_5_t1_g1" },
+		       { EXL3_K4, "exl3_down_k4", "exl3_c_down_k4_t1_g1" } };
+	for (uint32_t index = 0; index < sizeof(widths) / sizeof(widths[0]);
+	     index++) {
+		failures += bb_exl3_output_shard_prepare(
+				    TEST_OUTER_SIZE, TEST_INNER_SIZE,
+				    widths[index].width, BB_EXL3_TP_RANKS, 1,
+				    BB_EXL3_REFERENCE_ORDER,
+				    &plan) != STATUS_OK;
+		description.record.bits_per_weight = widths[index].width;
+		description.product_tiles = 0;
+		expected_module = EXL3_KERNEL_FILE;
+		expected_kernel = widths[index].retained;
+		failures += bb_exl3_pass_prepare(&description, &backend, &card,
+						 &product_launch) != STATUS_OK;
+		description.product_tiles = 1;
+		expected_module = BB_EXL3_PRODUCT_KERNEL_FILE;
+		expected_kernel = widths[index].product;
+		failures += bb_exl3_pass_prepare(&description, &backend, &card,
+						 &product_launch) != STATUS_OK;
+		description.record.bits_per_weight = EXL3_K3;
+		failures += refusal_unchanged(&description, &backend, &card,
+					      STATUS_INVALID_ARGUMENT);
 	}
 	failures += callback_failures;
 	printf("EXL3 independent pass admission: %s (%u fake prepares)\n",

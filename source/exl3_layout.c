@@ -5,17 +5,10 @@
 #include <stdint.h>
 #include <string.h>
 
-static uint64_t exl3_code_bytes(uint32_t inputs, uint32_t outputs,
-				uint32_t bits_per_weight)
-{
-	return (uint64_t)inputs * outputs / EXL3_BITS_PER_BYTE *
-	       bits_per_weight;
-}
-
 static uint64_t exl3_matrix_bytes(uint32_t inputs, uint32_t outputs,
-				  uint32_t bits_per_weight)
+				  uint32_t bits_x2)
 {
-	return exl3_code_bytes(inputs, outputs, bits_per_weight) +
+	return exl3_code_bytes(inputs, outputs, bits_x2) +
 	       ((uint64_t)inputs + outputs) * EXL3_HALF_BYTES;
 }
 
@@ -35,17 +28,15 @@ bb_exl3_matrix_slice_prepare(const struct bb_exl3_matrix_slice *slice,
 	    slice->input_count > slice->input_size - slice->input_begin ||
 	    slice->output_begin > slice->output_size ||
 	    slice->output_count > slice->output_size - slice->output_begin ||
-	    slice->bits_per_weight < EXL3_MINIMUM_BITS ||
-	    slice->bits_per_weight > EXL3_MAXIMUM_BITS) {
+	    !exl3_width_supported(slice->bits_per_weight)) {
 		return STATUS_INVALID_ARGUMENT;
 	}
+	const uint32_t bits_x2 = exl3_bits_x2(slice->bits_per_weight);
 	const struct bb_exl3_slice_sizes sizes = {
 		.source_bytes = exl3_matrix_bytes(slice->input_size,
-						  slice->output_size,
-						  slice->bits_per_weight),
+						  slice->output_size, bits_x2),
 		.packed_bytes = exl3_matrix_bytes(slice->input_count,
-						  slice->output_count,
-						  slice->bits_per_weight)
+						  slice->output_count, bits_x2)
 	};
 	*sizes_out = sizes;
 	return STATUS_OK;
@@ -79,14 +70,14 @@ bb_exl3_matrix_slice_copy(const struct bb_exl3_matrix_slice *slice,
 	}
 	const unsigned char *const source_values = source;
 	unsigned char *const destination_values = destination;
-	const uint64_t source_row_bytes = exl3_code_bytes(
-		EXL3_TILE, slice->output_size, slice->bits_per_weight);
-	const uint64_t copied_row_bytes = exl3_code_bytes(
-		EXL3_TILE, slice->output_count, slice->bits_per_weight);
+	const uint32_t bits_x2 = exl3_bits_x2(slice->bits_per_weight);
+	const uint64_t source_row_bytes =
+		exl3_code_bytes(EXL3_TILE, slice->output_size, bits_x2);
+	const uint64_t copied_row_bytes =
+		exl3_code_bytes(EXL3_TILE, slice->output_count, bits_x2);
 	const uint64_t first_code_byte =
 		(uint64_t)(slice->input_begin / EXL3_TILE) * source_row_bytes +
-		exl3_code_bytes(EXL3_TILE, slice->output_begin,
-				slice->bits_per_weight);
+		exl3_code_bytes(EXL3_TILE, slice->output_begin, bits_x2);
 	const uint32_t code_rows = slice->input_count / EXL3_TILE;
 	for (uint32_t row = 0; row < code_rows; row++) {
 		memcpy(destination_values + (uint64_t)row * copied_row_bytes,
@@ -94,11 +85,10 @@ bb_exl3_matrix_slice_copy(const struct bb_exl3_matrix_slice *slice,
 			       (uint64_t)row * source_row_bytes,
 		       (size_t)copied_row_bytes);
 	}
-	const uint64_t source_codes = exl3_code_bytes(
-		slice->input_size, slice->output_size, slice->bits_per_weight);
-	const uint64_t destination_codes =
-		exl3_code_bytes(slice->input_count, slice->output_count,
-				slice->bits_per_weight);
+	const uint64_t source_codes =
+		exl3_code_bytes(slice->input_size, slice->output_size, bits_x2);
+	const uint64_t destination_codes = exl3_code_bytes(
+		slice->input_count, slice->output_count, bits_x2);
 	const size_t input_scale_bytes =
 		(size_t)slice->input_count * EXL3_HALF_BYTES;
 	const size_t output_scale_bytes =

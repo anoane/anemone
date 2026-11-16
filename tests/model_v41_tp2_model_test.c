@@ -7,7 +7,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
+#include "anemone/hooks.h"
+#include "anemone/loader.h"
 #include "host_memory_backend.h"
 #include "memory_storage.h"
 #include "model_v41_pack.h"
@@ -19,6 +22,10 @@
 #define TEST_KEPT_BYTES 4096ull
 #define TEST_RESERVED_BYTES 8192ull
 #define TEST_WAIT_NANOSECONDS 1000000000ull
+#define TEST_HOST_PAGES 2u /* TEST_HOST_BYTES in whole 2 MiB pages */
+#define TEST_HOST_BYTES  \
+	((3ull << 20u) + \
+	 1u) /* the arena choice's host layout: not a whole number of 2 MiB pages */
 
 static int failures;
 static uint32_t allocations, retired, waited;
@@ -208,7 +215,8 @@ static void original_wide_scratch_check(const struct pack_record *pack,
 			after->state_offset + stage->base_state_byte_count;
 		const uint64_t gathered_growth =
 			(uint64_t)(capacity - LINEAR_MAXIMUM_ROWS) *
-			(MODEL_EXPERTS_PER_ROW * V41_DATA_EXPERT_INNER *
+			((size_t)(MODEL_EXPERTS_PER_ROW *
+				  V41_DATA_EXPERT_INNER) *
 				 sizeof(uint16_t) +
 			 MODEL_HIDDEN * sizeof(float));
 		expect(before->front_scratch_offset ==
@@ -373,6 +381,88 @@ static void load_failure(struct v41_tp2_model *model,
 	       "failed load object cannot be reused");
 }
 
+#if CHECKING_HOOKS_ENABLED
+MUST_CHECK static result_status allocation_kept(uint64_t bytes, void **out)
+{
+	(void)bytes;
+	allocations++;
+	*out = &staged; /* no callback reads it: the host arena's allocation fails first */
+	return STATUS_OK;
+}
+
+/* SF1 in the TP model (SFF2): the arena is an unaccounted MAP_NORESERVE mapping exactly when the request names an
+ * external extent, else posix_memalign's as before. The arena's fault point fails the allocation after the choice is
+ * recorded, so no host memory or card is touched. */
+static void arena_choice(const struct pack_record *pack,
+			 const struct storage_reader *reader)
+{
+	const uint32_t extents = pack_header_of(pack)->extent_count;
+	unsigned char *const external = calloc(extents, 1);
+	expect(external != NULL, "arena choice: the external extent flags");
+	for (uint32_t external_tables = 0;
+	     external != NULL && external_tables <= 1u; external_tables++) {
+		struct v41_tp2_model_description description =
+			description_make();
+		struct v41_tp2_model *model = NULL;
+		if (v41_tp2_model_create(pack, &description, &model) !=
+		    STATUS_OK) {
+			expect(false, "arena choice: a fresh load object");
+			continue;
+		}
+		external[0] = (unsigned char)external_tables;
+		struct backend_operations backend = test_host_memory_backend;
+		backend.staging_allocate = allocation_kept;
+		backend.staging_retire = staging_retire;
+		backend.launch_wait = card_wait;
+		backend.peer_connect = peer_connect;
+		struct device_card *cards[TEST_CARDS];
+		for (uint32_t card = 0; card < TEST_CARDS; card++)
+			cards[card] = (void *)&card_handles[card];
+		struct v41_tp2_model_load_request request = {
+			.backend = &backend,
+			.cards = cards,
+			.storage = &test_memory_storage,
+			.reader = reader,
+			.wait_limit_nanoseconds = TEST_WAIT_NANOSECONDS,
+			.external_host_extents = external
+		};
+		for (uint32_t card = 0; card < TEST_PRO; card++)
+			request.qualified_writer_masks[card] = 1u
+							       << (card ^ 1u);
+		/* the draft pack has no HOST_ONLY extent: the plan is given host bytes, which the fault stops before
+		 * any read */
+		model->host_load.host_byte_count = TEST_HOST_BYTES;
+		const uint64_t whole = (model->host_load.host_byte_count +
+					TP_HOST_ARENA_PAGE_BYTES - 1u) /
+				       TP_HOST_ARENA_PAGE_BYTES *
+				       TP_HOST_ARENA_PAGE_BYTES;
+		load_host_arena_last = (struct load_host_arena_record){ 0 };
+		const bool armed = fault_arm("tp_host_arena", 1);
+		const result_status status =
+			v41_tp2_model_load(model, &request);
+		const bool reached = fault_disarm() > 0;
+		expect(armed && reached && status == STATUS_OUT_OF_MEMORY &&
+			       !model->ready && model->host_arena == NULL &&
+			       whole == TEST_HOST_PAGES *
+						TP_HOST_ARENA_PAGE_BYTES,
+		       "arena choice: the arena's allocation is reached and its failure fails the load");
+		expect(external_tables != 0 ?
+			       load_host_arena_last.flags ==
+					       (MAP_PRIVATE | MAP_ANONYMOUS |
+						MAP_NORESERVE) &&
+				       load_host_arena_last.byte_count ==
+					       whole + TP_HOST_ARENA_PAGE_BYTES :
+			       load_host_arena_last.flags == 0 &&
+				       load_host_arena_last.byte_count == whole,
+		       external_tables != 0 ?
+			       "arena choice: an external extent maps the arena with MAP_NORESERVE, one page longer" :
+			       "arena choice: no external extent keeps posix_memalign's arena of the whole layout");
+		v41_tp2_model_destroy(model);
+	}
+	free(external);
+}
+#endif
+
 int main(void)
 {
 	struct pack_record *pack = NULL;
@@ -409,6 +499,9 @@ int main(void)
 			       refused == NULL,
 		       "arena plus reserved and kept bytes bounded before GPU open");
 		load_failure(model, reader);
+#if CHECKING_HOOKS_ENABLED
+		arena_choice(pack, reader);
+#endif
 	}
 	v41_tp2_model_destroy(model);
 	v41_tp2_model_destroy(NULL);

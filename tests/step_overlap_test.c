@@ -40,6 +40,13 @@
 #define OVERLAP_NS_PER_SECOND 1000000000l
 #define OVERLAP_IDENTITY 0x5450345F53554D31ull
 #define OVERLAP_WITNESS_GUARD 0x505245464958544Cull
+#define OVERLAP_WITNESS_BYTES 32u
+#define OVERLAP_CARD_LAUNCHES 2
+#define OVERLAP_DEPTH \
+	2u /* the pipeline depth the overlap runs at, and the least one it accepts */
+#define OVERLAP_SECOND_SEQUENCE 2u
+#define OVERLAP_HEADLESS_STEPS \
+	2u /* the headless case's front steps: its positions and saved tokens */
 
 struct witness {
 	uint64_t sequence;
@@ -47,7 +54,7 @@ struct witness {
 	uint32_t session, card, position;
 	uint64_t guard;
 };
-_Static_assert(sizeof(struct witness) == 32u,
+_Static_assert(sizeof(struct witness) == OVERLAP_WITNESS_BYTES,
 	       "the transfer carries one complete aligned witness");
 
 struct snapshot {
@@ -69,7 +76,7 @@ enum fixture_form {
 struct fixture {
 	struct backend_operations backend;
 	struct device_card *cards[OVERLAP_CARDS];
-	struct kernel_launch launches[OVERLAP_CARDS][2];
+	struct kernel_launch launches[OVERLAP_CARDS][OVERLAP_CARD_LAUNCHES];
 	struct program_card_record areas[OVERLAP_CARDS];
 	struct segment_record segments[OVERLAP_CARDS + 1u];
 	struct hand_off_record
@@ -129,7 +136,7 @@ static bool model_stand_in(const struct kernel_launch *launch, uint32_t card,
 	struct step_row_record row;
 	memcpy(&block, arena, sizeof(block));
 	memcpy(&row, arena + STEP_BLOCK_BYTES_VALUE, sizeof(row));
-	if (block.sequence == 0 || block.sequence > OVERLAP_FLIGHTS ||
+	if (block.sequence == 0 || block.sequence > (uint64_t)OVERLAP_FLIGHTS ||
 	    row.session_slot >= OVERLAP_SESSIONS || block.row_count != 1u)
 		return false;
 	const struct witness written = witness_of(&block, &row, card);
@@ -166,7 +173,8 @@ static bool model_stand_in(const struct kernel_launch *launch, uint32_t card,
 		       arena + OVERLAP_SETTINGS_OFFSET +
 			       row.session_slot * sizeof(settings),
 		       sizeof(settings));
-		if (settings.seed != OVERLAP_SEED_BASE + row.session_slot ||
+		if (step_session_seed(&settings) !=
+			    OVERLAP_SEED_BASE + row.session_slot ||
 		    settings.temperature != 0.0f || settings.top_p != 1.0f)
 			return false;
 		const struct step_result header = { block.sequence, 1u, 0u };
@@ -189,7 +197,7 @@ static bool stage_gate(struct fixture *fixture, uint32_t card,
 		       uint64_t sequence)
 {
 	if (!fixture->gate_enabled ||
-	    !((card == 0 && sequence == 2u) ||
+	    !((card == 0 && sequence == OVERLAP_SECOND_SEQUENCE) ||
 	      (card == OVERLAP_TAIL_CARD && sequence == 1u)))
 		return true;
 	struct timespec deadline;
@@ -242,7 +250,7 @@ noting_launch(struct device_card *card, const struct kernel_launch *launches,
 		test_host_memory_backend.launch_run(card, launches, count);
 	(void)pthread_mutex_lock(&fixture->lock);
 	if (!embedding && index < OVERLAP_PREFIX_CARDS && block.sequence != 0 &&
-	    block.sequence <= OVERLAP_FLIGHTS) {
+	    block.sequence <= (uint64_t)OVERLAP_FLIGHTS) {
 		fixture->queued_prefix[block.sequence - 1u] |= 1u << index;
 		(void)pthread_cond_broadcast(&fixture->changed);
 	}
@@ -267,7 +275,8 @@ MUST_CHECK static result_status noting_wait(struct device_card *card,
 		struct step_block block;
 		memcpy(&block, arena, sizeof(block));
 		(void)pthread_mutex_lock(&fixture->lock);
-		if (block.sequence != 0 && block.sequence <= OVERLAP_FLIGHTS &&
+		if (block.sequence != 0 &&
+		    block.sequence <= (uint64_t)OVERLAP_FLIGHTS &&
 		    fixture->queued_prefix[block.sequence - 1u] != 0) {
 			fixture->waited_before_group =
 				fixture->waited_before_group ||
@@ -325,7 +334,7 @@ noting_upload_begin(struct device_card *card, uint64_t offset,
 		struct witness embedded;
 		memcpy(&embedded, source, sizeof(embedded));
 		if (embedded.sequence == 0 ||
-		    embedded.sequence > OVERLAP_FLIGHTS)
+		    embedded.sequence > (uint64_t)OVERLAP_FLIGHTS)
 			return STATUS_INVALID_ARGUMENT;
 		(void)pthread_mutex_lock(&fixture->lock);
 		fixture->embedding_uploads[embedded.sequence - 1u][index - 1u]++;
@@ -335,8 +344,8 @@ noting_upload_begin(struct device_card *card, uint64_t offset,
 						     bytes, ticket);
 }
 
-static result_status fixture_open(struct fixture *fixture,
-				  enum fixture_form form, bool groups)
+MUST_CHECK static result_status
+fixture_open(struct fixture *fixture, enum fixture_form form, bool groups)
 {
 	memset(fixture, 0, sizeof(*fixture));
 	active = fixture;
@@ -513,8 +522,8 @@ static result_status fixture_open(struct fixture *fixture,
 					    OVERLAP_PREFIX_CARDS);
 	for (uint32_t slot = 0; slot < OVERLAP_SESSIONS && status == STATUS_OK;
 	     slot++) {
-		const struct step_session settings = { OVERLAP_SEED_BASE + slot,
-						       0.0f, 1.0f };
+		const struct step_session settings = step_session_make(
+			OVERLAP_SEED_BASE + slot, 0.0f, 1.0f, 0);
 		status = step_session_set(fixture->driver, slot, &settings);
 	}
 	return status;
@@ -607,7 +616,8 @@ static struct outcome run_case(uint32_t depth, bool overlap, bool fail_prefix,
 							  wave) ==
 					       (uint32_t)input_token(slot,
 								     wave),
-				       "successive waves retain every continuation token in the correct session history");
+				       "successive waves retain every continuation token in the correct session "
+				       "history");
 			}
 		}
 		for (uint32_t slot = 0; slot < count; slot++) {
@@ -664,8 +674,8 @@ static void refusal_case(enum fixture_form form, bool groups)
 	       "an ordinary supported fixture opens before overlap refusal");
 	if (status == STATUS_OK) {
 		const uint64_t work = test_host_memory_backend_work_count();
-		expect(step_pipeline_overlap_start(fixture.driver, 2u) !=
-				       STATUS_OK &&
+		expect(step_pipeline_overlap_start(
+			       fixture.driver, OVERLAP_DEPTH) != STATUS_OK &&
 			       step_pipeline_depth(fixture.driver) == 1u &&
 			       test_host_memory_backend_work_count() == work,
 		       "unsupported topology refuses overlap before device work or pipeline publication");
@@ -706,8 +716,10 @@ static void front_retirement(void)
 	       "the headless fixture opens without outgoing transfers");
 	fixture.gate_uploads = true;
 	if (status == STATUS_OK)
-		status = step_pipeline_overlap_start(fixture.driver, 2u);
-	for (uint32_t position = 0; position < 2u && status == STATUS_OK;
+		status = step_pipeline_overlap_start(fixture.driver,
+						     OVERLAP_DEPTH);
+	for (uint32_t position = 0;
+	     position < OVERLAP_HEADLESS_STEPS && status == STATUS_OK;
 	     position++) {
 		const struct step_row_record row = { (int32_t)position,
 						     input_token(0, position),
@@ -777,14 +789,19 @@ static void front_retirement(void)
 			       fixture.tail_launches == 0,
 		       "the next front step retires its own upload without executing the PRO tail");
 		struct snapshot state = { 0 };
-		status = step_session_save(fixture.driver, 0, 2u, save_bytes,
+		status = step_session_save(fixture.driver, 0,
+					   OVERLAP_HEADLESS_STEPS, save_bytes,
 					   &state);
 		expect(status == STATUS_OK && state.size == sizeof(state.bytes),
 		       "headless continuations leave a complete canonical snapshot");
 		for (uint32_t card = 0; card < OVERLAP_PREFIX_CARDS; card++) {
 			const struct witness expected = {
-				2u, input_token(0, 1u),	  0, card,
-				1u, OVERLAP_WITNESS_GUARD
+				OVERLAP_SECOND_SEQUENCE,
+				input_token(0, 1u),
+				0,
+				card,
+				1u,
+				OVERLAP_WITNESS_GUARD
 			};
 			expect(memcmp(state.bytes + card * sizeof(expected),
 				      &expected, sizeof(expected)) == 0,
@@ -795,7 +812,8 @@ static void front_retirement(void)
 				      OVERLAP_TAIL_CARD * sizeof(untouched),
 			      &untouched, sizeof(untouched)) == 0,
 		       "headless uploads do not execute a native tail state write");
-		for (uint32_t position = 0; position < 2u; position++)
+		for (uint32_t position = 0; position < OVERLAP_HEADLESS_STEPS;
+		     position++)
 			expect(step_history_token(fixture.driver, 0,
 						  position) ==
 				       (uint32_t)input_token(0, position),
@@ -827,14 +845,17 @@ static void depth_refusals(void)
 			       step_pipeline_depth(fixture.driver) == 1u &&
 			       test_host_memory_backend_work_count() == work,
 		       "depth refusals leave the cold driver and devices untouched");
-		status = step_pipeline_overlap_start(fixture.driver, 2u);
+		status = step_pipeline_overlap_start(fixture.driver,
+						     OVERLAP_DEPTH);
 		expect(status == STATUS_OK &&
-			       step_pipeline_start(fixture.driver, 2u) ==
+			       step_pipeline_start(fixture.driver,
+						   OVERLAP_DEPTH) ==
 				       STATUS_INVALID_ARGUMENT &&
 			       step_pipeline_overlap_start(fixture.driver,
-							   2u) ==
+							   OVERLAP_DEPTH) ==
 				       STATUS_INVALID_ARGUMENT &&
-			       step_pipeline_depth(fixture.driver) == 2u,
+			       step_pipeline_depth(fixture.driver) ==
+				       OVERLAP_DEPTH,
 		       "a cold retry succeeds and subsequent pipeline starts preserve the installed workers");
 	}
 	fixture_close(&fixture);
@@ -842,17 +863,19 @@ static void depth_refusals(void)
 
 int main(void)
 {
-	expect(step_pipeline_overlap_start(NULL, 2u) == STATUS_INVALID_ARGUMENT,
+	expect(step_pipeline_overlap_start(NULL, OVERLAP_DEPTH) ==
+		       STATUS_INVALID_ARGUMENT,
 	       "a missing driver is refused");
 	for (uint32_t embedding = 0; embedding <= 1u; embedding++)
-		for (uint32_t depth = 2u; depth <= OVERLAP_SESSIONS; depth++) {
+		for (uint32_t depth = OVERLAP_DEPTH; depth <= OVERLAP_SESSIONS;
+		     depth++) {
 			const struct outcome serial =
 				run_case(depth, false, false, embedding != 0);
 			const struct outcome overlap =
 				run_case(depth, true, false, embedding != 0);
 			expect(serial.completed && overlap.completed &&
 				       memcmp(serial.results, overlap.results,
-					      depth * OVERLAP_WAVES *
+					      (size_t)(depth * OVERLAP_WAVES) *
 						      sizeof(serial.results[0])) ==
 					       0,
 			       "serial and overlapped flights return exactly the same tokens and logit bits");
@@ -869,8 +892,8 @@ int main(void)
 						       0,
 				       "serial and overlapped flights preserve every canonical state byte");
 		}
-	(void)run_case(2u, true, true, false);
-	(void)run_case(2u, true, true, true);
+	(void)run_case(OVERLAP_DEPTH, true, true, false);
+	(void)run_case(OVERLAP_DEPTH, true, true, true);
 	refusal_case(ORDINARY_FORM, false);
 	refusal_case(RETURNING_PREFIX_FORM, true);
 	refusal_case(BACKWARD_HAND_OFF_FORM, true);

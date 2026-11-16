@@ -116,11 +116,19 @@ static void store_opened(struct http_server *server,
 		.session_directory = directory,
 		.session_directory_bytes = SNAPSHOT_BUDGET
 	};
-	server->slot_histories[0].cache_namespace.byte_count = 1;
-	expect(engine_describe(engine, &server->description) == STATUS_OK,
-	       "engine described");
+	expect(engine_describe(engine, &server->description) == STATUS_OK &&
+		       server_tables(server) == STATUS_OK,
+	       "engine described, the run's tables");
+	if (server->slot_histories != NULL)
+		server->slot_histories[0].cache_namespace.byte_count = 1;
 	expect(server_sessions_open(server) == STATUS_OK,
 	       "session store opens");
+}
+
+static void store_closed(struct http_server *server)
+{
+	server_sessions_close(server);
+	server_tables_free(server);
 }
 
 static void store_command_finished(struct http_server *server)
@@ -283,7 +291,7 @@ static void test_snapshot_replacement(void)
 		}
 		expect(snapshots_counted(directory, NULL, NULL) == 1,
 		       "a replaced file is forgotten without deleting another identity's file");
-		server_sessions_close(&server);
+		store_closed(&server);
 		test_serving_close();
 		directory_removed(directory);
 	}
@@ -315,7 +323,7 @@ static void test_snapshot_coverage(void)
 			       SERVING_PAIR_ROWS &&
 		       first_reach == FIRST_COUNT,
 	       "a longer snapshot preserves an older snapshot's earlier reusable prefixes");
-	server_sessions_close(&server);
+	store_closed(&server);
 	store_opened(&server, engine, directory);
 	uint8_t different_image[SERVER_IMAGE_IDENTITY_BYTES] = { 1 };
 	expect(!server_session_before_images(&server, 0, tokens,
@@ -369,7 +377,7 @@ static void test_snapshot_coverage(void)
 		       server_prefix_kept(&server, 0, tokens, PREFIX_COUNT + 1u,
 					  pro_identity) == 0,
 	       "identical image bytes reuse their matching encoder arithmetic and reject another class");
-	server_sessions_close(&server);
+	store_closed(&server);
 	test_serving_close();
 	directory_removed(directory);
 }
@@ -415,7 +423,7 @@ static void test_version_isolation(void)
 	store_opened(&server, engine, directory);
 	expect(!server_session_before(&server, 0, tokens, FIRST_COUNT, 0),
 	       "old unscoped snapshots cannot supply scoped state");
-	server_sessions_close(&server);
+	store_closed(&server);
 	struct stat status;
 	expect(stat(path, &status) == 0 &&
 		       status.st_size == (off_t)sizeof(head),
@@ -498,7 +506,7 @@ static void test_cancelled_prefill(void)
 	expect(snapshots_counted(directory, NULL, &saved_decoder) == 1 &&
 		       saved_decoder == saved.decoder_from,
 	       "the version four snapshot head persists the real decoder boundary");
-	server_sessions_close(&server);
+	store_closed(&server);
 	test_serving_close();
 	expect(test_serving_open(CONTEXT, scripts, 1, &engine) == STATUS_OK,
 	       "engine restarts after cancellation");
@@ -526,7 +534,7 @@ static void test_cancelled_prefill(void)
 	expect(final_taken(engine, &resumed_token).status == STATUS_OK &&
 		       test_serving_rows_seen() > 1,
 	       "a short continuation replays the decoder cone");
-	server_sessions_close(&server);
+	store_closed(&server);
 	test_serving_close();
 	expect(test_serving_open(CONTEXT, scripts, 1, &engine) == STATUS_OK,
 	       "fresh reference engine opens");
@@ -556,8 +564,14 @@ static void test_exact_prefix_policy(void)
 	static const uint8_t no_image[SERVER_IMAGE_IDENTITY_BYTES] = { 0 };
 	struct http_server server = { .histories = histories,
 				      .exact_prefix_reuse = true,
-				      .description = { .context_token_limit =
-							       CONTEXT } };
+				      .description = {
+					      .context_token_limit = CONTEXT,
+					      .session_slot_count = 1 } };
+	/* the run's per-slot tables, as a run starts them (server_tables) */
+	if (server_tables(&server) != STATUS_OK) {
+		expect(false, "the server takes its tables for one slot");
+		return;
+	}
 	memcpy(histories, tokens, (size_t)prompt * sizeof(*tokens));
 	struct slot_history *const history = &server.slot_histories[0];
 	*history = (struct slot_history){ .token_count = prompt,
@@ -611,6 +625,7 @@ static void test_exact_prefix_policy(void)
 	server.disable_prefix_reuse = true;
 	expect(server_prefix_kept(&server, 0, tokens, prompt, no_image) == 0,
 	       "explicit zero reuse still overrides the exact policy");
+	server_tables_free(&server);
 }
 
 int main(void)

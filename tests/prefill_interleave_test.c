@@ -34,7 +34,8 @@
 #define RESULT_OFFSET 12544u
 #define VIEWS_OFFSET 16384u
 #define STATE_OFFSET 32768u
-#define ROW_VALUES_OFFSET (STATE_OFFSET + SESSIONS * CONTEXT * sizeof(uint32_t))
+#define ROW_VALUES_OFFSET \
+	(STATE_OFFSET + (size_t)(SESSIONS * CONTEXT) * sizeof(uint32_t))
 #define ARENA_BYTES (ROW_VALUES_OFFSET + CHUNK_ROWS * sizeof(uint32_t))
 #define VIEW_BYTES (STEP_BLOCK_BYTES_VALUE + THIN_ROWS * STEP_ROW_BYTES_VALUE)
 #define VIEWS (CHUNK_ROWS / THIN_ROWS)
@@ -54,13 +55,15 @@
 #define LOGIT_BASE 0x3f800000u
 #define DELAY_NS 100000l
 #define PREFILL_MARGIN 127u
-#define REQUIRE(condition)                                                 \
-	do {                                                               \
-		if (!(condition)) {                                        \
-			fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, \
-				#condition);                               \
-			exit(1);                                           \
-		}                                                          \
+#define AMID_LONG_SLOT \
+	2u /* the prompt's slot with decoders on both sides (amid_decoders) */
+#define REQUIRE(condition)                                             \
+	do {                                                           \
+		if (!(condition)) {                                    \
+			(void)fprintf(stderr, "%s:%d: %s\n", __FILE__, \
+				      __LINE__, #condition);           \
+			exit(1);                                       \
+		}                                                      \
 	} while (0)
 
 enum operation { FRONT, TARGET, HEAD };
@@ -87,6 +90,7 @@ struct fixture {
 	bool long_started, long_drawn;
 };
 static uint32_t prompt[LONG_PROMPT];
+static const uint32_t amid_decoders[] = { 0u, 1u, 3u };
 
 static bool model_run(const struct kernel_launch *launch, uint32_t card,
 		      unsigned char *arena, uint64_t bytes, void *context)
@@ -114,7 +118,7 @@ static bool model_run(const struct kernel_launch *launch, uint32_t card,
 		uint32_t value = 0;
 		memcpy(&own,
 		       arena + STEP_OFFSET + STEP_BLOCK_BYTES_VALUE +
-			       row * STEP_ROW_BYTES_VALUE,
+			       (size_t)(row * STEP_ROW_BYTES_VALUE),
 		       sizeof(own));
 		if (own.session_slot >= SESSIONS || own.position < 0 ||
 		    (uint32_t)own.position >= CONTEXT)
@@ -122,7 +126,8 @@ static bool model_run(const struct kernel_launch *launch, uint32_t card,
 		if (record.value == FRONT) {
 			const uint64_t state =
 				STATE_OFFSET +
-				own.session_slot * CONTEXT * sizeof(uint32_t);
+				(size_t)(own.session_slot * CONTEXT) *
+					sizeof(uint32_t);
 			if (own.position != 0)
 				memcpy(&value,
 				       arena + state +
@@ -427,20 +432,22 @@ static void mixed_run(const struct trace solo[SESSIONS], bool batch,
 	}
 }
 
-/* Only two owners are ready. Landing a prompt flight must not consume the emitting decoder's next turn.
- * Swapping their slots and shifting the warm arrival by one token exercises both round-robin orderings/phases. */
-static void guarded_decoder_run(bool batch, bool swapped, uint32_t warm_tokens)
+/* prefill_prompt_chunks: only the decoders and the prompt are ready. Landing a prompt flight must not consume an
+ * emitting decoder's next turn, and a decoders' step that passes over the chunk-ready prompt leaves it the next turn,
+ * wherever its slot lies among theirs: each decoder draws once between two chunks. One decoder in both slot orders
+ * (the warm arrival shifted by one token exercises both round-robin phases), and decoders on both sides of the
+ * prompt's slot, which a walk from any decoder wraps over. */
+static void guarded_decoder_run(bool batch, uint32_t long_slot,
+				const uint32_t *decoders,
+				uint32_t decoder_count, uint32_t warm_tokens)
 {
-	const uint32_t long_slot = swapped ? 0u : LONG_SLOT;
-	const uint32_t decoder_slot = swapped ? LONG_SLOT : 0u;
 	struct fixture fixture;
 	struct trace solo[SESSIONS] = { 0 };
-	const uint32_t owners[] = { decoder_slot, long_slot };
-	for (uint32_t owner = 0; owner < sizeof(owners) / sizeof(owners[0]);
-	     owner++) {
+	for (uint32_t owner = 0; owner <= decoder_count; owner++) {
 		open_fixture(&fixture, batch, 0, 0, 0, 1, 1, 0, false);
 		fixture.long_slot = long_slot;
-		submit(&fixture, owners[owner]);
+		submit(&fixture,
+		       owner < decoder_count ? decoders[owner] : long_slot);
 		while (!take(&fixture, solo)) {
 		}
 		close_fixture(&fixture);
@@ -448,17 +455,19 @@ static void guarded_decoder_run(bool batch, bool swapped, uint32_t warm_tokens)
 	struct trace traces[SESSIONS] = { 0 };
 	open_fixture(&fixture, batch, 0, 0, 0, 1, 1, 0, true);
 	fixture.long_slot = long_slot;
-	submit(&fixture, decoder_slot);
-	while (traces[decoder_slot].count < warm_tokens)
-		REQUIRE(!take(&fixture, traces));
+	for (uint32_t owner = 0; owner < decoder_count; owner++) {
+		submit(&fixture, decoders[owner]);
+		while (traces[decoders[owner]].count < warm_tokens)
+			REQUIRE(!take(&fixture, traces));
+	}
 	submit(&fixture, long_slot);
 	uint32_t finals = 0;
-	while (finals < sizeof(owners) / sizeof(owners[0]))
+	while (finals < decoder_count + 1u)
 		finals += take(&fixture, traces) ? 1u : 0u;
 	close_fixture(&fixture);
-	for (uint32_t owner = 0; owner < sizeof(owners) / sizeof(owners[0]);
-	     owner++) {
-		const uint32_t slot = owners[owner];
+	for (uint32_t owner = 0; owner <= decoder_count; owner++) {
+		const uint32_t slot = owner < decoder_count ? decoders[owner] :
+							      long_slot;
 		REQUIRE(solo[slot].count == traces[slot].count &&
 			memcmp(solo[slot].events, traces[slot].events,
 			       solo[slot].count *
@@ -467,16 +476,20 @@ static void guarded_decoder_run(bool batch, bool swapped, uint32_t warm_tokens)
 	REQUIRE(fixture.long_started && fixture.long_drawn &&
 		fixture.had_chunk);
 	REQUIRE(fixture.largest_chunk == CHUNK_ROWS);
-	REQUIRE(fixture.during_prefill[decoder_slot] != 0);
-	REQUIRE(fixture.most_waiting_chunks[decoder_slot] == 1u);
 	REQUIRE(fixture.most_chunks == 1u &&
 		fixture.fewest_chunk_rounds != UINT32_MAX &&
 		fixture.fewest_chunk_rounds >= 1u);
-	printf("guarded %s first0/order0/cap0 depth1 decoder%u prompt%u warm%u during=%u chunk_gap=%u min_rounds=%u\n",
-	       batch ? "BATCH" : "THIN", decoder_slot, long_slot, warm_tokens,
-	       fixture.during_prefill[decoder_slot],
-	       fixture.most_waiting_chunks[decoder_slot],
-	       fixture.fewest_chunk_rounds);
+	for (uint32_t owner = 0; owner < decoder_count; owner++) {
+		const uint32_t slot = decoders[owner];
+		printf("guarded %s first0/order0/cap0 depth1 decoder%u of %u prompt%u"
+		       " warm%u during=%u chunk_gap=%u min_rounds=%u\n",
+		       batch ? "BATCH" : "THIN", slot, decoder_count, long_slot,
+		       warm_tokens, fixture.during_prefill[slot],
+		       fixture.most_waiting_chunks[slot],
+		       fixture.fewest_chunk_rounds);
+		REQUIRE(fixture.during_prefill[slot] != 0);
+		REQUIRE(fixture.most_waiting_chunks[slot] == 1u);
+	}
 }
 
 int main(void)
@@ -538,11 +551,22 @@ int main(void)
 						  order, first, SLICE_ROWS,
 						  BURST_ROUNDS, 1, 1);
 			}
-	for (uint32_t batch = 0; batch < SWITCH_VALUES; batch++)
+	for (uint32_t batch = 0; batch < SWITCH_VALUES; batch++) {
 		for (uint32_t swapped = 0; swapped < SWITCH_VALUES; swapped++)
-			for (uint32_t phase = 0; phase < SWITCH_VALUES; phase++)
-				guarded_decoder_run(batch != 0, swapped != 0,
-						    WARM_TOKENS + phase);
+			for (uint32_t phase = 0; phase < SWITCH_VALUES;
+			     phase++) {
+				const uint32_t decoder =
+					swapped != 0 ? LONG_SLOT : 0u;
+				guarded_decoder_run(
+					batch != 0,
+					swapped != 0 ? 0u : LONG_SLOT, &decoder,
+					1u, WARM_TOKENS + phase);
+			}
+		guarded_decoder_run(batch != 0, AMID_LONG_SLOT, amid_decoders,
+				    sizeof(amid_decoders) /
+					    sizeof(amid_decoders[0]),
+				    WARM_TOKENS);
+	}
 	puts("prefill_interleave_test: solo token/logit events preserved and decoders progress in all orders");
 	return 0;
 }

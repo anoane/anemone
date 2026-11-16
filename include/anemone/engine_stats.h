@@ -10,9 +10,9 @@
 #include "anemone/backend_seam.h"
 #include "anemone/front_end_seam.h"
 
-#define STATS_SLOT_CAPACITY 8u
 #define STATS_TOKEN_RING 64u
 #define STATS_STEP_RING 64u
+#define STATS_ITERATION_BUCKETS 13u
 #define STATS_THIN_KINDS 8u
 #define STATS_WIDE_KIND STATS_THIN_KINDS
 #define STATS_FULL_KIND (STATS_WIDE_KIND + 1u)
@@ -95,6 +95,9 @@ struct engine_stats {
 	uint64_t prompt_tokens, cached_tokens, generated_tokens, prefill_tokens;
 	uint64_t served, failed, cancelled, backpressure_stalls;
 	uint64_t steps_landed, steps[STATS_STEP_KINDS];
+	/* Computed prompt + emitted generation tokens per landed engine iteration; metrics opt-in. */
+	uint64_t iteration_tokens[STATS_ITERATION_BUCKETS + 1u],
+		iteration_token_sum;
 	uint64_t checkpoints_saved, checkpoints_restored;
 	uint64_t snapshots_saved, snapshots_loaded, snapshot_save_bytes,
 		snapshot_load_bytes;
@@ -106,12 +109,31 @@ struct engine_stats {
 	uint32_t batch_program_count; /* 0: no step plan */
 	struct stats_batch_program batch_programs[STATS_BATCH_PROGRAMS];
 	struct engine_card_stats cards[BACKEND_MAXIMUM_CARDS];
-	struct engine_slot_stats slots[STATS_SLOT_CAPACITY];
-	struct engine_session_stats sessions[STATS_SLOT_CAPACITY];
+	/* By session slot, slot_room entries each (engine_stats_tables); a copy fills slots_total of them. A record
+	 * owns its tables: copy one with engine_stats_copy, never by assignment. */
+	uint32_t slot_room;
+	struct engine_slot_stats *slots;
+	struct engine_session_stats *sessions;
 };
 
-/* NULL inputs: INVALID_ARGUMENT, output untouched. Callable while commands run. Fixed memory and bounded copy;
- * card_describe may query device memory only here, never on the token path. */
+/* Zeroed tables of slot_count entries for a record that copies (engine_stats_counters, engine_stats_copy): taken at
+ * create, never on the token path. engine_stats_tables_free releases them (NULL-safe, any record). */
+MUST_CHECK result_status engine_stats_tables(struct engine_stats *stats,
+					     uint32_t slot_count);
+void engine_stats_tables_free(struct engine_stats *stats);
+/* Every field of input, and slots_total entries of each table into output's own tables, which output keeps.
+ * INVALID_ARGUMENT, output untouched: a NULL record, or output's tables shorter than slots_total. */
+MUST_CHECK result_status engine_stats_copy(struct engine_stats *output,
+					   const struct engine_stats *input);
+
+/* Enable before the first command; BUSY_VALUE after any admission or with queued commands.
+ * Disabling is allowed at any time. Uses only published records under the existing lock; no token hook. */
+MUST_CHECK result_status
+engine_stats_metrics_enable(struct inference_engine *engine, bool enabled);
+
+/* NULL inputs or output tables shorter than the engine's slots: INVALID_ARGUMENT, output untouched. Callable while
+ * commands run. Fixed memory and bounded copy; card_describe may query device memory only here, never on the token
+ * path. */
 MUST_CHECK result_status engine_stats_snapshot(struct inference_engine *engine,
 					       struct engine_stats *stats_out);
 /* Same cumulative/session/busy records without refreshing device free memory. Poll-thread samplers use this

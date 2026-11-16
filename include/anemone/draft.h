@@ -89,7 +89,7 @@ struct draft_markov_bias_description {
 	uint32_t position; /* j, below draft_positions */
 	uint32_t draft_positions;
 	uint32_t vocabulary_size; /* V: the logits' row and W2's rows, a cut of the vocabulary where embedding_rows */
-	uint32_t embedding_rows; /* 0, or W1's rows (the whole vocabulary, at least V; tp4_v3_claude's draft shards) */
+	uint32_t embedding_rows; /* 0, or W1's rows (the whole vocabulary, at least V; tp4_v3_b's draft shards) */
 	uint32_t flags; /* 0, or DRAFT_BATCHED (draft_records.h): draft_step view 0, results the position areas,
 			   logits [R][8][V] and markov [R][8][256] position-major */
 };
@@ -112,7 +112,8 @@ struct draft_confidence_description {
 		round; /* written: struct step_round, its proposals and confidences (ROUND_TABLE: the table) */
 	uint32_t draft_positions;
 	uint32_t flags; /* 0 or DRAFT_ROUND_TABLE (draft_records.h), with it BATCHED: draft_step view 0, markov
-			   [R][8][256] and results the position areas (position-major), collapse the verifier's R rows */
+			   [R][8][256] and results the position areas (position-major), collapse the verifier's R
+			   rows */
 	uint32_t verifier; /* BATCHED: the verifier's slot, else 0 */
 };
 MUST_CHECK result_status draft_confidence_prepare(

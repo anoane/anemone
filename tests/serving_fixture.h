@@ -48,27 +48,43 @@
 
 #define TEST_SERVING_ROWS 4u
 #define TEST_SERVING_MOST_ROWS 8u /* a thin step's: LINEAR_MAXIMUM_ROWS */
-#define TEST_SERVING_MOST_SLOTS 4u
+#define TEST_SERVING_MOST_SLOTS \
+	4u /* the slots the engine and server tests serve at most */
+#define TEST_SERVING_SLOT_ROOM \
+	64u /* the slots an open takes at most: the arena's room (unbounded sessions) */
 #define TEST_SERVING_STATE_POSITIONS 32768u
-#define TEST_SERVING_WINDOW 4u                          /* state bytes a draw of the function model reads */
+#define TEST_SERVING_WINDOW \
+	4u /* state bytes a draw of the function model reads */
 #define TEST_SERVING_END_ODDS 64u
 #define TEST_SERVING_MODEL "test-model"
 #define TEST_SERVING_REASONING_END_TOKEN 256u
 #define TEST_SERVING_END_TOKEN 257u
 #define TEST_SERVING_REASONING_BEGIN_TOKEN 258u
-#define TEST_SERVING_VOCABULARY 259u
+#define TEST_SERVING_JOINED_TOKEN 259u
+#define TEST_SERVING_VOCABULARY 260u
 
 MUST_CHECK result_status
 test_serving_open(uint32_t context_tokens, const uint32_t *const *scripts,
 		  uint32_t script_count, struct inference_engine **engine_out);
 void test_serving_close(void);
+/* Optional CPU-only reconciliation of completed engine steps, enabled before open. */
+void test_serving_set_metrics(bool enabled);
+bool test_serving_metrics_valid(void);
 /* The model's state on the card: the bytes of slot 0's positions (a snapshot's range, open's context). */
 const unsigned char *test_serving_state(void);
 void test_serving_set_cone(uint32_t cone_rows);
-/* Before an open, kept until set again: slot_count slots (1 to TEST_SERVING_MOST_SLOTS), a pipeline of depth steps
+/* Model that reasons until the actual closing control token is consumed, then answers A and EOS. */
+void test_serving_set_reasoning_model(bool enabled);
+/* Exposes sampler settings received by the stand-in card: K with top_k, U without. */
+void test_serving_set_sampling_model(bool enabled);
+/* Before an open, kept until set again: slot_count slots (1 to TEST_SERVING_SLOT_ROOM), a pipeline of depth steps
  * (1: none), programs of 1 and rows rows (2 to TEST_SERVING_MOST_ROWS), draft_positions proposals a round at most
  * (front_end_seam.h; 0: no speculation) of n-grams of 4 down to 2 tokens. */
 void test_serving_set_engine(uint32_t slot_count, uint32_t depth, uint32_t rows, uint32_t draft_positions);
+/* Before an open: the model writes each step's drawing rows' session slots into slots, then STEP_NO_SESSION at the
+ * step's end, up to capacity entries (NULL: no trace); test_serving_trace_count gives the entries written. */
+void test_serving_set_trace(uint32_t *slots, uint32_t capacity);
+uint32_t test_serving_trace_count(void);
 /* Before open: description.ignore_eos, including invalid values for admission controls. */
 void test_serving_set_ignore_eos(uint32_t ignore_eos);
 /* Before open: a device draft on the result card. On the function model it returns exact next proposals, except
@@ -106,7 +122,13 @@ void test_serving_set_fault_position(uint32_t position);
 uint64_t test_serving_rows_seen(void);
 uint64_t test_serving_front_rows_seen(void);
 void test_serving_set_step_delay(uint64_t nanoseconds);
+/* After an open: once a command's script has drawn draws tokens, each later step first also sleeps nanoseconds
+ * (UINT32_MAX draws, the default an open restores: never). A slow tail after a chosen token. */
+void test_serving_set_tail_delay(uint32_t draws, uint64_t nanoseconds);
 uint64_t test_serving_step_count(void);
 void *test_serving_tables(uint64_t *byte_count_out);
+
+/* Optional reasoning script before the actual closing control, configured before open. */
+void test_serving_set_reasoning_script(const uint32_t *tokens, uint32_t count);
 
 #endif

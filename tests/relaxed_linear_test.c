@@ -55,6 +55,7 @@
 #define CONE_LAYER 30u /* a decoder layer */
 #define FRONT_LAYER 19u /* not one */
 #define DECODE_ROWS 8u
+#define STEP_SHORTFALL 16u /* a step range this much short */
 
 static uint32_t failures;
 static const struct relaxed_linear_kernels kernels = {
@@ -480,7 +481,7 @@ static void test_cone(void)
 	struct trunk_relaxed_bfloat16_arguments bfloat16_record;
 	const struct linear_range step = { STEP_OFFSET, STEP_BYTES };
 	const struct linear_range short_step = { STEP_OFFSET,
-						 STEP_BYTES - 16u };
+						 STEP_BYTES - STEP_SHORTFALL };
 	uint32_t count = 0;
 	quantized.is_ordered = 1;
 	expect(relaxed_trunk_quantized_prepare(&quantized, ARENA_BYTES,

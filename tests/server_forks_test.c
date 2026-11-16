@@ -12,6 +12,7 @@
 #include "server_internal.h"
 #include "serving_fixture.h"
 #include "step_driver.h"
+#include "byte_identity.h"
 
 #define CONTEXT 16384u
 #define SLOTS 4u
@@ -107,6 +108,7 @@ static bool identity(struct connection *connection, const char *user,
 
 static void reset_server(struct inference_engine *engine, uint32_t count)
 {
+	server_tables_free(server);
 	memset(server, 0, sizeof(*server));
 	memset(histories, 0, sizeof(histories));
 	server->engine = engine;
@@ -118,6 +120,7 @@ static void reset_server(struct inference_engine *engine, uint32_t count)
 	server->description.prefix_cold_plan_qualified = 1;
 	server->description.prefill_prefix_stable = 1;
 	server->exact_prefix_reuse = SERVER_PREFIX_LEGACY;
+	expect(server_tables(server) == STATUS_OK, "the run's tables");
 	for (uint32_t index = 0; index < CONTEXT; index++)
 		request_tokens[index] =
 			(index * TOKEN_STRIDE + TOKEN_OFFSET) % TOKEN_VALUES;
@@ -358,12 +361,12 @@ static void legacy_fork_refusal(void)
 			       !child->fork_attempted && !child->fork_prepared,
 		       "qualified legacy form never retargets or submits a cross-session fork "
 		       "under any global policy");
-		expect(memcmp(before, server->slot_histories, sizeof(before)) ==
-				       0 &&
+		expect(bytes_identical(before, server->slot_histories,
+				       sizeof(before)) &&
 			       memcmp(leased_before, server->slot_read_leased,
 				      sizeof(leased_before)) == 0 &&
-			       memcmp(active_before, server->active,
-				      sizeof(active_before)) == 0 &&
+			       bytes_identical(active_before, server->active,
+					       sizeof(active_before)) &&
 			       memcmp(history_before, histories,
 				      sizeof(histories)) == 0,
 		       "legacy fork refusal preserves histories, namespaces, leases and active commands");
@@ -502,7 +505,8 @@ static void hint_preference(void)
 	selection_reset();
 	source_set(1, "preferred");
 	histories[CONTEXT + HINT_PREFIX] ^= 1u;
-	struct connection *const child = &server->connections[0];
+	/* a reset frees the run's tables (server_tables_free), so the child is taken again after each */
+	struct connection *child = &server->connections[0];
 	expect(identity(
 		       child, "alice", true,
 		       ",\"session_id\":\"child\",\"cache_salt\":\"one\"",
@@ -533,6 +537,7 @@ static void hint_preference(void)
 	       "an ineligible hinted owner falls back to another same-owner exact donor");
 
 	selection_reset();
+	child = &server->connections[0];
 	source_set(1, "other");
 	source_identity(
 		1, "alice", true,
@@ -726,7 +731,7 @@ static void completion_policy(enum completion_case which)
 		       child->fork_prepared == prepared &&
 		       !server->slot_read_leased[SOURCE_SLOT],
 	       "only a matching successful clone publishes and every final releases its lease");
-	expect(memcmp(&donor_before, history, sizeof(donor_before)) == 0 &&
+	expect(bytes_identical(&donor_before, history, sizeof(donor_before)) &&
 		       memcmp(source_before, test_serving_state(),
 			      sizeof(source_before)) == 0,
 	       "every controller outcome preserves donor namespace, bytes, saved coverage, provenance and affinity");
@@ -802,6 +807,7 @@ int main(void)
 	test_serving_set_engine(1, 1, TEST_SERVING_ROWS, 0);
 	test_serving_set_prefill(0, 0, 0);
 	test_serving_set_function_model(false, 0);
+	server_tables_free(server);
 	free(server);
 	(void)printf("server forks: %s\n", failures == 0 ? "passed" : "FAILED");
 	return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

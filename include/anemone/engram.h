@@ -84,6 +84,9 @@ MUST_CHECK result_status
 engram_open(const struct storage_operations_record *storage,
 	    const struct storage_reader *reader, const struct pack_record *pack,
 	    struct engram_record **engram_out);
+/* Compares every hashing constant and row count; table unit indices may differ across pack layouts. */
+bool engram_hashing_equal(const struct engram_record *left,
+			  const struct engram_record *right);
 void engram_close(struct engram_record *engram); /* accepts NULL */
 const struct engram_description *
 engram_description_of(const struct engram_record *engram);

@@ -112,9 +112,15 @@ static void server_policy(void)
 	struct http_server server = {
 		.engine = &engine,
 		.histories = history_tokens,
-		.description = { .context_token_limit = CONTEXT },
+		.description = { .context_token_limit = CONTEXT,
+				 .session_slot_count = 1 },
 		.exact_prefix_reuse = SERVER_PREFIX_COLD_PLAN
 	};
+	/* the run's per-slot tables, as a run starts them (server_tables) */
+	if (server_tables(&server) != STATUS_OK) {
+		expect(false, "the server takes its tables for one slot");
+		return;
+	}
 	struct slot_history *const history = &server.slot_histories[0];
 	*history = (struct slot_history){ .token_count = LONG_PROMPT,
 					  .processed_count = LONG_PROMPT - 1u,
@@ -149,11 +155,40 @@ static void server_policy(void)
 	expect(server_prefix_kept(&server, 0, tokens, LONG_PROMPT, no_image) ==
 		       0,
 	       "a matching token history of another prompt length has no cold-plan provenance");
+	server_tables_free(&server);
+}
+
+/* The run's tables (DESIGN_UNBOUNDED_SESSIONS.md §9): none before server_tables, all of them from it to
+ * server_tables_free, none after; and a run whose start failed before its statistics' tables still opens, samples and
+ * closes its statistics, each refusing quietly without them. */
+#define STATS_OPENED_SECONDS 1.0
+#define STATS_SAMPLED_SECONDS 1.0e9 /* past any sample period */
+static void server_tables_lifecycle(void)
+{
+	struct http_server server = { .engine = &engine,
+				      .description = {
+					      .context_token_limit = CONTEXT,
+					      .session_slot_count = 1 } };
+	expect(!server_tables_present(&server),
+	       "a server has no run tables before its run starts");
+	expect(server_tables(&server) == STATUS_OK &&
+		       server_tables_present(&server),
+	       "the run's tables exist from server_tables on");
+	server_stats_open(&server, STATS_OPENED_SECONDS);
+	server_stats_sample(&server, STATS_SAMPLED_SECONDS);
+	server_stats_close(&server);
+	expect(server.live_output == NULL &&
+		       server.live.engine.slots_total == 0,
+	       "statistics without their tables open, sample and close, and write no slot");
+	server_tables_free(&server);
+	expect(!server_tables_present(&server) && server.connection_limit == 0,
+	       "no run table is left after server_tables_free");
 }
 
 int main(void)
 {
 	fixture();
+	server_tables_lifecycle();
 	static const uint32_t long_chunks[] = {
 		0, 1024, 2048, 3072, 3328, 5888
 	};

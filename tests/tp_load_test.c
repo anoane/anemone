@@ -6,7 +6,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
+#include "anemone/loader.h"
 #include "anemone/pack_digest.h"
 #include "anemone/tp_load.h"
 #include "host_memory_backend.h"
@@ -14,7 +17,12 @@
 #include "pack_builder.h"
 
 #define TEST_CARDS 2u
+#define TEST_ARENA_PAGES \
+	3u /* the TP host arena test: whole 2 MiB pages, and one byte more */
+#define TEST_SECONDS \
+	120u /* a run that waits on a cap it should not meet ends the test, not the suite */
 #define TEST_COPIES 2u
+#define TEST_MOST_COPIES 3u /* a middle copy for the role split */
 #define TEST_UNITS 3u
 #define TEST_TENSORS_PER_EXTENT 3u
 #define TEST_EXTENT_BLOCKS 2u
@@ -26,10 +34,12 @@
 #define TEST_SECOND_EXTENT_OFFSET 8192u
 #define TEST_PLAIN_BYTES 12u
 #define TEST_PLAIN_PADDED_BYTES 16u
-#define TEST_PLAIN_ROWS 2u   /* a plain bfloat16 matrix [2][3]: rank r loads row r (tp_weights.h's row shards) */
+#define TEST_PLAIN_ROWS \
+	2u /* a plain bfloat16 matrix [2][3]: rank r loads row r (tp_weights.h's row shards) */
 #define TEST_PLAIN_INPUTS 3u
 #define TEST_MATRIX_DIMENSIONS 2u
 #define TEST_MATRIX_OUTPUTS 32u
+#define TEST_WORKER_SLOTS 2u /* each worker's two staging slots (tp_load.h) */
 #define TEST_MATRIX_INPUTS 64u
 #define TEST_SHARD_OUTPUTS 16u
 #define TEST_SHARD_INPUTS 32u
@@ -46,6 +56,11 @@
 	((uint32_t)(TP_HOST_LOAD_CHUNK_BYTES / PACK_BLOCK_BYTES) + 1u)
 #define TEST_HOST_STREAM_BYTES (TP_HOST_LOAD_CHUNK_BYTES + PACK_BLOCK_BYTES)
 #define TEST_HOST_STREAM_CHUNKS 2u
+/* the default chunk, today's: 16 MiB (the no-profile, no-knob identity) */
+#define TEST_TODAY_CHUNK_BYTES (16ull << 20u)
+#define TEST_HALF_CHUNK_BYTES (TP_HOST_LOAD_CHUNK_BYTES / 2u)
+#define TEST_HALF_CHUNK_STREAM_CHUNKS \
+	3u /* the stream extent in half chunks: two halves and its last block */
 #define TEST_HOST_STREAM_EXTENTS 2u
 #define TEST_WORKERS 3u
 #define TEST_RETIRED_MOST (2u * TEST_WORKERS)
@@ -80,7 +95,10 @@ static const struct test_pack_unit_plan unit_plans[TEST_UNITS] = {
 	{ PLACEMENT_UNIT_STAGE, 1, 1, TEST_EXTENT_BLOCKS },
 	{ PLACEMENT_UNIT_HOST_ONLY, PACK_NO_LAYER, 1, TEST_EXTENT_BLOCKS }
 };
-static const char *const copy_paths[TEST_COPIES] = { "first", "second" };
+static const char *const copy_paths[TEST_MOST_COPIES] = { "first", "second",
+							  "third" };
+static uint32_t fixture_copies =
+	TEST_COPIES; /* the copies fixture_open opens */
 static int failures;
 /* The suite runs twice: the serial run (0) and the pipelined one on TEST_WORKERS threads, whose slots go through
  * staging_retire: retire_later keeps them until the fixture's cards are closed. */
@@ -281,7 +299,7 @@ static bool fixture_open(struct fixture *fixture)
 	tensors[TEST_PLAIN_TENSOR].bits_per_weight = 0;
 	test_pack_reseal(fixture->bytes);
 	test_memory_storage_set_pack(fixture->bytes, fixture->byte_count);
-	if (!checked(test_memory_storage.reader_open(copy_paths, TEST_COPIES,
+	if (!checked(test_memory_storage.reader_open(copy_paths, fixture_copies,
 						     &fixture->reader),
 		     "open source copies") ||
 	    !checked(pack_open_entry(&test_memory_storage, fixture->reader,
@@ -391,9 +409,10 @@ static void successful_load(bool corrupt_first_copy, bool fail_first_copy)
 		       "retained source read accounting includes a rejected corrupt copy");
 		expect(test_host_memory_backend_staging_block_count() ==
 				       TEST_CARDS + retired_count &&
-			       retired_count == 2u * (test_workers != 0 ?
-							      TEST_WORKERS :
-							      0u),
+			       retired_count == TEST_WORKER_SLOTS *
+							(test_workers != 0 ?
+								 TEST_WORKERS :
+								 0u),
 		       "run retains both caller-owned workspaces and retires each worker's two slots");
 		output_check(&fixture);
 	}
@@ -757,6 +776,92 @@ static void host_chunk_boundary(void)
 	free(bytes);
 }
 
+/* The host arena's read is the request's chunk: 0 is today's 16 MiB (TP_HOST_LOAD_CHUNK_BYTES), as is naming it;
+ * half of it cuts the stream extent into one more read. Every byte arrives the same and is verified either way. */
+static void host_chunk_sizes(void)
+{
+	const struct test_pack_unit_plan units[] = {
+		{ PLACEMENT_UNIT_STAGE, 0, 1, 1 },
+		{ PLACEMENT_UNIT_HOST_ONLY, PACK_NO_LAYER, 1,
+		  TEST_HOST_STREAM_BLOCKS },
+		{ PLACEMENT_UNIT_HOST_ONLY, PACK_NO_LAYER, 1, 1 }
+	};
+	const struct test_pack_plan source = { .model_name =
+						       "tp-host-chunks-test",
+					       .units = units,
+					       .unit_count = TEST_UNITS,
+					       .tensors_per_extent = 1,
+					       .content_seed = TEST_SEED };
+	void *bytes = NULL, *arena = NULL;
+	uint64_t byte_count = 0, offsets[TEST_UNITS];
+	struct pack_record *pack = NULL;
+	struct storage_reader *reader = NULL;
+	struct tp_host_load_plan plan;
+	test_memory_storage_reset();
+	bool ready = checked(test_pack_build(&source, &bytes, &byte_count),
+			     "build chunk-size pack");
+	if (ready) {
+		test_memory_storage_set_pack(bytes, byte_count);
+		ready = checked(test_memory_storage.reader_open(
+					copy_paths, TEST_COPIES, &reader),
+				"open chunk-size copies") &&
+			checked(pack_open_entry(&test_memory_storage, reader,
+						&pack),
+				"open chunk-size pack") &&
+			checked(tp_host_load_prepare(pack, offsets, TEST_UNITS,
+						     &plan),
+				"prepare chunk-size map");
+	}
+	if (ready) {
+		arena = aligned_alloc(PACK_BLOCK_BYTES, plan.host_byte_count);
+		ready = arena != NULL;
+		expect(ready, "allocate the chunk-size host arena");
+	}
+	expect(TP_HOST_LOAD_CHUNK_BYTES == TEST_TODAY_CHUNK_BYTES,
+	       "the default host chunk is today's 16 MiB");
+	const uint64_t chunks[] = { 0, TP_HOST_LOAD_CHUNK_BYTES,
+				    TEST_HALF_CHUNK_BYTES };
+	const uint64_t stream_reads[] = { TEST_HOST_STREAM_CHUNKS,
+					  TEST_HOST_STREAM_CHUNKS,
+					  TEST_HALF_CHUNK_STREAM_CHUNKS };
+	for (uint32_t index = 0;
+	     ready && index < sizeof(chunks) / sizeof(chunks[0]); index++) {
+		memset(arena, 0, plan.host_byte_count);
+		const struct tp_host_load_request request = {
+			.plan = &plan,
+			.storage = &test_memory_storage,
+			.reader = reader,
+			.host_arena = arena,
+			.host_arena_byte_count = plan.host_byte_count,
+			.worker_count = test_workers,
+			.chunk_bytes = chunks[index]
+		};
+		struct tp_host_load_result result;
+		const struct pack_extent *const extents = pack_extents_of(pack);
+		expect(tp_host_load_run(&request, &result) == STATUS_OK &&
+			       result.read_calls == stream_reads[index] + 1u &&
+			       result.requested_bytes ==
+				       TEST_HOST_STREAM_BYTES +
+					       PACK_BLOCK_BYTES &&
+			       result.copy_retries == 0 &&
+			       result.extents_verified ==
+				       TEST_HOST_STREAM_EXTENTS &&
+			       memcmp(arena,
+				      (const unsigned char *)bytes +
+					      extents[1].byte_offset,
+				      TEST_HOST_STREAM_BYTES) == 0,
+		       index == 0 ?
+			       "no chunk named reads today's 16 MiB chunks" :
+		       index == 1 ?
+			       "naming today's chunk reads the same chunks" :
+			       "half a chunk reads one more, every byte the same and verified");
+	}
+	free(arena);
+	pack_close(pack);
+	test_memory_storage.reader_close(reader);
+	free(bytes);
+}
+
 static void host_refusals(void)
 {
 	struct fixture fixture;
@@ -820,11 +925,30 @@ static void host_refusals(void)
 	expect(tp_host_load_run(&request, (void *)arena) ==
 		       STATUS_INVALID_ARGUMENT,
 	       "host destination/result alias refused");
+	request.chunk_bytes = PACK_BLOCK_BYTES - 1u;
+	expect(tp_host_load_run(&request, &result) == STATUS_INVALID_ARGUMENT,
+	       "a host chunk that is not whole pack blocks refused");
+	request.chunk_bytes = TP_HOST_LOAD_CHUNK_BYTES_MOST + PACK_BLOCK_BYTES;
+	expect(tp_host_load_run(&request, &result) == STATUS_INVALID_ARGUMENT,
+	       "a host chunk above the most refused");
+	request.chunk_bytes = 0;
 	expect(host_result_is_poison(&result) &&
 		       reads_before ==
 			       test_memory_storage_read_count(0) +
 				       test_memory_storage_read_count(1),
 	       "host admission failures preserve result and perform no reads");
+	uint8_t external[TEST_UNITS] = { 0 };
+	external[TEST_HOST_EXTENT] = 1;
+	request.external_host_extents = external;
+	memset(arena, 0, TEST_EXTENT_BYTES);
+	expect(tp_host_load_run(&request, &result) == STATUS_OK &&
+		       result.requested_bytes == 0 &&
+		       result.extents_verified == 0,
+	       "TP external host extent is neither read nor verified twice");
+	expect(test_memory_storage_read_count(0) +
+			       test_memory_storage_read_count(1) ==
+		       reads_before,
+	       "TP external host ownership performs no reads");
 	free(arena);
 	fixture_close(&fixture);
 }
@@ -845,7 +969,7 @@ static void striped_load(uint32_t split)
 	test_memory_storage_flip_bit(1, extents[0].byte_offset +
 						TEST_CORRUPT_BYTE);
 	copies.split =
-		split; /* 1: the cards' extents go to the damaged copy 1 first */
+		split; /* STEAL, FIXED: the cards' extents go to the damaged copy 1 first */
 	fixture.request.copies = &copies;
 	struct tp_load_result result = { 0 };
 	if (checked(tp_load_run(&fixture.request, &result),
@@ -893,6 +1017,178 @@ static void striped_load(uint32_t split)
 	fixture_close(&fixture);
 }
 
+/* Turbo load's split of the copies between the roles (tp_load.h): the cards' run alone first, or after the host
+ * arena's. Under STEAL the cards never read copy 0 while the host arena's run may still claim reads, but read a middle
+ * copy of three; once that run has claimed its last read they read copy 0 too (their first read goes there: the
+ * copies are equally fast and none has a read in flight). Under FIXED they read only the last copy. Every extent is
+ * verified and placed either way, and each run marks its role claimed. */
+static void role_split_load(uint32_t copy_count, uint32_t split,
+			    bool host_first)
+{
+	fixture_copies = copy_count;
+	struct fixture fixture;
+	struct tp_load_copies copies;
+	const bool opened = fixture_open(&fixture);
+	fixture_copies = TEST_COPIES;
+	if (!opened ||
+	    !checked(tp_load_copies_init(&copies, 0), "role split copies")) {
+		fixture_close(&fixture);
+		return;
+	}
+	copies.split = split;
+	fixture.request.copies = &copies;
+	uint64_t offsets[TEST_UNITS];
+	struct tp_host_load_plan plan;
+	unsigned char *const arena =
+		aligned_alloc(PACK_BLOCK_BYTES, TEST_EXTENT_BYTES);
+	const struct tp_host_load_request host_request = {
+		.plan = &plan,
+		.storage = &test_memory_storage,
+		.reader = fixture.reader,
+		.host_arena = arena,
+		.host_arena_byte_count = TEST_EXTENT_BYTES,
+		.worker_count = TEST_WORKERS,
+		.copies = &copies
+	};
+	struct tp_host_load_result host = { 0 };
+	bool ready = arena != NULL &&
+		     checked(tp_host_load_prepare(fixture.pack, offsets,
+						  TEST_UNITS, &plan),
+			     "prepare the role split's host map");
+	if (ready && host_first)
+		ready = checked(tp_host_load_run(&host_request, &host),
+				"the host arena's run first");
+	struct tp_load_result result = { 0 };
+	ready = ready && checked(tp_load_run(&fixture.request, &result),
+				 "the cards' run under a role split");
+	if (ready) {
+		const uint64_t *const cards =
+			copies.role_delivered_bytes[TP_LOAD_ROLE_CARDS];
+		uint64_t delivered = 0;
+		for (uint32_t copy = 0; copy < copy_count; copy++)
+			delivered += cards[copy];
+		expect(result.extents_verified == TEST_CARDS &&
+			       result.tensors_uploaded == TEST_JOB_COUNT &&
+			       delivered == result.source_bytes_read &&
+			       copies.role_claimed[TP_LOAD_ROLE_CARDS] == 1,
+		       "the cards' run places every extent, counts its bytes per copy and is claimed");
+		output_check(&fixture);
+		if (split == TP_LOAD_SPLIT_FIXED)
+			expect(cards[copy_count - 1u] ==
+				       result.source_bytes_read,
+			       "FIXED: the cards read only the last copy");
+		else if (host_first)
+			expect(cards[0] != 0,
+			       "STEAL: a claimed host arena's copy serves the cards");
+		else
+			expect(cards[0] == 0 &&
+				       (copy_count < TEST_MOST_COPIES ||
+					cards[1] != 0),
+			       "STEAL: copy 0 is held for the host arena, a middle copy serves the cards");
+	}
+	if (ready && !host_first)
+		ready = checked(tp_host_load_run(&host_request, &host),
+				"the host arena's run after the cards'");
+	if (ready)
+		expect(host.extents_verified == 1 &&
+			       copies.role_claimed[TP_LOAD_ROLE_HOST] == 1 &&
+			       memcmp(arena,
+				      (const unsigned char *)fixture.bytes +
+					      pack_extents_of(fixture.pack)
+						      [TEST_HOST_EXTENT]
+							      .byte_offset,
+				      TEST_EXTENT_BYTES) == 0,
+		       "the host arena holds the original bytes and its run is claimed");
+	free(arena);
+	tp_load_copies_destroy(&copies);
+	fixture_close(&fixture);
+}
+
+/* A load section's readers cap the host arena's reads alone (tp_load.h host_reads_most): with the host role at that
+ * cap on every copy, as while its run reads, the cards' run still reads and places every extent, and leaves the host
+ * role's reads as they were. */
+static void host_cap_load(void)
+{
+	struct fixture fixture;
+	struct tp_load_copies copies;
+	if (!fixture_open(&fixture) ||
+	    !checked(tp_load_copies_init(&copies, 0), "host cap copies")) {
+		fixture_close(&fixture);
+		return;
+	}
+	copies.split = TP_LOAD_SPLIT_SOONEST;
+	copies.host_reads_most = 1u;
+	for (uint32_t copy = 0; copy < TEST_COPIES; copy++) {
+		copies.reads_in_flight[copy] = copies.host_reads_most;
+		copies.host_reads_in_flight[copy] = copies.host_reads_most;
+	}
+	fixture.request.copies = &copies;
+	struct tp_load_result result = { 0 };
+	if (checked(tp_load_run(&fixture.request, &result),
+		    "the cards' run beside a host arena at its cap")) {
+		bool held = true;
+		for (uint32_t copy = 0; copy < TEST_COPIES; copy++)
+			held = held &&
+			       copies.reads_in_flight[copy] ==
+				       copies.host_reads_most &&
+			       copies.host_reads_in_flight[copy] ==
+				       copies.host_reads_most;
+		expect(result.extents_verified == TEST_CARDS &&
+			       result.tensors_uploaded == TEST_JOB_COUNT &&
+			       held,
+		       "the host arena's cap does not cap the cards' reads");
+		output_check(&fixture);
+	}
+	tp_load_copies_destroy(&copies);
+	fixture_close(&fixture);
+}
+
+/* The TP host arena (tp_load.h): whole 2 MiB pages, aligned to one. With external tables it is a MAP_NORESERVE mapping
+ * one page longer; with every table in RAM posix_memalign's, as before (the checking build's record says which). */
+static void host_arena_kinds(void)
+{
+	const uint64_t asked = TEST_ARENA_PAGES * TP_HOST_ARENA_PAGE_BYTES + 1u;
+	const size_t whole = (TEST_ARENA_PAGES + 1u) * TP_HOST_ARENA_PAGE_BYTES;
+	for (uint32_t external = 0; external <= 1u; external++) {
+		struct tp_host_arena arena;
+		const bool made = checked(
+			tp_host_arena_allocate(asked, external != 0, &arena),
+			"the TP host arena allocates");
+		expect(made && arena.bytes != NULL &&
+			       (uintptr_t)arena.bytes %
+					       TP_HOST_ARENA_PAGE_BYTES ==
+				       0 &&
+			       arena.byte_count == whole &&
+			       (external != 0 ?
+					arena.mapping != NULL &&
+						arena.mapping_bytes ==
+							whole + TP_HOST_ARENA_PAGE_BYTES :
+					arena.mapping == NULL),
+		       "the TP host arena is whole 2 MiB pages, aligned, mapped only with external tables");
+#if CHECKING_HOOKS_ENABLED
+		expect(external != 0 ?
+			       load_host_arena_last.flags ==
+					       (MAP_PRIVATE | MAP_ANONYMOUS |
+						MAP_NORESERVE) &&
+				       load_host_arena_last.byte_count ==
+					       whole + TP_HOST_ARENA_PAGE_BYTES :
+			       load_host_arena_last.flags == 0 &&
+				       load_host_arena_last.byte_count == whole,
+		       "external tables map the TP host arena unaccounted; every table in RAM keeps posix_memalign");
+#endif
+		if (made && arena.bytes != NULL)
+			(void)memset(arena.bytes, 1, arena.byte_count);
+		tp_host_arena_release(&arena);
+		expect(arena.bytes == NULL && arena.mapping == NULL,
+		       "a released TP host arena is empty");
+	}
+	struct tp_host_arena empty;
+	expect(tp_host_arena_allocate(0, true, &empty) == STATUS_OK &&
+		       empty.bytes == NULL && empty.mapping == NULL,
+	       "no host bytes: an empty TP host arena");
+	tp_host_arena_release(&empty);
+}
+
 static void suite(void)
 {
 	successful_load(false, false);
@@ -909,18 +1205,29 @@ static void suite(void)
 	host_load(HOST_ALL_READS_FAIL);
 	host_load(HOST_ALL_DIGESTS_FAIL);
 	host_chunk_boundary();
+	host_chunk_sizes();
 	host_refusals();
 }
 
 int main(void)
 {
+	(void)alarm(TEST_SECONDS);
 	retiring_backend = test_host_memory_backend;
 	retiring_backend.staging_retire = retire_later;
 	suite();
 	test_workers = TEST_WORKERS;
 	suite();
-	striped_load(0);
-	striped_load(1);
+	for (uint32_t split = 0; split < TP_LOAD_SPLITS; split++)
+		striped_load(split);
+	for (uint32_t copies = TEST_COPIES; copies <= TEST_MOST_COPIES;
+	     copies++) {
+		role_split_load(copies, TP_LOAD_SPLIT_STEAL, false);
+		role_split_load(copies, TP_LOAD_SPLIT_STEAL, true);
+		role_split_load(copies, TP_LOAD_SPLIT_FIXED, false);
+		role_split_load(copies, TP_LOAD_SPLIT_FIXED, true);
+	}
+	host_cap_load();
+	host_arena_kinds();
 	if (failures == 0)
 		(void)puts(
 			"tp_load_test: selected extents, original shards, padding, "

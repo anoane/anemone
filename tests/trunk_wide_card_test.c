@@ -711,7 +711,8 @@ int main(int argument_count, char **arguments)
 				STATUS_OK, "the card is described")) {
 			    continue;
 		    }
-		    /* the PRO in its own forms first (the default), then in class 120's emulation (--pro_emulation=1) */
+		    /* the PRO in its own forms first (the default), then in class 120's emulation (--pro_emulation=1)
+		     * */
 		    const bool is_class_120 = description.arithmetic_class ==
 					      ARITHMETIC_CLASS_SM_120;
 		    const uint32_t classes[MOST_PASSES] = {

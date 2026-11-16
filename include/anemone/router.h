@@ -11,7 +11,7 @@
  *     MODEL_DRAFT_EXPERTS and MODEL_DRAFT_EXPERTS_PER_ROW (router_select_draft, the draft's
  *     router, of the fixed order alone: dspark_v1/DESIGN.md C4); any other pair is refused. E and P below are the pair.
  *   - experts is the description of those routed experts, its reserved field zero: 1 to
- *     LINEAR_MAXIMUM_ROWS rows of P pairs, P jobs a row, E2M1-scaled or EXL3 mul1 K2/K3 matrices in
+ *     LINEAR_MAXIMUM_ROWS rows of P pairs, P jobs a row, E2M1-scaled or EXL3 mul1 matrices in
  *     shapes the format stores. EXL3 uses separate pass preparation; the native linear factory remains E2M1-only.
  *     expert_offsets is the table the model writes at offsets at load ([384][3] whatever E: the
  *     first E entries are read): each entry a multiple of LINEAR_OFFSET_ALIGNMENT_BYTES, its matrix (gate and

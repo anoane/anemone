@@ -133,7 +133,10 @@ static void capture_begin(void)
 static void capture_end(char *text, size_t text_capacity)
 {
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, text_capacity - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    text_capacity) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';
@@ -950,7 +953,8 @@ static void test_draft_inputs(void)
 						      LAUNCH_ARGUMENT_BYTES -
 							      sizeof(record)) ==
 						       0,
-				       "a launch of grid (1, rows) of a row's threads, the record of the mode and the tap");
+				       "a launch of grid (1, rows) of a row's threads, the record of the mode and the "
+				       "tap");
 			}
 		}
 	}

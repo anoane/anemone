@@ -1,12 +1,23 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Anemone user manual
 
-See [the v0.0.2-alpha release notes](../RELEASE_NOTES.md) for verified current benchmark scope and explicit deferred work; [the matrix](results/COMPARISON_MATRIX.md) preserves dated results and individual dispositions.
+The owner recommends running `anemone autotune` once before serving, and again
+after hardware changes. Engine-native preparation copies replicas, tunes load
+and Engram I/O separately and saves a profile that later starts automatically
+reload. See [storage preparation](user/STORAGE_PROFILE.md) for real token-ID inputs, bounded/resumable
+leases and required native qualification before activating a candidate. Startup
+never runs this work implicitly.
 
-For **v0.0.2-alpha** setup and the three release serve recipes, use
-[SERVER_PROFILES.md](SERVER_PROFILES.md). It maps every current serve option to
-the real-parser defaults and resolved profile values at version source
-`6b9e276fe4da6750be46c874e5fb5c0ee2a46871`. The detailed definitions and dated
+See [the release notes](../RELEASE_NOTES.md) for each release's changes and limits, and their [measured scope](../RELEASE_NOTES.md#measured-scope) (the v0.0.2-alpha section's: the comparison tables keep their 6 November measurements) for the verified benchmark scope and explicit deferred work; [the matrix](results/COMPARISON_MATRIX.md) preserves dated results and individual dispositions.
+
+For **v0.0.3-alpha** setup and the three release serve recipes, use
+[SERVER_PROFILES.md](SERVER_PROFILES.md). It maps the serve options of the dated
+6 November version source `6b9e276fe4da6750be46c874e5fb5c0ee2a46871` to that
+parser's defaults and resolved profile values, adds `--metrics`, and marks `C` the
+rows that give the current parser's values; later options (Engram, storage,
+Messages and others) are documented below and in [the knob catalogue](../tools/cli/KNOBS.md).
+Its command arrays passed the v0.0.3-alpha parser at source
+`f57d81375a8830db16925e42740aae1fe0773e90`. The detailed definitions and dated
 example receipts below retain their original numerical-engine epoch; current
 GPU execution results are in [the comparison matrix](results/COMPARISON_MATRIX.md).
 
@@ -27,6 +38,7 @@ The implementation is authoritative. Validation receipts remain in the documenta
   - [3.1 EXL3 weights](#31-exl3-weights)
   - [3.2 Original FP8 / FP4 weights](#32-original-fp8--fp4-weights)
   - [3.3 Messages and model identity](#33-messages-and-model-identity)
+  - [3.4 Weight family and model folder](#34-weight-family-and-model-folder)
 - [4. Building from source](#4-building-from-source)
 - [5. Quick start for every placement](#5-quick-start-for-every-placement)
   - [5.1 TP4_EXL3: one request](#51-tp4_exl3-one-request)
@@ -118,12 +130,12 @@ On the measured machine the CMP backend ordinals are `0,1,3,4` and the PRO is `2
 
 ### 2.2 Placement choices
 
-| Placement | Cards and division | Weight family | Main status and intended use |
+| Placement | Cards and division | Weight family | Status in main and intended use |
 | --- | --- | --- | --- |
-| `tp4_exl3` / TP4_EXL3 | All 40 target layers across four CMPs; head/draft ownership follows the selected sharding knobs. PRO excluded. | EXL3 experts plus the prepared non-expert weights | Main, experimental TP admission. The principal EXL3 THIN and BATCH serving path. FP32 wire and BF16 wire are different arithmetic recipes. |
-| `tp4_pro` / TP4_PRO | Four-CMP TP prefix, layers 0–28; native PRO tail, layers 29–39, head and DSpark | Original packed FP8/FP4 family | Main. A useful original-weight single-session route. A queue depth above one is serial unless the separately gated overlap flag is enabled. |
-| `pp5` / PP5 | Layer pipeline over the selected five cards; automatic fill or an explicit layout | Original packed FP8/FP4 family | Main and the no-placement default. Pipeline depth and session slots determine how multiple requests occupy the stages. Qualifying multi-session DSpark serve selects depth5 when omitted; the single-slot/generate raw default stays1 and explicit depths are retained. |
-| `tp5` / TP5 | Experimental heterogeneous tensor geometry including the PRO | Original branch experiments | **Branch, not in main yet.** Main knows the enum/name internally but refuses this geometry. Host-channel/sidecar experiments have separate gates; no production quick start is claimed. |
+| `tp4_exl3` / TP4_EXL3 | All 40 target layers across four CMPs; head/draft ownership follows the selected sharding knobs. PRO excluded. | EXL3 experts plus the prepared non-expert weights | In main, experimental TP admission. The principal EXL3 THIN and BATCH serving path. FP32 wire and BF16 wire are different arithmetic recipes. |
+| `tp4_pro` / TP4_PRO | Four-CMP TP prefix, layers 0–28; native PRO tail, layers 29–39, head and DSpark | Original packed FP8/FP4 family | In main. A useful original-weight single-session route. A queue depth above one is serial unless the separately gated overlap flag is enabled. Cold prefill runs at about 940 tok/s, about 5× slower than PP5's at 32K tokens (35.1 s against 7.2 s with the tables in RAM), so long prompts favour PP5. |
+| `pp5` / PP5 | Layer pipeline over the selected five cards; automatic fill or an explicit layout | Original packed FP8/FP4 family | In main, and the no-placement default. Pipeline depth and session slots determine how multiple requests occupy the stages. Qualifying multi-session DSpark serve selects depth5 when omitted; the single-slot/generate raw default stays1 and explicit depths are retained. |
+| `tp5` / TP5 | Experimental heterogeneous tensor geometry including the PRO | Original branch experiments | **Branch, not in main yet.** The main code knows the enum/name internally but refuses this geometry. Host-channel/sidecar experiments have separate gates; no production quick start is claimed. |
 | `tp2_pp2_pro` | Two-rank expert pairs and a PRO tail | Original | Additional main experimental selector. Requires relaxed/fast numerical admission and compatible cards/programs. |
 | `tp2_single_single_pro` | Two-rank prefix plus single-card companion stages and PRO tail | Original | Additional main experimental selector, with its own geometry gates; not interchangeable with TP4_PRO. |
 
@@ -131,7 +143,9 @@ Do not combine an EXL3 map with an original-weight placement. Selecting a placem
 
 ### 2.3 Native PRO arithmetic policy
 
-**The RTX PRO 6000 uses its native math by default (`--pro_emulation=0`). Outputs therefore depend on which layers it holds.** Moving the PP5 boundary can change arithmetic even with unchanged checkpoint bytes. The opt-in class-80 emulation is **`--pro_emulation=1`**. It retains class-80 summation behavior on applicable PRO paths at a reported 2–4× cost on the affected products. Current TP startup refuses nonzero emulation; use the PP5 path where that experiment is admitted. This is a numerical choice, not a device rename. Sources: `source/main.c`, `include/anemone/startup_policy.h`, `Makefile`.
+**The RTX PRO 6000 uses its native math by default (`--pro_emulation=0`). Outputs therefore depend on which layers it holds.** Moving the PP5 boundary can change arithmetic even with unchanged checkpoint bytes. The opt-in class-80 emulation is **`--pro_emulation=1`**. It retains class-80 summation behavior on applicable PRO paths at a reported 2–4× cost on the affected products. Current TP startup refuses nonzero emulation; use the PP5 path where that experiment is admitted. This is a numerical choice, not a device rename. Sources: `source/commands.c`, `include/anemone/startup_policy.h`, `Makefile`.
+
+**Not-finite values under `--pro_emulation=1`.** Finite inputs give a CMP's bits. An output fed an infinity or a not-a-number can differ: the emulation of one tensor-core instruction (the attention core, the index scan, and the EXL3 expert products once a placement puts EXL3 layers on the PRO) gives a not-a-number where a CMP gives the IEEE result, for example +infinity for one infinite operand. That not-a-number stays in the outputs the input enters, never another row's or session's. The original pack's expert and trunk products follow IEEE 754 as a CMP does, and the default native path gives the hardware's own IEEE results. Source: `source/kernel_class_80.cuh`.
 
 ## 3. Weight formats and prepared inputs
 
@@ -140,6 +154,8 @@ Do not combine an EXL3 map with an original-weight placement. Selecting a placem
 The EXL3 route uses routed experts from the pinned **LibertAI 2.9-bpw checkpoint**, together with the original pack's non-expert tensors. Layers 18–22 use K2 and the other main layers use K3. [MODEL_DATA.md](user/MODEL_DATA.md) gives the exact repositories, revisions, source hashes and CPU preparation commands. The `.exl3map` reader validates its logical pack extents and digests. Keep the map and its referenced source files together or preserve their expected paths. Turbo replicas can hold receipted flat copies of those logical bytes on other drives.
 
 Four expert parts are the reference partition. Eight parts are a separate order-changing option. The FP32/full-K route and the BF16/TC route use different product, transport and reduction forms. An EXL3 reference result is a reference for that weight/arithmetic family, not official-original-model equivalence. Changing weights is distinct from changing activation or cache arithmetic.
+
+The EXL3 expert kernels are also built for the RTX PRO 6000, for whole (unsharded) matrices: the plain sm_120a modules emulate class 80's sums (`--pro_emulation=1`) and the `_native` modules use the PRO's own, the default. No placement holds EXL3 layers on the PRO yet: TP4_EXL3 runs on four CMPs, and its tensor-parallel products, the relaxed order and the BF16/TC forms stay CMP-only.
 
 ### 3.2 Original FP8 / FP4 weights
 
@@ -157,9 +173,40 @@ A minimal generate messages file is a JSON array:
 
 The CLI renders this through the model's chat template. The server receives the equivalent array in the HTTP `messages` field. The prepared pack contains the canonical model name. Omit the HTTP `model` field to use that canonical name, or set `--model_alias=anemone` on serve and use `"model":"anemone"` as in this manual's HTTP examples. A different non-null model name receives 404.
 
+### 3.4 Weight family and model folder
+
+Two options name the model instead of the positional files; omitting both keeps the positional form unchanged.
+
+- `--weights=original|exl3` names the weight family. Without `--placement` it selects the family's default GPU split
+  (original: PP5; EXL3: TP4_EXL3). Without an axis flag startup prints `weights exl3 -> GPU split TP4_EXL3 (default
+  for the family)`; with one, the selected row sets `--placement` and the `axes gpu_split=tp4_exl3 tuple=…` line names
+  the split. A value other than `original` or `exl3` refuses as such.
+  An explicit `--placement` of the other family refuses, naming both (`--weights=exl3 conflicts with --placement=pp5`),
+  as does a pack argument of the other kind (`.exl3map` or not) and, once it is open, a pack whose matrices are of the
+  other family. Without `--weights` the family is what `--placement` and the pack imply, as before. The axis tables
+  are keyed on the split and the family: with `--weights=exl3` and no `--placement`, an axis flag selects TP4_EXL3's
+  row, and a `--weights` value the split does not run refuses, naming both. `load` runs no TP placement: with
+  `--weights=exl3` it keeps its own placement (an explicit `--placement=pp5` included) and only takes the EXL3 map.
+- `--model_dir=FOLDER` reads the model from one folder under fixed names: `tokenizer.bin`, and `original.anemone` or,
+  with `--weights=exl3` or `--placement=tp4_exl3`, `model.exl3map`. It replaces the tables and pack arguments; generate
+  keeps its messages file as the one positional argument (without it the parse refuses). Each name may be a link (a
+  pack linked in from another disk): it is resolved once to its real path, must be a regular file, and every opened
+  descriptor that serves the load (the pack reader, the turbo-load reader, the EXL3 map's direct reads, the tables)
+  must have the resolved device and inode, so a swap in between refuses; the tables open without blocking. The fixed
+  name sets the reader, never the link target's suffix. Startup prints each file as `original.anemone -> <real path>
+  (device <major>:<minor>)`, with the pack's model name and header and tables digests. `/v1/models` and the storage
+  profile take the pack's identity; turbo replicas match a receipt by the pack's real path, size and header digest, so
+  a link re-pointed to another copy needs its own replicas. The folder path is at most 1023 bytes. An
+  `.exl3map` keeps its own absolute source paths.
+
+```sh
+anemone serve --weights=exl3 --model_dir=/mnt/fastdisk/anemone-model-data-v1/data --context_tokens=65536 --concurrency=single
+anemone generate --model_dir=/mnt/fastdisk/anemone-model-data-v1/data messages.json
+```
+
 ## 4. Building from source
 
-Build on the Linux inference host. The repository Makefile explicitly says to build on the server, not the development laptop. This snapshot targets Zen 4 (`-march=znver4`), links the CUDA driver library, and builds CUDA images for `sm_80` and `sm_120a`, including native-PRO variants. The recorded snapshot environment uses GCC 15.2 and CUDA 13.4; use a compatible toolkit/driver and toolchain rather than treating a successful laptop compile as qualification. `Makefile`, COMPARISON_MATRIX.md, A7.
+Build on the Linux inference host. The repository Makefile explicitly says to build on the server, not the development laptop. This snapshot targets Zen 4 (`-march=znver4`), links the CUDA driver library, and builds CUDA images for `sm_80` and `sm_120a`, including native-PRO variants. The dated 6 November snapshot environment used GCC 15.2 and CUDA 13.4, and [BUILD.md](../BUILD.md) records the v0.0.3-alpha toolchain; use a compatible toolkit/driver and toolchain rather than treating a successful laptop compile as qualification. `Makefile`, COMPARISON_MATRIX.md, A7.
 
 Export or copy the pinned source into an isolated Linux directory, excluding any existing build tree and `.git`. From that engine directory:
 
@@ -277,6 +324,10 @@ Do not “fix” a TP5 refusal by silently substituting TP4_PRO: that changes pl
 
 ## 6. The HTTP API
 
+The default-off [Anthropic Messages adapter](ANTHROPIC_MESSAGES.md) adds
+`POST /v1/messages` with `--anthropic_messages=1`. Its supported subset and
+version-specific controls are documented separately.
+
 ### 6.1 Transport, endpoints and authentication
 
 The default listener is numeric address `127.0.0.1`, port **8321**. Serve is HTTP/1.1, with HTTP/1.0 also accepted, one request per connection and `Connection: close`. It is not a TLS listener. For another machine's access, select an appropriate bind address and supply transport/authentication through your deployment. With a key file, all routes except health require `Authorization: Bearer …`; requests without valid credentials receive 401 before their bodies are read. No key material belongs in command-line literals or this manual.
@@ -288,6 +339,7 @@ The default listener is numeric address `127.0.0.1`, port **8321**. Serve is HTT
 | `POST /v1/chat/completions` | Full Chat request, JSON or SSE response. |
 | `POST /v1/responses` | Stateless plaintext Responses adapter over the same rendering/decoder. |
 | `GET /v1/anemone/stats` | Live counters, subject to authentication and stats-user policy. |
+| `GET /metrics` | Prometheus 0.0.4 text when [`--metrics=1`](#knob-metrics); same stats authentication/ACL, anonymous without a key file. Disabled requests follow unknown-path behavior. See [metrics](METRICS.md). |
 
 A POST needs one `Content-Length`; curl supplies it for the fixed inline JSON examples. Chunked `Transfer-Encoding` is refused (501). The maximum request body is 32 MiB, header bytes 16,384, header fields 64, and message count 4,096. Output/request rendering buffers are bounded at 64 MiB. A prompt must leave room for at least one generated token within the slot context. Queue exhaustion returns 503 with `Retry-After`, not a silent fallback to a smaller model. See `include/anemone/server.h`, `include/anemone/chat_completions.h`.
 
@@ -313,6 +365,7 @@ The key request controls are:
 | `max_tokens`, `max_completion_tokens` | Integer output limits; when both are present, the smaller applies. The context still bounds total prompt plus output. |
 | `temperature` | HTTP finite value 0–2; 0 is greedy. This HTTP bound is narrower than the CLI float parser. |
 | `top_p` | Greater than 0 and no greater than 1. |
+| `top_k` | OpenAI Chat extension: integer 0–2097152, default0/off. Rank raw logits with lowest-ID ties, then apply temperature and top_p to the retained set; T0 remains greedy. Positive truncation defines a distinct sampling reference. |
 | `seed` | HTTP unsigned 64-bit; CLI seed is unsigned 32-bit. Omitted server seed uses the request's random seed policy. |
 | `stream` | Boolean; true selects server-sent events. |
 | `stream_options.include_usage` | Boolean; optional terminal usage chunk. No other stream-options control is promised. |
@@ -566,20 +619,36 @@ Select the `anemone` provider/model in Codex and keep the server alias consisten
 
 | Axis | Every value and its meaning |
 | --- | --- |
-| `--category` | `code`: code workload priority; `prose`: prose workload; `structured`: structured output; `vision`: vision benchmark category, held; `balanced`: mixed code/prose/structured measurement with code winning ties among feasible choices. |
-| `--exactness` | `exact`: reference arithmetic after all required equivalence/state/form gates; `balanced`: current HC/current forms, no newly selected unqualified loss; `fast`: opt-in bounded-loss choices with paired numerical and workload receipts. Original weights admit the bounded PP THIN serial M1 exact recipe described in section 9.7. EXL3 exact and the fast tier remain refused/held. |
-| `--concurrency` | `single`: C1/THIN route; `multiple`: C2–C8 route, typically BATCH for EXL3 and PP5 for original; `balanced`: one measured compromise across C1 and multiple users, held where its joint gates are incomplete. This is not a numeric slot count. |
-| `--focus` | `balanced`: measured tradeoff among objectives; `ttft`: time to first token; `decode`: output rate; `prefill`: prompt-processing rate. A focus name does not promise a latency bound. |
+| `--category` | `code`: code workload priority; `prose`: prose workload; `structured`: structured output; `vision`: vision benchmark category, held; `balanced`: beneficial across applicable measured workloads; scope and missing mixed-user gates are stated per strategy. On every GPU split the balanced category set is empty. On PP5 and TP4_PRO, code adds draft depth 7 (`--draft_block=7 --draft_positions=7`); on TP4_EXL3, fixed draft prices (`--draft_policy=0`), and prose and structured keep the BATCH step menu (concurrency=multiple only). |
+| `--exactness` | `exact`: reference arithmetic after all required equivalence/state/form gates; `balanced`: current HC/current forms, no newly selected unqualified loss; `fast`: identical selectable non-lossy balanced plans, plus separately qualified accuracy/speed tradeoffs. Original weights admit the bounded PP THIN serial M1 exact recipe described in section 9.7. Exact runs one session at its reference recipe's context limit, the one exception to "no row pins the context or the slots" (PP5: `--context_tokens=512 --session_slots=1`, the official reference refuses a longer context; TP4_EXL3: `--session_slots=1` at the default context). On TP4_EXL3, exact is the same shaping and strictness on quantized weights, not official-exact (owner, 6 Nov): `--numerics=exact --tp_wire_bf16=0 --speculative=2 --rows=8` (exact numerics, the reference order, the FP32 wire, pipeline depth 1, one session; per-split request 4 q4's measured exact-FP32 arm, 158.1/117.2/85.8 tok/s C1), and startup logs `axes class=exact shaping on quantized weights (not official-exact)`. Exact never carries relaxed numerics or the BF16 wire. Additional lossy fast routes remain held. |
+| `--concurrency` | `single`: the split's C1 route (PP5: `--rows=6`, r7c g3, measured at 8 serving slots; TP4_PRO and TP4_EXL3: the base itself, at pipeline depth 2, measured at 1 serving slot); `multiple`: C2–C8 recipe (PP5 at pipeline depth 8, measured at 8 serving slots; TP4_EXL3 BATCH, which on serve applies only at exactly `--session_slots=8`, otherwise the row runs its concurrency=balanced row, thin steps for as many sessions as fit; held on TP4_PRO); `balanced`: nothing beyond the base. No axis set pins `--context_tokens` or `--session_slots` (9 Nov: context is the user's choice, default 1M, and serve takes as many sessions as fit, `--session_slots=max`, the raw defaults since U5a); only the exact reference recipes keep their own geometry (see exactness). A TP serve of several slots with the device draft and no explicit depth or BATCH takes `--pipeline_steps=2` (the TP bases' depth; one flight is refused there), and the `TP queue depth` startup line says it was the default; an explicit `--pipeline_steps=1` with several slots still refuses. This is not a numeric slot count. |
+| `--focus` | `balanced`: measured tradeoff among objectives; `ttft`: time to first token; `decode`: output rate; `prefill`: prompt-processing rate. A focus name does not promise a latency bound. Decode adds arm 1 (`--draft_policy=1 --draft_session_acceptance=6`) on PP5, arm 1 with 6 rows (`--rows=6`) on TP4_PRO, and layer drafting on TP4_EXL3. |
 
-The weight family is an admission condition, not a fifth axis. Explicit `--placement=tp4_exl3` selects the EXL3 family; absent placement uses the existing original/PP5 route. An axis cannot silently replace your checkpoint. Each family has its own tuple qualification.
+`--placement` picks the GPU split, and each split has its own table: PP5 (the default when `--placement` is omitted), TP4_PRO and TP4_EXL3 (EXL3 weights). The resolver never switches the split. Each selected axis value adds its knob set to the split's **base**, and each knob belongs to one axis per split, so the sets never conflict. The base is the set of knobs whose effective value is the same in every measured route of the split, less the measurement-protocol pins and the knobs the axes own (pipeline depth, draft policy, draft costs and session acceptance), and less every pin that equals the split's raw engine default; `anemone help axes` prints each base with the raw-default pins it omits:
+
+- PP5 (from original_pp_depth8): `--card_order=0,1,3,4,2 --rows=8 --wide_rows=1024 --prefill_cone=1 --step_graphs=1 --speculative=2 --draft_positions=5` and the 8/7/7/7/11 `--layout`.
+- TP4_PRO (from `original_tp_serial2`): the same knobs without the layout, plus `--draft_policy=0 --pipeline_steps=2 --original_wide_experts=0`.
+- TP4_EXL3 (from `thin_fixed`): THIN without `--draft_policy`, `--batch_core_once` and `--tp_draft_layers` (owned by category, the CLI and focus): relaxed numerics, the BF16 wire, rows 8, wide rows 2048, the cone, pipeline depth 2, step graphs, DSpark 5/5, the TC-MoE, MMA, ordered and shard knobs, zero acceptances, the 12700/2200/2700 draft costs.
+
+**No axis flag is balanced everywhere.** A generate or serve without axis flags runs its split's all-balanced row: the base. The owner's rule, 1M context per session (`--context_tokens=1048576`) and on serve `--session_slots=max`, is the raw defaults, and no axis set pins either. `--session_slots=max` (serve only) parses as 8 for every parse-time default and admission check; a max that resolves to one session then takes the defaults of `--session_slots=1` (each serve's pipeline depth with the device draft, TP4_EXL3's draft depth policy), so one session runs what an explicit count of one runs, however it was reached (TP4_EXL3 at 1M: the measured one-slot recipe, fixed draft depth); at the planning step the engine's own host fit takes the most sessions, by bisection over 1..1024 (SERVING_SLOTS_MOST, a bound on the index arithmetic, not a cap), whose placement fits the cards' budgets (PP5: the placement passes, no routed expert in host memory, the plan and every arena within its card's budget; the TP splits: the TP plan, each trial made and released, then made once at the count found). Max and 1M context are also the raw defaults (owner, 9 Nov: "allow as many as 1M context can fit"; "if a user wants only 256K, then you can multiply sessions by 4x"): at 1M a plain default serve of each split on the reference machine (the placement, the tables, the pack or map and its verified copies, no other option; no other engine on the cards) fits PP5 5 sessions, TP4_PRO 1 and TP4_EXL3 1 with the 2.9 bpw map (2 with the opt-in 2.68 bpw map), each start printing `session slots: max -> N of 1048576 tokens each`. The earlier 9 Nov fit at production free memory, not remeasured since, gave 512K / 256K / 128K PP5 10 / 19 / 35 sessions, TP4_PRO 3 / 7 / 12, TP4_EXL3 2 / 4 / 7. An explicit `--session_slots=N` the cards do not hold is refused before any load, with the most that fit at that context and the longest context at which N fit; nothing is shrunk. Only memory makes a count not fit: a refusal of the placement or the plan (a layout, a DSpark card rule) is reported by its own step at one session, and a context that is not a multiple of 16 tokens is refused at parse. A BATCH serve's fit tries only its 8 sessions, and its refusal gives the longest context of 8 (no max advice). A serve with BATCH knobs needs exactly `--session_slots=8` (the BATCH programs' sessions). A knob that serves one session (`--official_reference`; `--prefill_prefix_stable`, `--prefix_reuse_exact` or `--session_fork` without `--prefill_first` or `--prefill_order`) given without `--session_slots` takes one session and says so (`serve: <knob> serves one session...: --session_slots defaults to 1`); with an explicit count above 1, or max, it is refused, named. A PP5 serve of several sessions with any device draft (`--draft=dspark` or `--draft=hybrid`) and no explicit depth takes five flights. **Speed above saturation: the aggregate is shared.** PP5 saturates at about C4-C5 (one drawing session a flight; C4 to C8 aggregates prose 415 to 416, code 506 to 511, structured 806 to 812 tok/s) and TP4_EXL3 at about C8; above that the aggregate stays at the saturated rate and each session gets aggregate / C (PP5 prose about 26 tok/s a session at C16, 13 at C32), with TTFT growing with the decoders that share the cards. Sessions take their turns round robin, so none starves. Startup prints `session slots: max -> N of C tokens each; cards (free/budget MiB): ...` (with N = 1, only where one session would not fit under the one-session defaults or they refuse a given knob, such as `--tp_pipeline_overlap` without `--pipeline_steps`, also `(multi-session defaults kept: <reason>)`), and refuses when not even one session fits: the context is never shrunk. Every serve start also prints `N session(s) fit at C tokens of context on this split; a shorter --context_tokens gives more` (with an explicit count, `; serving S (--session_slots)` before the advice). TP4_EXL3 concurrency=multiple's BATCH set needs exactly 8 sessions, so a serve without exactly `--session_slots=8` runs the row's concurrency=balanced row (thin steps at max) and that line begins `concurrency=multiple:` and ends `; BATCH needs exactly 8`; `--context_tokens=65536 --session_slots=8` runs BATCH as measured. An explicit `--session_slots=N` or `--context_tokens` wins; with an explicit context, max is the most sessions at that context. **`--axes=off`** runs the raw engine defaults with nothing inserted (the pre-stage-3 no-axis behaviour, used by gates and references that pin their own argv); it refuses together with any axis flag. tp5, tp2_pp2_pro and tp2_single_single_pro have no table: without axis flags they keep their raw defaults, and any axis flag refuses there. An axis cannot silently replace your checkpoint.
+
+A recipe may yield one of its knobs to the axis that owns it: the recipe's measured value runs wherever that axis's set of the row gives none. The PP5 multiple recipe yields its draft knobs this way, so its fixed policy 0 stays on every multiple row without focus=decode. Every TP4_PRO row that is not held runs the base (pipeline depth 2, as many serving slots as fit on serve), with the card order it pins (`--card_order=0,1,3,4,2`): the TP model needs the SM_120 PRO at stage 4, and the engine's default order 0,1,2,3,4 puts it at ordinal 2 on the reference workstation (TP4_EXL3 keeps its automatic CMP-only selector). Every TP4_EXL3 row that is not held runs THIN (single, balanced) or BATCH (multiple; on serve only at exactly `--session_slots=8`, otherwise THIN), and focus=decode adds layer drafting on each of them. A declared cross-axis bound is applied at composition, and startup prints it after its key on the `axes from` line: a cap clamps a knob that another source sets above its bound (`--rows` caps the verified draft depth at rows - 1), and a floor raises one below what another source needs (on TP4_EXL3 BATCH, sharded draft rows need draft layers, so `--tp_draft_layers` is raised to 1: "--tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)"). AXES.md lists every row with an applied bound. Bounds act on the final values, explicit ones included, and change only inserted knobs: an explicit `--tp_draft_shards=1` keeps the raise and `--tp_draft_shards=0` removes it, and an explicit `--rows` caps an inserted depth at its own value less 1; the note then says "from the user". An explicit bounded knob is never altered and is validated as usual. Known difference from tcb88 (accepted at the stage 3 review, D4): `generate` on TP4_EXL3 with category=balanced and concurrency=multiple takes no `--batch_step_us` price (tcb88 inserted 19500), while serve's measured BATCH plan gets the CLI's own menu, and no generate speed is claimed. Category=code runs fixed policy 0 without a menu in both commands (per-split x3); tcb88 did the same on code/multiple/decode, while on code/multiple ttft and prefill it ran batch_adaptive's menu.
+
+For the original weights, single-user decode is fastest on GPU split TP4_PRO (pipeline depth 2, measured at 1 serving slot): pass `--placement=tp4_pro`. Without `--placement`, single/decode runs on PP5: the base with concurrency=single's 6 rows (r7c g3, the fastest PP5 C1 arm) and focus=decode's arm 1, with category=code's depth 7 clamped to 5 by the 6 rows. An explicit `--placement=tp4_pro` with an exact or multiple tuple refuses.
+
+The rows cap also bounds `--draft_block`. Where one source of a row sets `--rows` and another sets `--draft_block` or `--draft_positions` above rows - 1, both are clamped, and startup names the clamp, for example `axes from category=code: --draft_block 7 -> 5 (bounded by --rows=6 from focus=decode) --draft_positions 7 -> 5 (bounded by --rows=6 from focus=decode)` on TP4_PRO, or `(bounded by --rows=6 from concurrency=single)` on PP5. On TP4_PRO code/single/decode is therefore rows 6, arm 1 and block/depth 5 on the base (pipeline depth 2), the r5s arm measured at one serving slot (232.3 tok/s code C1; the unclamped stack, r5c, ran 208.5 tok/s, 10.2 % below r5s). An explicit `--draft_positions` still wins and is validated as usual (above the clamped block it refuses). The bound acts on the final rows: an explicit `--rows=6` keeps the clamp (the note then says "from the user"), `--rows=8` lifts it, so the sets' own depth 7 is inserted.
+
+Every set is inserted on every row of its split. A set of draft knobs (category=code's depth, focus=decode's arm 1 on PP5, category=code's prices on TP4_EXL3) acts only with speculation. Every base runs DSpark, so these sets are active on every table row; where the final speculation is off, for example under an explicit `--speculative=0`, `axes from` marks each such line `(inactive: no DSpark on this route)` (stage 3 review D2).
+
+Stage 3 changes 208 rows against the stage-2 tables. Each names its basis in the route envelope (`tools/cli/axes_route_baseline.json`, `stage3_basis`): 16 are TP4_EXL3 exact (single or unset), per-split request 4 q4's exact-FP32 arm; 8 equal r7c g3 (PP5 single/decode), 64 have the same parsed configuration as their stage-2 recipe (TP4_PRO and TP4_EXL3 single, proved by the host test that pins each omitted raw default), and 120 are unmeasured: every concurrency=balanced row under the owner's rule. Unbounded sessions then change 192 rows (`unbounded_basis: unbounded_defaults`, their stage-3 values under `stage3`, unmeasured until U6): every concurrency=balanced row (the owner's rule is the raw defaults), PP5 single and multiple (no inserted 8 slots) and TP4_EXL3 multiple (8 slots dropped, BATCH only at exactly 8 on serve); the raw defaults themselves change the geometry of every row that pins neither. The per-split confirmation set (per-split request 5, held under the owner's pause) boots each split's balanced serve at the fitted N, fills each slot to 1M and measures C1..CN against the interim and against `--axes=off`.
 
 ### 7.2 Partial selections and explicit overrides
 
-With **no axes selected, final-main raw CLI defaults are unchanged by the resolver**. This means the current PP5-depth and compatible TP4_PRO-wide defaults described here, not the older tcb78 defaults. There are no implicit default axis values. When some axes are omitted, S considers compatible full tuples. It applies a partial selection only when those completions resolve to a common plan. If compatible tuples require different settings or a held dependency, it refuses; it does not invent the missing category, numerical tier or focus.
+With **no axes selected, the split's all-balanced row runs** (section 7.1: the base); `--axes=off` keeps the raw CLI defaults with nothing inserted. An unset axis takes its balanced value, so a partial selection resolves to the row with balanced on every unset axis. Under exact, an unset concurrency takes the reference recipe's single session. The startup line `axes gpu_split=<split> tuple=<category>/<exactness>/<concurrency>/<focus>` names the resolved row, and one `axes from <axis>=<value>: <knobs>` line names the axis behind every inserted knob.
 
 Explicit low-level knobs win over axis-inserted settings in either argument order. This rule does not waive ordinary numeric, duplicate-option, startup, program or memory gates. Repeating an explicit low-level option is still an error; explicit precedence is not permission to supply two raw values. An explicit override also changes the measured recipe, so the source tuple's performance or identity evidence no longer automatically applies.
 
-This complete EXL3 code/balanced/single/decode tuple is accepted on main. It selects the shipped `thin_full_layers` strategy; this differs from the explicitly pinned `thin_fixed` quick start:
+This complete EXL3 code/balanced/single/decode tuple is accepted on main. It inserts the THIN single set, fixed draft prices (category code) and layer drafting (focus decode); this differs from the explicitly pinned quick start:
 
 
 ```sh
@@ -589,7 +658,7 @@ anemone serve --placement=tp4_exl3 --speculative=2 --rows=8 --context_tokens=655
 Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
-A category-only partial is refused because compatible completions need different plans. A sufficiently constrained partial can succeed without filling in unset axes:
+A category-only partial takes balanced on the unset axes. On TP4_EXL3, code/balanced/balanced/balanced inserts `--draft_policy=0` and the split's baseline (`--speculative=2 --rows=8`); the tcb82 receipt below predates the per-split tables:
 
 
 ```sh
@@ -627,29 +696,32 @@ Check: `axis_override_after` — accepted by the tcb82 resolver/parser; stopped 
 
 ### 7.3 Pinned tuple map and limits
 
-| Weight family / exactness | Category | Concurrency | Focus | S strategy and scope |
-| --- | --- | --- | --- | --- |
-| EXL3 balanced | code | single | balanced | `thin_fixed` — source-scoped qualification; explicit overrides change the recipe |
-| EXL3 balanced | code | single | decode | `thin_full_layers` — source-scoped qualification; explicit overrides change the recipe |
-| EXL3 balanced | code | single | ttft, prefill | `thin_fixed` — source-scoped qualification; explicit overrides change the recipe |
-| EXL3 balanced | code | multiple | decode | `batch_fixed` — source-scoped qualification; explicit overrides change the recipe |
-| EXL3 balanced | code | multiple | balanced | `batch_session` — **held allocation/qualification candidate** |
-| EXL3 balanced | code | multiple | ttft, prefill | `batch_adaptive` — source-scoped qualification; explicit overrides change the recipe |
-| EXL3 balanced | prose, structured, balanced | single | balanced, ttft, decode, prefill | `thin_fixed` — source-scoped qualification; explicit overrides change the recipe |
-| EXL3 balanced | prose | multiple | balanced | `batch_adaptive` — **held allocation/qualification candidate** |
-| EXL3 balanced | structured | multiple | balanced | `batch_adaptive` — **held allocation/qualification candidate** |
-| EXL3 balanced | balanced | multiple | balanced | `batch_adaptive` — **held allocation/qualification candidate** |
-| EXL3 balanced | prose, structured, balanced | multiple | ttft, decode, prefill | `batch_adaptive` — source-scoped qualification; explicit overrides change the recipe |
-| EXL3 balanced | balanced | balanced | balanced | `batch_compromise` — **held allocation/qualification candidate** |
-| Original | code, prose, structured | single | decode | `original_tp_serial2` — source-scoped qualification; explicit overrides change the recipe |
-| Original | code | multiple | decode | `original_pp_depth8` — source-scoped qualification; explicit overrides change the recipe |
-| Original | prose, structured | multiple | decode | `original_pp_depth8` — source-scoped qualification; explicit overrides change the recipe |
-| Original exact | code, prose, structured, balanced | single | balanced, ttft, decode, prefill | `original_reference_serial_m1` — one session, capacity 512, serial M1; no speculation or batching |
-| EXL3 exact / both fast | any | any | any | EXL3 exact refuses; fast, vision and unsupported partial selections remain held. |
+Each non-empty knob set, per GPU split (the generated [AXES.md](../tools/cli/AXES.md) holds every axis value of every split and the complete map). A set taken from a recipe is that recipe without the knobs named after it:
 
-The all-balanced EXL3 development candidate used 2,048-row prefill and failed eight-slot allocation even at 65,536 context. It is held, not a general-purpose recommendation. Original exact is admitted only in the bounded serial M1 scope in section 9.7; broader generation/state/cache forms remain open. Fast requires measured error budgets. Vision, original TTFT/prefill, and unlisted concurrency compromises retain their own holds. An unrelated component proof does not close a full tuple's gates.
+| GPU split / axis value | Knob set and scope | GPU split (`--placement`) | Pipeline depth (`--pipeline_steps`) | Serving slots (`--session_slots`) |
+| --- | --- | --- | --- | --- |
+| PP5 exactness=exact | `original_reference_serial_m1` — the reference recipe is the whole configuration: one session, capacity 512, serial M1; no speculation or batching; concurrency single or unset | PP5 | 1 | 1 |
+| PP5 category=code | `--draft_block=7 --draft_positions=7`: depth 7, code C1/C2/C4/C8 +11.55/+1.43/+5.97/+6.88 % with focus=decode's arm 1 (r4m), +2.21/-1.74/+0.86/-1.62 % alone (r3m, C2 and C8 inside the spread) | PP5 | default | default |
+| PP5 concurrency=multiple | `original_pp_depth8` without `--prefix_reuse` (a measurement-protocol pin) and `--session_slots` (as many as fit, 5 at 1M, unmeasured until U6); it yields its draft block, depth, fixed policy 0 and session acceptance to category=code and focus=decode, so its measured values run wherever those sets give none | PP5 | 8 (generate 2) | default |
+| PP5 focus=decode | `--draft_policy=1 --draft_session_acceptance=6`: arm 1, code +4.69/+8.87/+1.74/+2.44 %, prose +3.83/+3.32/+1.72/+1.74 % at C1/C2/C4/C8, structured within spread (r1m) | PP5 | default | default |
+| TP4_PRO category=code | `--draft_block=7 --draft_positions=7`: depth 7, code C1 +4.80 % with TTFT flat (r3s); clamped to 5 under focus=decode's 6 rows | TP4_PRO | default | default |
+| PP5 base (no axis flag, and every row's knobs that no set gives) | the shared knobs of PP5's measured routes, read from original_pp_depth8, less the axis-owned knobs, the protocol pins and the raw-default pins (section 7.1) | PP5 | default | default |
+| PP5 concurrency=single | `--rows=6`: r7c g3 (measured at 8 serving slots, which are no longer inserted), the fastest PP5 C1 decode arm in every genre (+1.5-1.6 % over g1), outputs identical | PP5 | default | default |
+| TP4_PRO base, and concurrency=single (empty) | `original_tp_serial2` without `--prefix_reuse`, `--session_slots` and its raw-default pins (section 7.1); category=code and focus=decode replace its draft and rows knobs where they give them; the fastest original single-user decode | TP4_PRO | 2 | default |
+| TP4_PRO focus=decode | `--draft_policy=1 --draft_session_acceptance=6 --rows=6`: arm 1 with 6 rows, C1 structured/code/prose +3.82/+14.31/+3.54 %, TTFT +12 to +27 ms (r5s) | TP4_PRO | default | default |
+| TP4_EXL3 base, and concurrency=single (empty) | `thin_fixed` without `--draft_policy`, `--batch_core_once`, `--tp_draft_layers` (owned by category, the CLI and focus) and `--session_slots` | TP4_EXL3 | 2 | default |
+| TP4_EXL3 exactness=exact | `exl3_exact_shaping`: exact numerics, the reference order, the FP32 wire, DSpark at 8 rows, one session; exact shaping on quantized weights (not official-exact); concurrency single or unset; NLL/PPL against the relaxed base on the golden corpus pending GPU evidence | TP4_EXL3 | default | 1 |
+| concurrency=balanced on every split | nothing beyond the base: the owner's rule is the raw defaults (1M context, and on serve `--session_slots=max`, the most sessions that fit, no cap, refused when none fits) | PP5 / TP4_PRO / TP4_EXL3 | default | default |
+| TP4_EXL3 concurrency=multiple | `batch_adaptive` without `--draft_policy`, `--batch_core_once`, `--tp_draft_layers`, `--batch_step_us` and `--session_slots`; the CLI gives the rate policy and core 3 on BATCH, and the floor bound keeps `--tp_draft_layers=1`; on serve only at exactly `--session_slots=8` (as measured with `--context_tokens=65536`), otherwise the concurrency=balanced row | TP4_EXL3 | 1 | default |
+| TP4_EXL3 category=code | `--draft_policy=0`: fixed draft prices (the batch_fixed code gain), no BATCH step menu (per-split x3: the menu with fixed prices lost 6.6/6.4 % at C4/C8) | TP4_EXL3 | default | default |
+| TP4_EXL3 category=prose, structured | `--batch_step_us=19500,21500,28600,30000,32000,39000,46000,58000` (generate `--batch_step_us=19500`), only with concurrency=multiple: the BATCH step menu with the rate policy, as before | TP4_EXL3 | default | default |
+| TP4_EXL3 focus=decode | `--tp_draft_layers=1`: layer drafting, +12.0/+2.9/+1.6 % C1 decode for code/prose/structured; acts on every concurrency value | TP4_EXL3 | default | default |
+
+Holds: vision on every split; exact on TP4_PRO, and on PP5 and TP4_EXL3 with concurrency multiple or balanced; multiple on TP4_PRO. Every value not listed is an empty set over the base; the TP splits' concurrency=single is the base itself. Original exact is admitted only in the bounded serial M1 scope in section 9.7; broader generation/state/cache forms remain open. A fast tuple equals its balanced tuple; additional lossy routes require measured error budgets. An unrelated component proof does not close a full tuple's gates.
 
 ### 7.4 Mapping individual knobs
+
+The per-knob strategy listings below retain historical declarations, including unselected alternatives. A listing labelled "Shipped resolver writes" records those declared strategy values; the current tuple map and generated axis table determine what is actually selected. The current tables keep the measured TP4_PRO (pipeline depth 2, 1 serving slot) and PP5 (pipeline depth 8, 8 serving slots) recipes as the concurrency sets of their own splits. PP5 policy component declarations do not admit new sets.
 
 Every knob entry below states its numerical class, relevant axis domains, and the actual values written by the pinned S strategies where present. A knob omitted by the shipped resolver remains an explicit user control or inherited raw default; that is not a missing “balanced” value. Resource, authentication and logging knobs are usually orthogonal to the axes. A mapping describes intended optimization scope, not automatic admission of arbitrary joins. The canonical strategies are expanded into real commands in the recipes and examples; their names are documentation identifiers, not selectable CLI profiles.
 
@@ -673,7 +745,7 @@ anemone help knobs prefill_
 Check: `help_knobs_prefill` — tcb82 help printed; no model/backend opened. Receipt: examples.json.
 
 
-Original-weight exactness=exact now admits the one-session PP THIN serial M1 recipe at capacity 512. EXL3 exact and the fast tier remain held/refused. A feature being merged does not establish its complete model, state or quality qualification. The code/multiple/balanced and other full mixed-envelope holds remain explicit in the current registry. The tuple table below marks every held rule, including mixed rules whose component recipes separately passed. No automatic axis recipe selects order3, stable1 or session_fork1.
+Original-weight exactness=exact admits the one-session PP THIN serial M1 recipe at capacity 512; on TP4_EXL3 it runs the one-session exact-shaping set (not official-exact). Additional lossy fast routes remain held; fast reuses selectable non-lossy balanced plans unchanged. A feature being merged does not establish its complete model, state or quality qualification. The code/multiple/balanced and other full mixed-envelope holds remain explicit in the current registry. The tuple table below marks every held rule, including mixed rules whose component recipes separately passed. No automatic axis recipe selects order3, stable1 or session_fork1.
 
 ## 8. Every knob, grouped by subsystem
 
@@ -681,7 +753,7 @@ Admission shorthand follows the pinned catalog: **G0** is the general exact-case
 
 Use the complete recipes in [SERVER_PROFILES.md](SERVER_PROFILES.md) as a starting point; add overrides before the data filenames. The reference below covers every numeric record in main's option table and every custom or auxiliary CLI name. **All main numeric values are unsigned32 decimal scalars or bounded comma lists.** A range shown as parser bounds is lexical acceptance; the following semantic values/gates can be narrower. For lists, the range applies to each element and the listed arity is a maximum, not a requirement to fill zero placeholders. Options precede files and repeated identical option spellings refuse. The distinct draft_positions/speculative_depth aliases share a value but have separate occurrence counters: supplying both is accepted and the later value wins on this main parser. Prefer one spelling. Replicate has its separately documented last-wins repeat rule. No spaces, signs, hex, empty fields or trailing commas are accepted in a numeric list.
 
-Defaults below come from the compiled native parser under raw PP5 and minimally selected EXL3 THIN, then explicit conditional rules in main.c. They are not silently copied from the older S catalog. A sample may intentionally set a control to0 to retain/disable a path; the receipt records the actual value. Runtime/weight/card validation remains required for all samples.
+Defaults below come from the compiled native parser under raw PP5 and minimally selected EXL3 THIN, then explicit conditional rules in commands.c. They are not silently copied from the older S catalog. A sample may intentionally set a control to0 to retain/disable a path; the receipt records the actual value. Runtime/weight/card validation remains required for all samples.
 
 ### 8.1. Loader and turbo replicas
 
@@ -701,18 +773,18 @@ Native help describes the selected path as: `--card_order=1,0,2`. Evaluated defa
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. Shipped resolver writes: `original_tp_serial2`: `0,1,3,4,2` (all/generate); `original_pp_depth8`: `0,1,3,4,2` (all/generate); `original_pp_depth5`: `0,1,3,4,2` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0,1,3,4,2` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-reader_threads_per_copy"></a>
 
 #### `--reader_threads_per_copy`
 
-**Type/range:** unsigned32 decimal scalar; parser 1..16; semantic values: 1..16. **Default:** 2. **Commands:** load, generate, serve. **Placement:** all placements/recipes.
+**Type/range:** unsigned32 decimal scalar; parser 1..16; semantic values: 1..16. **Default:** 4. **Commands:** load, generate, serve. **Placement:** all placements/recipes.
 
 **Mechanics.** Allocate this many asynchronous readers per pack copy.
 
-Native help describes the selected path as: `--reader_threads_per_copy=1..16`. Evaluated defaults/ranges above take precedence where this prose is build-dependent.
+Native help describes the selected path as: `--reader_threads_per_copy=1..16 (default 4: the PP loader's readers a copy)`. Evaluated defaults/ranges above take precedence where this prose is build-dependent.
 
 **Use and interactions.** Prepared model/driver validation remains authoritative; ignored outside the named implementation path. Admission: G0.
 
@@ -720,7 +792,7 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** R24 (15 Nov 2026, real PP5 serve loads from the source and three replicas, A D D A): 4 readers loaded in 16.442 and 16.399 s against 16.854 and 17.207 s with 2 (+3.58 %, spread 2.07 %), every extent digest-checked; 2 is the earlier default. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_load_threads"></a>
@@ -739,7 +811,7 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rh04: 32 workers 31.1 s versus 16 workers 33.9 s; same loaded bytes (RND_H.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rh04: 32 workers 31.1 s versus 16 workers 33.9 s; same loaded bytes (RND_H.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-turbo_load"></a>
@@ -756,7 +828,7 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rh03 serve ready32.48s with replica versus47.93s single-copy and192.18s serial; receipts equal. Joint loader epoch, not an isolated storage benchmark (RND_H.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rh03 serve ready32.48s with replica versus47.93s single-copy and192.18s serial; receipts equal. Joint loader epoch, not an isolated storage benchmark (RND_H.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-map_reads"></a>
@@ -775,7 +847,7 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rh01: modes 0/1/2 TP4 load 36.7..38.4/29.8..31.5/32.3 s; rh08 single-copy mode3 62.5 s versus mode1 45.9 s (RND_H.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rh01: modes 0/1/2 TP4 load 36.7..38.4/29.8..31.5/32.3 s; rh08 single-copy mode3 62.5 s versus mode1 45.9 s (RND_H.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_load_host_threads"></a>
@@ -794,16 +866,21 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rh03:32 host workers34.616s,8 workers34.780s; rh04 chooses32 card/16 host workers after measured sweep; receipts equal (RND_H.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rh03:32 host workers34.616s,8 workers34.780s; rh04 chooses32 card/16 host workers after measured sweep; receipts equal (RND_H.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_load_copy_split"></a>
 
 #### `--tp_load_copy_split`
 
-**Type/range:** unsigned32 decimal scalar; parser 0..1; semantic values: 0..1. **Default:** 1. **Commands:** load, generate, serve. **Placement:** all TP placements; original or EXL3.
+**Type/range:** unsigned32 decimal scalar; parser 0..2; semantic values: 0 soonest; 1 fixed roles; 2 roles with stealing. **Default:** 2. **Commands:** load, generate, serve. **Placement:** all TP placements; original or EXL3.
 
-**Mechanics.** Read host chunks from copy zero and device extents from the last copy.
+**Mechanics.** Choose the copy of each TP load read. A TP load has two roles: the host arena's chunks and the cards' extents.
+- 2 (default): the host arena prefers copy zero and the cards the last copy; on an EXL3 map these are the map's contiguous native extents and a flat replica's EXL3 extents. A role's preferred copy is held for it only while that role has reads left to claim; once it has claimed its last read, that copy serves the other role too, and a middle copy (three or more) serves both throughout. Among the copies a read may use, it goes to the one soonest to finish it.
+- 1: each role reads only its preferred copy (the tcb96 default, kept for comparison): a middle copy is never read, and a role that finishes first leaves its drive idle.
+- 0: every read goes to the copy soonest to finish it, whatever its role.
+
+Every extent is still checked against its digest, with fallback to the other copies. The `TP load roles:` startup line shows what each copy delivered to each role.
 
 **Use and interactions.** Prepared model/driver validation remains authoritative; ignored outside the named implementation path. Admission: G0.
 
@@ -811,7 +888,7 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rh06/rh08 with replica reads: 29.7 versus 31.0 s; joint policy, no isolated speed claim (RND_H.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rh06/rh08 with replica reads: fixed roles 29.7 versus 31.0 s soonest; joint policy, no isolated speed claim (RND_H.md). Request 16 (TP4_EXL3, two copies, fixed roles): copy 1 sat idle 9.3 s while copy 0 read on. Roles with stealing are measured in request 17. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_load_reads_per_copy"></a>
@@ -830,7 +907,7 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rh03:limit4 36.245s,limit8 35.854s; rh01 limit2 79.957s in older epoch. No selected limit improves retained unlimited default (RND_H.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rh03:limit4 36.245s,limit8 35.854s; rh01 limit2 79.957s in older epoch. No selected limit improves retained unlimited default (RND_H.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-rate_mib-replicate"></a>
@@ -878,6 +955,26 @@ Use this to tune the named read/worker path while checking startup time and iden
 **Measured effect.** source/replicas.c:488, include/anemone/replicas.h. Unmeasured isolated effect. Source: `source/replicas.c` and shipped knob catalog.
 
 
+<a id="knob-adopt-replicate"></a>
+
+#### `--adopt` — replicate
+
+**Type/range:** a path, COPY. **Default:** unset. **Commands:** replicate (`anemone replicate --adopt=COPY [--replica_external=0|1] SOURCE`). **Placement:** all placements/recipes.
+
+**Mechanics.** Adopt an existing full copy of SOURCE as a turbo load replica, without copying a byte. It is meant for a copy made before receipts existed, or by hand.
+1. The copy must be a regular file you own (not a symbolic link), of the source's size, not the source itself, and on an admitted drive other than the source's.
+2. Every block is read with direct reads and checked: the header and tables, the header equal to the source's, and every extent's digest. The file must not change while it is read.
+3. Only then is it hard-linked into its drive's replica directory and given its receipt. The copy keeps its own name, so anything that names it still works.
+
+A copy that fails the check gets no name and no receipt, and the first differing extent is named. A copy already adopted is not read again. The directory is the first of the search's directories on that drive that exists, else one made: `$HOME/anemone_engram_rnd/replicas` on HOME's filesystem (where autotune puts the root filesystem's replicas), then `<mount>/anemone_engram_rnd/replicas` and `<mount>/anemone/replicas`. The startup replica search reads the same three directories.
+
+**Use and interactions.** Takes one SOURCE and no DIRECTORY; `--replica_external` applies. Admission: source pack must open; the copy's file, size and drive gates. The check reads the whole copy, so run it in an admitted copy window.
+
+**Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe; every extent stays digest-checked at load. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup. The shipped resolver does not insert this control; it remains explicit, with no automatic axis mapping.
+
+**Measured effect.** source/replicas.c (replicas_adopt), include/anemone/replicas.h, tests/replica_adopt_test.c. The check reads the whole copy (517 GB for the original pack). Source: `source/replicas.c` and shipped knob catalog.
+
+
 ### 8.2. Memory, slots, context and 1M
 
 Context capacity is prompt plus generated tokens per independent slot. Ordinary rows size a THIN verification program; wide rows size prefill programs. Neither is a client batch size or a guarantee of available card memory. The numeric parser deliberately has broad bounds, followed by alignment, placement and prepared-program gates. The planner subtracts kept-free bytes before placing weights/state/scratch. An explicit PP5 layout names selected-card indices, includes every required stage exactly once and is one quoted argv item.
@@ -898,22 +995,22 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. Shipped resolver writes: `batch_fixed`: `0` (all/generate); `batch_adaptive`: `0` (all/generate); `batch_session`: `0` (all/generate); `thin_fixed`: `0` (all/generate); `batch_compromise`: `0` (all/generate); `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate); `thin_full_layers`: `0` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-session_slots"></a>
 
 #### `--session_slots`
 
-**Type/range:** unsigned32 decimal scalar; parser 1..8; semantic values: 1..8. **Default:** 1. **Commands:** serve. **Placement:** all placements/recipes.
+**Type/range:** unsigned32 decimal scalar, or `max`; parser 1..1024 (SERVING_SLOTS_MOST); semantic values: 1..1024 and max. **Default:** max on serve: as many sessions of the context as the cards hold, no cap (the fit by bisection; parsing and its defaults see 8). **Commands:** serve. **Placement:** all placements/recipes.
 
-**Mechanics.** Allocate this many independent active session slots.
+**Mechanics.** Allocate this many independent active session slots. An explicit count the cards do not hold is refused before any load with the most that fit and the longest context of that count; a serve with BATCH knobs needs exactly 8.
 
 **Use and interactions.** Values above1 require serve; device draft plus THIN multiple slots requires pipeline_steps>1. Measured S10/e4c188e one1048576-token trueTHIN slot allocates with15MiB minimum CMP free: selected8/256, both2048/1024 reference pairs,15MiaAI signatures and cold9 pass; cold3795tok/s, Fraser1435.85/1443.60ms. Capacity plus short requests only, not full1Mwork/pi/peak envelope. Earlier S04 BATCH8/one-verifier slot125MiB/cold3207 retains its different recipe/source. Admission: G0.
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. Shipped resolver writes: `batch_fixed`: `8` (serve); `batch_adaptive`: `8` (serve); `batch_session`: `8` (serve); `thin_fixed`: `1` (serve); `batch_compromise`: `8` (serve); `original_tp_serial2`: `1` (serve); `original_pp_depth8`: `8` (serve); `original_pp_depth5`: `8` (serve); `thin_full_layers`: `1` (serve). The `original_reference_serial_m1` exact strategy additionally inserts `1` for serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-wide_rows"></a>
@@ -928,7 +1025,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. Shipped resolver writes: `batch_fixed`: `1024` (all/generate); `batch_adaptive`: `1024` (all/generate); `batch_session`: `1024` (all/generate); `thin_fixed`: `2048` (all/generate); `batch_compromise`: `2048` (all/generate); `original_tp_serial2`: `1024` (all/generate); `original_pp_depth8`: `1024` (all/generate); `original_pp_depth5`: `1024` (all/generate); `thin_full_layers`: `2048` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-rows"></a>
@@ -945,14 +1042,14 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. Shipped resolver writes: `batch_fixed`: `8` (all/generate); `batch_adaptive`: `8` (all/generate); `batch_session`: `8` (all/generate); `thin_fixed`: `8` (all/generate); `batch_compromise`: `8` (all/generate); `original_tp_serial2`: `8` (all/generate); `original_pp_depth8`: `8` (all/generate); `original_pp_depth5`: `8` (all/generate); `thin_full_layers`: `8` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `1` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-context_tokens"></a>
 
 #### `--context_tokens`
 
-**Type/range:** unsigned32 decimal scalar; parser 1..1048576; semantic values: 1..1048576. **Default:** 16384 per slot for every raw placement; larger capacities are explicit. **Commands:** generate, serve. **Placement:** all placements/recipes.
+**Type/range:** unsigned32 decimal scalar; parser 1..1048576; semantic values: 1..1048576. **Default:** 1048576 per slot for every raw placement, generate and serve (owner, 9 Nov); smaller capacities are explicit. **Commands:** generate, serve. **Placement:** all placements/recipes.
 
 **Mechanics.** Allocate the maximum prompt-plus-generation context per slot.
 
@@ -960,7 +1057,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The `original_reference_serial_m1` exact strategy additionally inserts `512` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-layout"></a>
@@ -975,7 +1072,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. Shipped resolver writes: `original_pp_depth8`: `vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4` (all/generate); `original_pp_depth5`: `vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts the pinned card layout in section 9.7 for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 ### 8.3. Prefill and chunk planning
@@ -996,7 +1093,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `original_tp_serial2`: `1` (all/generate); `original_pp_depth8`: `1` (all/generate); `original_pp_depth5`: `1` (all/generate); `thin_full_layers`: `1` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-chunks_in_flight"></a>
@@ -1013,7 +1110,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `original_tp_serial2`: `1` (all/generate); `original_pp_depth8`: `1` (all/generate); `original_pp_depth5`: `1` (all/generate); `thin_full_layers`: `1` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `1` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** rc02ab exact1 versus2: 30K11.859 ->9.430 s, Fraser2.431 ->1.857 s; same bits in that recipe (RND_C.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rc02ab exact1 versus2: 30K11.859 ->9.430 s, Fraser2.431 ->1.857 s; same bits in that recipe (RND_C.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_margin"></a>
@@ -1032,7 +1129,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rc02ab margin127 exact plan: 30K about -1.0 s; joint recipe, same bits (RND_C.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rc02ab margin127 exact plan: 30K about -1.0 s; joint recipe, same bits (RND_C.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_fast_plan"></a>
@@ -1049,7 +1146,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_chunk_rows"></a>
@@ -1066,7 +1163,7 @@ Native help describes the selected path as: `--prefill_chunk_rows=0|256..2048 (w
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Fixed-cap solo references pass. M7d86c45 default passes three reference fixtures and15/15mixed texts; this is not blanket proof of every cap/placement (packet RND_M.md19:14). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Fixed-cap solo references pass. M7d86c45 default passes three reference fixtures and15/15mixed texts; this is not blanket proof of every cap/placement (packet RND_M.md19:14). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_cone_skip"></a>
@@ -1085,7 +1182,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_tail_rows"></a>
@@ -1102,7 +1199,7 @@ Native help describes the selected path as: `--prefill_tail_rows=0|128|320|448 (
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** gsk01 448 versus320 THIN: 2K1696 ->1722 tok/s, cold3798 ->3818; same bits. BATCH defaults128 for memory (RND_K.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** gsk01 448 versus320 THIN: 2K1696 ->1722 tok/s, cold3798 ->3818; same bits. BATCH defaults128 for memory (RND_K.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_ladder_1024"></a>
@@ -1119,7 +1216,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri01 with front_tail: 30K -82 ms; same bits, joint recipe (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri01 with front_tail: 30K -82 ms; same bits, joint recipe (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_ladder_1536"></a>
@@ -1136,7 +1233,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri06 1905-token prompt -84 ms; same bits (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri06 1905-token prompt -84 ms; same bits (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_ladder_fine"></a>
@@ -1153,7 +1250,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri07/gsi10 THIN cold prefill +0.8%, about200 MiB/card extra; same bits (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri07/gsi10 THIN cold prefill +0.8%, about200 MiB/card extra; same bits (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_front_tail"></a>
@@ -1170,7 +1267,7 @@ Native help describes the selected path as: `--prefill_front_tail=0|1|2 (default
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rk04k THIN with448 tail: 30K8.214 ->8.190 s; same bits (RND_K.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rk04k THIN with448 tail: 30K8.214 ->8.190 s; same bits (RND_K.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_tail_overlay"></a>
@@ -1187,7 +1284,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** 320-tail workspace -244 MiB/card; same launches/bits (RND_K.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** 320-tail workspace -244 MiB/card; same launches/bits (RND_K.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_tail_sets"></a>
@@ -1204,7 +1301,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rk03c 2K prompt -12 ms at320 tail, -15 ms at448; same bits (RND_K.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rk03c 2K prompt -12 ms at320 tail, -15 ms at448; same bits (RND_K.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_thin_tail"></a>
@@ -1219,7 +1316,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rk09y/z 2K1.144 ->1.117s (-27ms),1905token1.141 ->1.075s (-66ms),same bits after final fixes; earlier rejected versions must not be reused (RND_K.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rk09y/z 2K1.144 ->1.117s (-27ms),1905token1.141 ->1.075s (-66ms),same bits after final fixes; earlier rejected versions must not be reused (RND_K.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_dead_halves"></a>
@@ -1238,7 +1335,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri01 mode1 Fraser -76ms,30K -68ms; joint mode7+pool+dead2 Fraser -117ms/30K -276ms; same bits (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri01 mode1 Fraser -76ms,30K -68ms; joint mode7+pool+dead2 Fraser -117ms/30K -276ms; same bits (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_cone"></a>
@@ -1255,7 +1352,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** same bits. **Four-axis mapping:** Category: content independent within supported text/vision gates. Exactness: use the entry's same-bits/order qualification. Concurrency: prepared THIN or BATCH geometry. Focus: prefill and TTFT; memory/decoder pauses interact. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `original_tp_serial2`: `1` (all/generate); `original_pp_depth8`: `1` (all/generate); `original_pp_depth5`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_prefix_stable"></a>
@@ -1270,7 +1367,7 @@ Use this when changing the planned chunk/tail path; compare cold-prefill and TTF
 
 **Precision class:** order-changing (new cold form); same bits relative to its qualified own-cold recipe. **Four-axis mapping:** Candidate TP4_EXL3 text cache form in exactness=exact, conditional on its cold/state/capacity gates; no automatic category/concurrency/focus selection. Copy32 targets prefill/TTFT copying only after device proof.
 
-**Measured effect.** Prefix-only19/8c18f8a on main39980 is P final knob-default0/exact-cache-tier request; do not merge full P80 copy/v5 prototype. Fresh39 six complete cold arms14/19/14,114requests pass unchanged no-loss reader: THIN prefill ratio0.99884138(95%0.99679661-1.00268666),TTFT0.99777899(0.99398414-1.00548634); BATCH prefill0.99985033(0.99910103-1.00116771),TTFT1.00159642(0.99389811-1.00713069). Historical source15THIN strict failure retained. Whole39 exit1 belongs to separate copy32OOM diagnostic, not cold-arm failure. Core174native/checkpoint/1M and shared accepted14/Q11 references pass; standalone19 CLI refs DID NOT RUN. Main resulting old/new2048/1024 gate still required; no automatic S exact tuple or full official-reference claim (RND_P.md5Nov14:32,14:42; evidence/xc39_v3/cold_performance.json; MERGE_v3.md). Integrated prefix-only candidate8c18f8a; no copy32 or snapshotv5. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Prefix-only19/8c18f8a on main39980 is P final knob-default0/exact-cache-tier request; do not merge full P80 copy/v5 prototype. Fresh39 six complete cold arms14/19/14,114requests pass unchanged no-loss reader: THIN prefill ratio0.99884138(95%0.99679661-1.00268666),TTFT0.99777899(0.99398414-1.00548634); BATCH prefill0.99985033(0.99910103-1.00116771),TTFT1.00159642(0.99389811-1.00713069). Historical source15THIN strict failure retained. Whole39 exit1 belongs to separate copy32OOM diagnostic, not cold-arm failure. Core174native/checkpoint/1M and shared accepted14/Q11 references pass; standalone19 CLI refs DID NOT RUN. A resulting-main old/new2048/1024 gate still required; no automatic S exact tuple or full official-reference claim (RND_P.md5Nov14:32,14:42; evidence/xc39_v3/cold_performance.json; MERGE_v3.md). Integrated prefix-only candidate8c18f8a; no copy32 or snapshotv5. Source: `source/commands.c` and shipped knob catalog.
 
 
 ### 8.4. Decode and scheduling
@@ -1291,7 +1388,7 @@ Native help describes the selected path as: `--batch_rows=R[,R..] (1..64 each; t
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. Shipped resolver writes: `batch_fixed`: `8,8,12,12,16,24,32,48`, `8` (generate); `batch_adaptive`: `8,8,12,12,16,24,32,48`, `8` (generate); `batch_session`: `8,8,12,12,16,24,32,48`, `8` (generate); `batch_compromise`: `8,8,12,12,16,24,32,48`, `8` (generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_context_slabs"></a>
@@ -1306,7 +1403,7 @@ Native help describes the selected path as: `--batch_rows=R[,R..] (1..64 each; t
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_thin_bits"></a>
@@ -1325,7 +1422,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_tc_paired"></a>
@@ -1344,7 +1441,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rj01_card all compared forms identical; paired48 I640 +8.2us/call,I512 +18.4us; all tested sizes slower, kept off (RND_J.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rj01_card all compared forms identical; paired48 I640 +8.2us/call,I512 +18.4us; all tested sizes slower, kept off (RND_J.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_row_sets"></a>
@@ -1361,7 +1458,7 @@ Native help describes the selected path as: `--batch_row_sets=0|8|16|24 (default
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rj02s same bits; six-shape48-row total r16/r24/r8 284.7/298.0/330.8us versus192.5us _64+reduce; all slower, kept off (RND_J.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rj02s same bits; six-shape48-row total r16/r24/r8 284.7/298.0/330.8us versus192.5us _64+reduce; all slower, kept off (RND_J.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_core_once"></a>
@@ -1374,11 +1471,11 @@ Native help describes the selected path as: `--batch_row_sets=0|8|16|24 (default
 
 Native help describes the selected path as: `--batch_core_once=0..3 (default 3 for tp4_exl3, 2 elsewhere; 3: pools and deferred slots; a BATCH step's core and window once over its slabs; 1: the core alone; 0: a slab at a time; the same bits)`. Evaluated defaults/ranges above take precedence where this prose is build-dependent.
 
-**Use and interactions.** Accepts0..3. Main39980 omitted EXL3 CLI default3 is active on eligible BATCH; other placements retain2, API description0 is separate. Explicit S code/balanced/multiple/decode selects3; other recorded S BATCH recipes retain2. S10/e4c188e fixed/core3 versus RATE2/core2 full matrix and selected8/256 pass: C8code469.537/432.990, prose382.997/450.231, structured787.722/787.726tok/s. Multiple knobs differ, so these are recipe observations, not an isolated core gain; own CPU compilation overlaps part of decode. Same24 isolated mixed core2/3 text gates pass112cross/96self with code/prose C8task-geometric+0.529%/+1.115%. N actual26 code267.308/298.437/379.376/472.154 is cross-binary. Dedicated reference/safety proofs retain their epochs. See axes.json and RND_N/S.md. Admission: G0; T; B.
+**Use and interactions.** Accepts0..3. main 39980 omitted EXL3 CLI default3 is active on eligible BATCH; other placements retain2, API description0 is separate. Explicit S code/balanced/multiple/decode selects3; other recorded S BATCH recipes retain2. S10/e4c188e fixed/core3 versus RATE2/core2 full matrix and selected8/256 pass: C8code469.537/432.990, prose382.997/450.231, structured787.722/787.726tok/s. Multiple knobs differ, so these are recipe observations, not an isolated core gain; own CPU compilation overlaps part of decode. Same24 isolated mixed core2/3 text gates pass112cross/96self with code/prose C8task-geometric+0.529%/+1.115%. N actual26 code267.308/298.437/379.376/472.154 is cross-binary. Dedicated reference/safety proofs retain their epochs. See axes.json and RND_N/S.md. Admission: G0; T; B.
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. Shipped resolver writes: `batch_fixed`: `3` (all/generate); `batch_adaptive`: `2` (all/generate); `batch_session`: `2` (all/generate); `thin_fixed`: `2` (all/generate); `batch_compromise`: `2` (all/generate); `thin_full_layers`: `2` (all/generate).
 
-**Measured effect.** rj03p BATCH48 grouped48: 43.63 -> 43.02/42.41 ms at1/2 (-1.4/-2.8%), same bits; gsj06a 84/84 texts, 24..48-row programs -2.1..-4.3% (RND_J.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rj03p BATCH48 grouped48: 43.63 -> 43.02/42.41 ms at1/2 (-1.4/-2.8%), same bits; gsj06a 84/84 texts, 24..48-row programs -2.1..-4.3% (RND_J.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_grouped_rows"></a>
@@ -1397,7 +1494,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rj03p BATCH48 grouped16 38.44 versus grouped48 43.63 ms (-11.9%); same bits (RND_J.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rj03p BATCH48 grouped16 38.44 versus grouped48 43.63 ms (-11.9%); same bits (RND_J.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_step_us"></a>
@@ -1412,7 +1509,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. Shipped resolver writes: `batch_adaptive`: `19500,21500,28600,30000,32000,39000,46000,58000`, `19500` (generate); `batch_session`: `19500,21500,28600,30000,32000,39000,46000,58000`, `19500` (generate); `batch_compromise`: `19500,21500,28600,30000,32000,39000,46000,58000`, `19500` (generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_verifiers"></a>
@@ -1429,7 +1526,7 @@ Native help describes the selected path as: `--batch_verifiers=V[,V..] --batch_s
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. Shipped resolver writes: `batch_fixed`: `1,2,2,4,4,4,8,8`, `1` (generate); `batch_adaptive`: `1,2,2,4,4,4,8,8`, `1` (generate); `batch_session`: `1,2,2,4,4,4,8,8`, `1` (generate); `batch_compromise`: `1,2,2,4,4,4,8,8`, `1` (generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_first"></a>
@@ -1446,7 +1543,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. Shipped resolver writes: `batch_fixed`: `1` (serve); `batch_adaptive`: `1` (serve); `batch_session`: `1` (serve); `batch_compromise`: `1` (serve).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_order"></a>
@@ -1463,7 +1560,7 @@ Native help describes the selected path as: `--prefill_order=0|1|2|3 (bounded BA
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. Shipped resolver writes: `batch_fixed`: `2` (serve); `batch_adaptive`: `2` (serve); `batch_session`: `2` (serve); `batch_compromise`: `2` (serve); `original_tp_serial2`: `0` (serve); `original_pp_depth8`: `0` (serve); `original_pp_depth5`: `0` (serve). The `original_reference_serial_m1` exact strategy additionally inserts `0` for serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** N xd13/frozen24 prefix_reuse1 same-binary order2->0 warm-code probe: C1/C2/C4/C8 TTFT medians15.348/26.221/52.603/131.152->15.295/26.310/42.449/55.001ms; following-token rates268.148/347.388/448.756/541.992->268.891/347.679/530.509/722.848tok/s. Each arm has47 strict records with paired cache classes and equal T0 text/native-count/finish; candidate follows control by44.0-44.5s. BATCH8 one-owner C1 is not THIN. Actual fixed0/session0/learn1/costs14300,0,690/core2 has no batch_step_us menu. Code-only warm TTFT/decode evidence, not all-category, mixed, long-prompt continuity or a changed S default/axis (RND_N/M.md5Nov05:17,05:32; evidence/xd13_v1_measure/warm_order_ttft.json). Historical isolated N source8dd9dfc/main39980 adds order3: short no-chunk residuals fitting the prepared THIN budget share a head thin turn, retaining order2 fairness, long chunks and decode-due exclusions. CLI requires qualified bounded_batch1024/BF16 row-independent family and prefix_reuse_exact0; generic API fixtures are not broader CLI admission. Future P/Q join must also exclude stable1 canonical form even global exact0/fork0, and fork1/global0, until their cold-plan proof. Preserve prior automatic0/2 outcomes or refusals. Three builds,123parser cases, focused ASan/TSan and87CUDA-image identity pass; paired xd18 on frozen35 passes both-width reference stages; complete cross-order/Fraser/warm review and a new-default three-pass gate remain separate. That S epoch accepted0..2; shipped main accepts3 under its strict gate; no axis enables3 (RND_N.md5Nov13:02,13:29; RND_Q.md12:41). N xd18/frozen35 completes255responses(40coldmixed,74Fraser,141warm) plusboth-width references with observed outputs/counts/request identities equal. Order2->3 warmC4/C8codeTTFT52.731/127.670->42.439/54.534ms, aggregate427.096/516.019->471.466/610.583tok/s. Matchedorder0C4/C8TTFT41.916/54.317ms; code3stays+0.523/+0.217ms aboveit. Strict coldgap468.254->470.319ms andFraserC4/C8median4104.95/7628.50->4110.40/7632.40ms FAIL; no tolerance/default pass. This is35RATE2/canonical-menu data, not pure37/defaultthree-pass qualification. That historical S source did not parse3 or selectit (RND_N.md5Nov14:55; xd18saved-dataanalysis).  N four-commit integration487000f/6c2aa48/3d1c9ec/a110d06 now accepts3 within that gate; no axis selects3. Pure37 xd20 warm C4/C8 code throughput improves7.856%/16.844% versus2; C2/cold gates fail, so automatic2 remains. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** N xd13/frozen24 prefix_reuse1 same-binary order2->0 warm-code probe: C1/C2/C4/C8 TTFT medians15.348/26.221/52.603/131.152->15.295/26.310/42.449/55.001ms; following-token rates268.148/347.388/448.756/541.992->268.891/347.679/530.509/722.848tok/s. Each arm has47 strict records with paired cache classes and equal T0 text/native-count/finish; candidate follows control by44.0-44.5s. BATCH8 one-owner C1 is not THIN. Actual fixed0/session0/learn1/costs14300,0,690/core2 has no batch_step_us menu. Code-only warm TTFT/decode evidence, not all-category, mixed, long-prompt continuity or a changed S default/axis (RND_N/M.md5Nov05:17,05:32; evidence/xd13_v1_measure/warm_order_ttft.json). Historical isolated N source8dd9dfc/main39980 adds order3: short no-chunk residuals fitting the prepared THIN budget share a head thin turn, retaining order2 fairness, long chunks and decode-due exclusions. CLI requires qualified bounded_batch1024/BF16 row-independent family and prefix_reuse_exact0; generic API fixtures are not broader CLI admission. Future P/Q join must also exclude stable1 canonical form even global exact0/fork0, and fork1/global0, until their cold-plan proof. Preserve prior automatic0/2 outcomes or refusals. Three builds,123parser cases, focused ASan/TSan and87CUDA-image identity pass; paired xd18 on frozen35 passes both-width reference stages; complete cross-order/Fraser/warm review and a new-default three-pass gate remain separate. That S epoch accepted0..2; shipped main accepts3 under its strict gate; no axis enables3 (RND_N.md5Nov13:02,13:29; RND_Q.md12:41). N xd18/frozen35 completes255responses(40coldmixed,74Fraser,141warm) plusboth-width references with observed outputs/counts/request identities equal. Order2->3 warmC4/C8codeTTFT52.731/127.670->42.439/54.534ms, aggregate427.096/516.019->471.466/610.583tok/s. Matchedorder0C4/C8TTFT41.916/54.317ms; code3stays+0.523/+0.217ms aboveit. Strict coldgap468.254->470.319ms andFraserC4/C8median4104.95/7628.50->4110.40/7632.40ms FAIL; no tolerance/default pass. This is35RATE2/canonical-menu data, not pure37/defaultthree-pass qualification. That historical S source did not parse3 or selectit (RND_N.md5Nov14:55; xd18saved-dataanalysis).  N four-commit integration487000f/6c2aa48/3d1c9ec/a110d06 now accepts3 within that gate; no axis selects3. Pure37 xd20 warm C4/C8 code throughput improves7.856%/16.844% versus2; C2/cold gates fail, so automatic2 remains. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_order_wait"></a>
@@ -1482,7 +1579,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_decode_every"></a>
@@ -1497,7 +1594,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** gsk13 order2/every1:short post-first11.45 ->9.25s,longTTFT13.93 ->14.83s; FraserC4/C8 TTFT3745/6763 ->3814/6994ms;20/20 text agreement; remains off (RND_K.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** gsk13 order2/every1:short post-first11.45 ->9.25s,longTTFT13.93 ->14.83s; FraserC4/C8 TTFT3745/6763 ->3814/6994ms;20/20 text agreement; remains off (RND_K.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_decode_waiters"></a>
@@ -1512,7 +1609,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. Shipped resolver writes: `batch_fixed`: `0` (serve); `batch_adaptive`: `0` (serve); `batch_session`: `0` (serve); `batch_compromise`: `0` (serve).
 
-**Measured effect.** Gxp31 waiter512/4:0.470s max content gap, worst TTFT ratio1.07907 including all three arrivals; C8 E2E368.24tok/s. Fixed1024/1/waiters0 selected with ratio1.07868 and pilot C8 E2E373.41. These are joint policies, not an isolated waiter gain (packet RND_M.md19:14). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Gxp31 waiter512/4:0.470s max content gap, worst TTFT ratio1.07907 including all three arrivals; C8 E2E368.24tok/s. Fixed1024/1/waiters0 selected with ratio1.07868 and pilot C8 E2E373.41. These are joint policies, not an isolated waiter gain (packet RND_M.md19:14). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_decode_rounds"></a>
@@ -1529,7 +1626,7 @@ Native help describes the selected path as: `--prefill_decode_rounds=1..64 (ordi
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. Shipped resolver writes: `batch_fixed`: `1` (serve); `batch_adaptive`: `1` (serve); `batch_session`: `1` (serve); `batch_compromise`: `1` (serve).
 
-**Measured effect.** Gxp33 fixed1024/1:0.477757s maximum gap, together short/long TTFT3.92157/15.38475s, short post-first completion7.76530s. Gxp26 actual default:0.476522s gap; refs/mixed/decode identity pass. Joint-policy scope (packet RND_M.md19:14). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Gxp33 fixed1024/1:0.477757s maximum gap, together short/long TTFT3.92157/15.38475s, short post-first completion7.76530s. Gxp26 actual default:0.476522s gap; refs/mixed/decode identity pass. Joint-policy scope (packet RND_M.md19:14). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_decode_rows"></a>
@@ -1544,7 +1641,7 @@ Native help describes the selected path as: `--prefill_decode_rounds=1..64 (ordi
 
 **Precision class:** same bits. **Four-axis mapping:** Category: workload mix dependent. Exactness: cold-plan/row-form invariance required for a same-bits claim. Concurrency: single or multiple as admitted. Focus: decode, TTFT and prefill tradeoff. Shipped resolver writes: `batch_fixed`: `1024` (serve); `batch_adaptive`: `1024` (serve); `batch_session`: `1024` (serve); `batch_compromise`: `1024` (serve).
 
-**Measured effect.** M7d86c45/gxp26 actual default1024/1/waiters0/order2:0.476522s gap; Fraser C1/C4/C8 TTFT1569.6/4106.4/7631.6ms; aggregate E2E205.09/317.50/373.37tok/s versus old order2 C4/C8 320.79/384.30. Both reference widths,15/15mixed and141/141decode pairs pass; THIN/generate unchanged. Joint policy, not an isolated cap gain (packet RND_M.md19:14). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** M7d86c45/gxp26 actual default1024/1/waiters0/order2:0.476522s gap; Fraser C1/C4/C8 TTFT1569.6/4106.4/7631.6ms; aggregate E2E205.09/317.50/373.37tok/s versus old order2 C4/C8 320.79/384.30. Both reference widths,15/15mixed and141/141decode pairs pass; THIN/generate unchanged. Joint policy, not an isolated cap gain (packet RND_M.md19:14). Source: `source/commands.c` and shipped knob catalog.
 
 
 
@@ -1554,7 +1651,7 @@ Native help describes the selected path as: `--prefill_decode_rounds=1..64 (ordi
 
 **Type/range:** unsigned32 scalar, 0 or 1. **Default:** 0 on PP5, TP4_PRO and TP4_EXL3. **Command:** serve only. The real parser refuses generate and values above 1.
 
-**Mechanics.** With value 1, a chunk-ready prompt owner keeps its prepared FULL/WIDE program and cannot donate a foreign row to ordinary decode BATCH. The scheduler retains the selected prompt or decoder turn when a full pipeline or checkpoint barrier forces a landing; successful submissions advance ownership. Decoders continue to progress during prefill, and short tails with no prepared chunk can still pack. Value 0 preserves the previous mixed-row behavior and its identity. A1 has a conditional version-2 snapshot salt; the P/Q namespace grammar is unchanged.
+**Mechanics.** With value 1, a chunk-ready prompt owner keeps its prepared FULL/WIDE program and cannot donate a foreign row to ordinary decode BATCH. The scheduler retains the selected prompt or decoder turn when a full pipeline or checkpoint barrier forces a landing; successful submissions advance ownership. A chunk-ready prompt that a decoders' step passes over keeps the round's cursor, so its chunk takes the next step, wherever its slot lies among the decoders' (unless a decode round or a `--prefill_order` head reserves the step). Decoders continue to progress during prefill, and short tails with no prepared chunk can still pack. Value 0 preserves the previous mixed-row behavior and its identity. A1 has a conditional version-2 snapshot salt; the P/Q namespace grammar is unchanged.
 
 **Use and interactions.** The measured output-stability recipe is `--prefill_prompt_chunks=1 --prefill_first=0 --prefill_order=0` on TP4_EXL3 BF16 BATCH. It removes the observed transition where prompt position 128 enters BATCH48 and the next FULL128 chunk starts at 129, selecting different reduction forms. The guard is a scheduling change with no model/kernel/arithmetic change; it is not the rejected `--tp_batch_invariant` arithmetic prototype. Other placements/shapes receive no new identity or cost qualification from these measurements.
 
@@ -1590,7 +1687,7 @@ Speculation proposes tokens and verifies them with the target. Allocated DSpark 
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_draft_layers"></a>
@@ -1605,7 +1702,7 @@ Speculation proposes tokens and verifies them with the target. Allocated DSpark 
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `0` (all/generate); `batch_compromise`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** Measured S06/d71cd05 trueTHIN at65536, changing only layers0->1 with wide2048/pipeline2: code230.959->258.683(+12.0%), prose158.954->163.601(+2.9%), structured330.108->335.422(+1.6%)tok/s; selected8/256 and15MiaAI signatures pass. Cold3909->3904tok/s; Fraser median1379.40->1385.25ms(+5.85), worst1395.10->1390.00ms(-5.10). Strict zero-margin median gate fails; no balanced promotion or1M extrapolation. FreshTHIN mixed112self/96cross signatures pass; native decode during incomplete prefill is not observed. S10 same-source pair scheduled. Earlier probe07 5-10%C4/C8 andengab21 20.54->20.46ms remain different joint epochs (RND_D.md/GAP_ANALYSIS.md; S evidence/gxf_s06_single_tp_draft_decode_summary_v1.json). S xf18 matched frozenS10/e4c188e trueTHIN2048/pipeline2 at65K: layers0->1 code230.347->258.344tok/s(+12.15%),prose158.591->163.744,structured332.793->338.442; Fraser median/worst1381.35/1390.70->1384.35/1393.90ms, strict no-worse FAIL. Full selected8/256 and15MiaAI signatures per arm pass; minfree3181->823MiB. Only code/balanced/single/decode selects1; balanced focus keeps0. No layer1 1M fit or full-logit/all-width identity inference (evidence/gxf_s10_single_layers0_strict_xf18_v1.json; layers1 counterpart). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Measured S06/d71cd05 trueTHIN at65536, changing only layers0->1 with wide2048/pipeline2: code230.959->258.683(+12.0%), prose158.954->163.601(+2.9%), structured330.108->335.422(+1.6%)tok/s; selected8/256 and15MiaAI signatures pass. Cold3909->3904tok/s; Fraser median1379.40->1385.25ms(+5.85), worst1395.10->1390.00ms(-5.10). Strict zero-margin median gate fails; no balanced promotion or1M extrapolation. FreshTHIN mixed112self/96cross signatures pass; native decode during incomplete prefill is not observed. S10 same-source pair scheduled. Earlier probe07 5-10%C4/C8 andengab21 20.54->20.46ms remain different joint epochs (RND_D.md/GAP_ANALYSIS.md; S evidence/gxf_s06_single_tp_draft_decode_summary_v1.json). S xf18 matched frozenS10/e4c188e trueTHIN2048/pipeline2 at65K: layers0->1 code230.347->258.344tok/s(+12.15%),prose158.591->163.744,structured332.793->338.442; Fraser median/worst1381.35/1390.70->1384.35/1393.90ms, strict no-worse FAIL. Full selected8/256 and15MiaAI signatures per arm pass; minfree3181->823MiB. Only code/balanced/single/decode selects1; balanced focus keeps0. No layer1 1M fit or full-logit/all-width identity inference (evidence/gxf_s10_single_layers0_strict_xf18_v1.json; layers1 counterpart). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_draft_rows"></a>
@@ -1620,7 +1717,7 @@ Speculation proposes tokens and verifies them with the target. Allocated DSpark 
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `batch_compromise`: `1` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_wide_head"></a>
@@ -1635,7 +1732,7 @@ Speculation proposes tokens and verifies them with the target. Allocated DSpark 
 
 **Precision class:** order-changing; same bits with batch_thin_bits=1 in the retained recipe. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `batch_compromise`: `1` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_draft_slots_head"></a>
@@ -1652,7 +1749,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_bf16_rows"></a>
@@ -1669,7 +1766,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** gsj10/12 versus07/08: prose C1 +2.6%, C8 -1.7%; code C1 -0.65%, C2 -2.5%; draft-only, 126/126 texts (RND_J.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** gsj10/12 versus07/08: prose C1 +2.6%, C8 -1.7%; code C1 -0.65%, C2 -2.5%; draft-only, 126/126 texts (RND_J.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_draft_wide"></a>
@@ -1688,7 +1785,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** gsl05l3 level3 codeC8 641.6tok/s, proseC2/C4/C8 280.9/437.6/496.4; fixed-target texts retained; level3 became default after rl08 refs/window (RND_L.md). Joint epoch; isolated percentage not inferred. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** gsl05l3 level3 codeC8 641.6tok/s, proseC2/C4/C8 280.9/437.6/496.4; fixed-target texts retained; level3 became default after rl08 refs/window (RND_L.md). Joint epoch; isolated percentage not inferred. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_bf16_operands"></a>
@@ -1705,7 +1802,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** gsl03e serving proseC1 +0.1%, no BATCH win; THIN generate +5.9% in scoped probe, draft-only (RND_L.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** gsl03e serving proseC1 +0.1%, no BATCH win; THIN generate +5.9% in scoped probe, draft-only (RND_L.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_learned_acceptance"></a>
@@ -1722,7 +1819,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `0` (all/generate); `batch_compromise`: `1` (all/generate); `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate); `thin_full_layers`: `0` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_session_acceptance"></a>
@@ -1735,11 +1832,11 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 Native help describes the selected path as: `--draft_session_acceptance=0..11 (default 0)`. Evaluated defaults/ranges above take precedence where this prose is build-dependent.
 
-**Use and interactions.** Current S/main242e6ef accepts 0..11, default0. Modes6..11 are implemented:6 position-local EMA,7 middle scout,8 second-position scout,9 natural selector,10 conditional residual calibration,11 actual successful BATCH shape costs. Modes0..10 adjust draft-depth acceptance/calibration; mode11 additionally uses worker-private measured prices. They do not directly replace a target operator, but changed proposal depth can select different target widths/forms: draft-only classification requires target-bit preservation (gate D). Modes6..11 have no active S axis mapping; existing tuples retain0 or5. Inherited N text/ID checks alone do not establish selected-logit invariance or a universal tuple. Mode11 has no new integration recommendation under the later N too-slow/no-merge review; parser availability is distinct from promotion (S main.c:857; engine.c:60-80; RND_N.md 03:34 and RND_S/N/R.md 5 Nov04:38). Admission: G0; D.
+**Use and interactions.** Current S/main242e6ef accepts 0..11, default0. Modes6..11 are implemented:6 position-local EMA,7 middle scout,8 second-position scout,9 natural selector,10 conditional residual calibration,11 actual successful BATCH shape costs. Modes0..10 adjust draft-depth acceptance/calibration; mode11 additionally uses worker-private measured prices. They do not directly replace a target operator, but changed proposal depth can select different target widths/forms: draft-only classification requires target-bit preservation (gate D). Session acceptance is a measured-route modifier. No Original tuple selects6 after the decode win of TP4_PRO at pipeline depth 2 with 1 serving slot; banked PP5/session6 stays a raw alternative. Original TP4_PRO (pipeline depth 2, 1 serving slot) and PP5 (pipeline depth 8, 8 serving slots) decode routes retain0; structured stays0. PP5 depth5 session6 and TTFT10 observations remain unselected component metadata; no held tuple is admitted. The session6 proseC4 p90 TTFT cost is about26ms; session10 preserves that measured PP5 TTFT tail. EXL3 retains its recorded0/5 assignments; modes7..9 and11 remain explicit alternatives. Exact and prefill mappings are unchanged. Inherited N text/ID checks alone do not establish selected-logit invariance or a universal tuple. Mode11 has no new integration recommendation under the later N too-slow/no-merge review; parser availability is distinct from promotion (S main.c:857; engine.c:60-80; RND_N.md 03:34 and RND_S/N/R.md 5 Nov04:38). Admission: G0; D.
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `0` (all/generate); `batch_adaptive`: `0` (all/generate); `batch_session`: `5` (all/generate); `thin_fixed`: `0` (all/generate); `batch_compromise`: `0` (all/generate); `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate); `thin_full_layers`: `0` (all/generate).
 
-**Measured effect.** gxd01b session5+ties: code C8 724.8 versus661.5 (+9.6%); prose572.8 versus492.9 (+16.2%); code C1 240.9 versus244.8 (-1.6%); joint recipe (RND_N.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** gxd01b session5+ties: code C8 724.8 versus661.5 (+9.6%); prose572.8 versus492.9 (+16.2%); code C1 240.9 versus244.8 (-1.6%); joint recipe (RND_N.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-batch_plan_ties"></a>
@@ -1756,7 +1853,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `0` (all/generate); `batch_adaptive`: `0` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `0` (all/generate); `batch_compromise`: `0` (all/generate); `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate); `thin_full_layers`: `0` (all/generate).
 
-**Measured effect.** gxd01b joint session5+ties results: code/prose C8 +9.6/+16.2%; isolated gain unmeasured (RND_N.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** gxd01b joint session5+ties results: code/prose C8 +9.6/+16.2%; isolated gain unmeasured (RND_N.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_start_economic"></a>
@@ -1773,7 +1870,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-speculative"></a>
@@ -1788,7 +1885,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `2` (all/generate); `batch_adaptive`: `2` (all/generate); `batch_session`: `2` (all/generate); `thin_fixed`: `2` (all/generate); `batch_compromise`: `2` (all/generate); `original_tp_serial2`: `2` (all/generate); `original_pp_depth8`: `2` (all/generate); `original_pp_depth5`: `2` (all/generate); `thin_full_layers`: `2` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_policy"></a>
@@ -1805,7 +1902,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `0` (all/generate); `batch_adaptive`: `2` (all/generate); `batch_session`: `2` (all/generate); `thin_fixed`: `0` (all/generate); `batch_compromise`: `2` (all/generate); `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate); `thin_full_layers`: `0` (all/generate).
 
-**Measured effect.** Controlled S06/d71cd05 binary76c98fc7 evidence: canonical head_shards1/head_stream1/draft_shards1/draft_layers0 with policy0 passes full8/256 selected-record references and15 C1 MiaAI native/text/finish checks in gxf_s06_code_single_short. Fixed0 C1 code230.959/prose158.954/structured330.108 tok/s; cold prefill3909 tok/s with cached0; Fraser C1 median/worst1379.4/1395.1 ms. Changing only policy0 to1, with the other concrete flags equal, fails the30K selected-record gate: all8 IDs agree but6 selected F32 logits differ, max about7.63e-5. Policy1 MD5ff1489cffe4194bb52fe36eef08056c9 equals the older S04gxf15 policy1 file despite that older recipe being unsharded. This controlled result does not establish a head-sharding cause; target width/form or selected-logit provenance remains under investigation. No current policy1 speed is measured, and fixed0 results do not transfer to it. Those S06 raw defaults were unchanged during that experiment. Current main39980c7 resolves omitted EXL3 policies to fixed0 or RATE2; other placements retain1. Cost1 still lacks same-bits-to-fixed-canonical balanced qualification. Source: evidence/xf_axes_numerics_v3/thin_current_30k.*; RND_S/N/R.md 5 Nov04:38. Historical N gxd01c/01a code264.3/244.8 and prose162.7/168.7 tok/s retain their different joint-recipe scope, not this controlled S comparison. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Controlled S06/d71cd05 binary76c98fc7 evidence: canonical head_shards1/head_stream1/draft_shards1/draft_layers0 with policy0 passes full8/256 selected-record references and15 C1 MiaAI native/text/finish checks in gxf_s06_code_single_short. Fixed0 C1 code230.959/prose158.954/structured330.108 tok/s; cold prefill3909 tok/s with cached0; Fraser C1 median/worst1379.4/1395.1 ms. Changing only policy0 to1, with the other concrete flags equal, fails the30K selected-record gate: all8 IDs agree but6 selected F32 logits differ, max about7.63e-5. Policy1 MD5ff1489cffe4194bb52fe36eef08056c9 equals the older S04gxf15 policy1 file despite that older recipe being unsharded. This controlled result does not establish a head-sharding cause; target width/form or selected-logit provenance remains under investigation. No current policy1 speed is measured, and fixed0 results do not transfer to it. Those S06 raw defaults were unchanged during that experiment. Current main39980c7 resolves omitted EXL3 policies to fixed0 or RATE2; other placements retain1. Cost1 still lacks same-bits-to-fixed-canonical balanced qualification. Source: evidence/xf_axes_numerics_v3/thin_current_30k.*; RND_S/N/R.md 5 Nov04:38. Historical N gxd01c/01a code264.3/244.8 and prose162.7/168.7 tok/s retain their different joint-recipe scope, not this controlled S comparison. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_threshold"></a>
@@ -1822,7 +1919,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_base_us"></a>
@@ -1839,7 +1936,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `13000` (all/generate); `batch_adaptive`: `13000` (all/generate); `batch_session`: `13000` (all/generate); `thin_fixed`: `12700` (all/generate); `batch_compromise`: `13000` (all/generate); `original_tp_serial2`: `12700` (all/generate); `original_pp_depth8`: `12700` (all/generate); `original_pp_depth5`: `12700` (all/generate); `thin_full_layers`: `12700` (all/generate).
 
-**Measured effect.** Measured S06 xf11/gxf_s06_rate_control_pair versus gxf_s06_rate_priors_pair: RATE2, learn1/session0/ties0/core2 and identical MiaAI→M-arrivals→Fraser. Joint base/row prices 13000/1200 to 14300/690 microseconds, tail fixed0. Code C1/C2/C4/C8 changes +6.001/+3.526/+7.396/+0.446%; prose C2/C8 changes -6.168/-2.463%. Full selected8/256 references and141 cross-arm request/text/native-count/finish signatures agree; sampled native decode advances during long prefill in both warm repetitions. Fraser median deltas C1/C4/C8 +0.65/+4.50/+8.55 ms; worst deltas -5.70/+28.30/+7.00 ms. Warm-short maximum SSE gap 0.473578 to0.469387 s; no native-token timing claim. The historical zero-margin Fraser screen fails. Main later accepted the N31 raw-default bucket under its noise interpretation; that selection does not rewrite this failure or by itself qualify a bounded S tuple. CPU builds/tests overlapped parts of these windows; no isolated causal or universal optimum claim. No cold/mixed/1M/full-logit/official qualification in this pair. Source: evidence/s06_rate_pair_review_v2.json. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Measured S06 xf11/gxf_s06_rate_control_pair versus gxf_s06_rate_priors_pair: RATE2, learn1/session0/ties0/core2 and identical MiaAI→M-arrivals→Fraser. Joint base/row prices 13000/1200 to 14300/690 microseconds, tail fixed0. Code C1/C2/C4/C8 changes +6.001/+3.526/+7.396/+0.446%; prose C2/C8 changes -6.168/-2.463%. Full selected8/256 references and141 cross-arm request/text/native-count/finish signatures agree; sampled native decode advances during long prefill in both warm repetitions. Fraser median deltas C1/C4/C8 +0.65/+4.50/+8.55 ms; worst deltas -5.70/+28.30/+7.00 ms. Warm-short maximum SSE gap 0.473578 to0.469387 s; no native-token timing claim. The historical zero-margin Fraser screen fails. The maintainer later accepted the N31 raw-default bucket under its noise interpretation; that selection does not rewrite this failure or by itself qualify a bounded S tuple. CPU builds/tests overlapped parts of these windows; no isolated causal or universal optimum claim. No cold/mixed/1M/full-logit/official qualification in this pair. Source: evidence/s06_rate_pair_review_v2.json. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_tail_us"></a>
@@ -1856,7 +1953,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `0` (all/generate); `batch_adaptive`: `0` (all/generate); `batch_session`: `0` (all/generate); `thin_fixed`: `2200` (all/generate); `batch_compromise`: `0` (all/generate); `original_tp_serial2`: `2200` (all/generate); `original_pp_depth8`: `2200` (all/generate); `original_pp_depth5`: `2200` (all/generate); `thin_full_layers`: `2200` (all/generate).
 
-**Measured effect.** Tail0 is held fixed in the scoped S06 xf11 joint base/row-price pair; no isolated tail effect was measured. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Tail0 is held fixed in the scoped S06 xf11 joint base/row-price pair; no isolated tail effect was measured. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_row_us"></a>
@@ -1873,7 +1970,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `1200` (all/generate); `batch_adaptive`: `1200` (all/generate); `batch_session`: `1200` (all/generate); `thin_fixed`: `2700` (all/generate); `batch_compromise`: `1200` (all/generate); `original_tp_serial2`: `2700` (all/generate); `original_pp_depth8`: `2700` (all/generate); `original_pp_depth5`: `2700` (all/generate); `thin_full_layers`: `2700` (all/generate).
 
-**Measured effect.** Measured S06 xf11/gxf_s06_rate_control_pair versus gxf_s06_rate_priors_pair: RATE2, learn1/session0/ties0/core2 and identical MiaAI→M-arrivals→Fraser. Joint base/row prices 13000/1200 to 14300/690 microseconds, tail fixed0. Code C1/C2/C4/C8 changes +6.001/+3.526/+7.396/+0.446%; prose C2/C8 changes -6.168/-2.463%. Full selected8/256 references and141 cross-arm request/text/native-count/finish signatures agree; sampled native decode advances during long prefill in both warm repetitions. Fraser median deltas C1/C4/C8 +0.65/+4.50/+8.55 ms; worst deltas -5.70/+28.30/+7.00 ms. Warm-short maximum SSE gap 0.473578 to0.469387 s; no native-token timing claim. The historical zero-margin Fraser screen fails. Main later accepted the N31 raw-default bucket under its noise interpretation; that selection does not rewrite this failure or by itself qualify a bounded S tuple. CPU builds/tests overlapped parts of these windows; no isolated causal or universal optimum claim. No cold/mixed/1M/full-logit/official qualification in this pair. Source: evidence/s06_rate_pair_review_v2.json. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Measured S06 xf11/gxf_s06_rate_control_pair versus gxf_s06_rate_priors_pair: RATE2, learn1/session0/ties0/core2 and identical MiaAI→M-arrivals→Fraser. Joint base/row prices 13000/1200 to 14300/690 microseconds, tail fixed0. Code C1/C2/C4/C8 changes +6.001/+3.526/+7.396/+0.446%; prose C2/C8 changes -6.168/-2.463%. Full selected8/256 references and141 cross-arm request/text/native-count/finish signatures agree; sampled native decode advances during long prefill in both warm repetitions. Fraser median deltas C1/C4/C8 +0.65/+4.50/+8.55 ms; worst deltas -5.70/+28.30/+7.00 ms. Warm-short maximum SSE gap 0.473578 to0.469387 s; no native-token timing claim. The historical zero-margin Fraser screen fails. The maintainer later accepted the N31 raw-default bucket under its noise interpretation; that selection does not rewrite this failure or by itself qualify a bounded S tuple. CPU builds/tests overlapped parts of these windows; no isolated causal or universal optimum claim. No cold/mixed/1M/full-logit/official qualification in this pair. Source: evidence/s06_rate_pair_review_v2.json. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_probe_rounds"></a>
@@ -1890,7 +1987,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-hybrid_lookup_prior"></a>
@@ -1907,7 +2004,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-hybrid_lookup_min"></a>
@@ -1922,7 +2019,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_block"></a>
@@ -1937,7 +2034,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `5` (all/generate); `batch_adaptive`: `5` (all/generate); `batch_session`: `5` (all/generate); `thin_fixed`: `5` (all/generate); `batch_compromise`: `5` (all/generate); `original_tp_serial2`: `5` (all/generate); `original_pp_depth8`: `5` (all/generate); `original_pp_depth5`: `5` (all/generate); `thin_full_layers`: `5` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_positions"></a>
@@ -1952,7 +2049,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. Shipped resolver writes: `batch_fixed`: `5` (all/generate); `batch_adaptive`: `5` (all/generate); `batch_session`: `5` (all/generate); `thin_fixed`: `5` (all/generate); `batch_compromise`: `5` (all/generate); `original_tp_serial2`: `5` (all/generate); `original_pp_depth8`: `5` (all/generate); `original_pp_depth5`: `5` (all/generate); `thin_full_layers`: `5` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-speculative_depth"></a>
@@ -1967,10 +2064,10 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
-Main has a checked alias edge case: both spellings together are accepted, and this example resolves depth5. Reversing their order resolves4; repeating the same spelling is refused. S alias expansion treats them as one explicit override key, which is a separate behavior.
+The main branch has a checked alias edge case: both spellings together are accepted, and this example resolves depth5. Reversing their order resolves4; repeating the same spelling is refused. S alias expansion treats them as one explicit override key, which is a separate behavior.
 
 
 ```sh
@@ -1993,7 +2090,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-lookup_ngram_min"></a>
@@ -2008,7 +2105,7 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_calibration"></a>
@@ -2019,11 +2116,11 @@ Use this in a controlled proposal/verification experiment; retain a fixed-policy
 
 **Mechanics.** Override draft acceptance priors in mode/position/bin order.
 
-**Use and interactions.** Exactly112 whitespace-separated unsigned integers0..1000, optional trailing whitespace, no extra tokens, at most4095 bytes. Overrides acceptance priors only; cost knobs are independent (main.c draft_calibration_read). Admission: G0; D.
+**Use and interactions.** Exactly112 whitespace-separated unsigned integers0..1000, optional trailing whitespace, no extra tokens, at most4095 bytes. Overrides acceptance priors only; cost knobs are independent (commands.c draft_calibration_read). Admission: G0; D.
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Draft policy/calibration target-bit qualification follows gate D and the controlled S06 policy finding. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Draft policy/calibration target-bit qualification follows gate D and the controlled S06 policy finding. Source: `source/commands.c` and shipped knob catalog.
 
 
 The example's `usage_evidence/calibration.txt` contains exactly112 whitespace-separated500 values. This is a public synthetic prior fixture, not a credential. The file must be shorter than4096bytes, values0..1000, with no extra token. The stale80-value source comment does not override the 2×7×8 loop.
@@ -2040,7 +2137,7 @@ The example's `usage_evidence/calibration.txt` contains exactly112 whitespace-se
 
 **Precision class:** draft-only with target-bit invariance across verification widths/forms; conditional order-changing otherwise. **Four-axis mapping:** Category: workload/acceptance dependent. Exactness: draft-only only with target-width/form invariance; otherwise order-changing. Concurrency: THIN/single and/or BATCH/multiple as admitted. Focus: decode economics; scheduling can affect TTFT/prefill. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Draft policy/calibration target-bit qualification follows gate D and the controlled S06 policy finding. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Draft policy/calibration target-bit qualification follows gate D and the controlled S06 policy finding. Source: `source/commands.c` and shipped knob catalog.
 
 
 Lookup-only uses the host n-gram proposer; DSpark uses the device draft; hybrid can use both. Consistent draft/speculative spellings can coexist only if they select the same mode.
@@ -2075,7 +2172,7 @@ Attention state, compressor pools and sparse index selection have ownership and 
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_exact_dense"></a>
@@ -2090,7 +2187,7 @@ Attention state, compressor pools and sparse index selection have ownership and 
 
 **Precision class:** same bits (FP32 exact recipe). **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** xdense01: same-bits exact dense shards; isolated whole-workload speed unmeasured (RND_D.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** xdense01: same-bits exact dense shards; isolated whole-workload speed unmeasured (RND_D.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_gather_balance"></a>
@@ -2109,7 +2206,7 @@ Use this to test the named state/index work reduction; check live positions, row
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rc04 mode1 Fraser1.857 ->1.914s (+3.1%, slower), IDENTICAL; ri05 mode3 30K8.488 ->8.598s (+110ms), identical (RND_C.md/RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rc04 mode1 Fraser1.857 ->1.914s (+3.1%, slower), IDENTICAL; ri05 mode3 30K8.488 ->8.598s (+110ms), identical (RND_C.md/RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_pool_chunk"></a>
@@ -2126,7 +2223,7 @@ Use this to test the named state/index work reduction; check live positions, row
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rc02ab 30K prefill 9.828 -> 9.430 s; same bits (RND_C.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rc02ab 30K prefill 9.828 -> 9.430 s; same bits (RND_C.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_pool_gather"></a>
@@ -2143,7 +2240,7 @@ Use this to test the named state/index work reduction; check live positions, row
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri01 same bits; standalone speed unmeasured (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri01 same bits; standalone speed unmeasured (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_router_first_whole"></a>
@@ -2160,7 +2257,7 @@ Use this to test the named state/index work reduction; check live positions, row
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri01 with joint/dead/pool:30K +54ms, Fraser neutral; identical, kept off (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri01 with joint/dead/pool:30K +54ms, Fraser neutral; identical, kept off (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_queries_piece"></a>
@@ -2177,7 +2274,7 @@ Use this to test the named state/index work reduction; check live positions, row
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri05 30K prompt -77 ms; same bits (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri05 30K prompt -77 ms; same bits (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_index_span"></a>
@@ -2194,7 +2291,7 @@ Use this to test the named state/index work reduction; check live positions, row
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri05 30K prompt -51 ms; same bits (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri05 30K prompt -51 ms; same bits (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_core_compact_halves"></a>
@@ -2211,7 +2308,7 @@ Use this to test the named state/index work reduction; check live positions, row
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri06 -9/-11 ms on prompt controls; same bits (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri06 -9/-11 ms on prompt controls; same bits (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_chunk_core"></a>
@@ -2228,7 +2325,7 @@ Use this to test the named state/index work reduction; check live positions, row
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** pf16 30K prefill18.93 ->17.80 s; same bits (GAP_ANALYSIS.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** pf16 30K prefill18.93 ->17.80 s; same bits (GAP_ANALYSIS.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_core_heads"></a>
@@ -2245,7 +2342,7 @@ Native help describes the selected path as: `--tp_core_heads=0|8|16 (default 0; 
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rj03p THIN C1 20.23 -> 20.22 ms at8 (-0.05%, noise), same bits (RND_J.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rj03p THIN C1 20.23 -> 20.22 ms at8 (-0.05%, noise), same bits (RND_J.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-engram_shared"></a>
@@ -2260,7 +2357,7 @@ Native help describes the selected path as: `--tp_core_heads=0|8|16 (default 0; 
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** xp04k2024-token fixture: baseline gather0/dense16 TTFT1.121s; gather1/dense16 1.111s; gather1/dense8/32/64 1.109/1.106/1.108s. Selected records identical, natural EOS after2tokens; single pass, not cold full benchmark or256-token decode proof. Prior gather A/B1.115/1.109/1.106/1.116s. Default0 retained (RND_M.md19:36). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** xp04k2024-token fixture: baseline gather0/dense16 TTFT1.121s; gather1/dense16 1.111s; gather1/dense8/32/64 1.109/1.106/1.108s. Selected records identical, natural EOS after2tokens; single pass, not cold full benchmark or256-token decode proof. Prior gather A/B1.115/1.109/1.106/1.116s. Default0 retained (RND_M.md19:36). Source: `source/commands.c` and shipped knob catalog.
 
 
 ### 8.7. MoE and expert products
@@ -2281,7 +2378,7 @@ Native help describes the selected path as: `--exl3_expert_parts=4|8 (default 4;
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-exl3_fast_products"></a>
@@ -2298,7 +2395,7 @@ Use this only in the corresponding product family; compare numerical records and
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-exl3_wide_entry"></a>
@@ -2315,7 +2412,7 @@ Use this only in the corresponding product family; compare numerical records and
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-exl3_tc_moe"></a>
@@ -2332,7 +2429,7 @@ Use this only in the corresponding product family; compare numerical records and
 
 **Precision class:** precision up (hi/lo operands); changed sums. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** tcmoe02 matches GNmac/Curtis at6/12/36/43/48/64 rows;48-row I6401490 versus1544us. engab03 joint TC-MoE+head:163.4 versus138.6 tok/s; only11/256 target tokens agree with old recipe (GAP_ANALYSIS.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** tcmoe02 matches GNmac/Curtis at6/12/36/43/48/64 rows;48-row I6401490 versus1544us. engab03 joint TC-MoE+head:163.4 versus138.6 tok/s; only11/256 target tokens agree with old recipe (GAP_ANALYSIS.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-exl3_tc_product_blocks"></a>
@@ -2349,7 +2446,7 @@ Native help describes the selected path as: `--exl3_tc_product_blocks=0..592 (de
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `0` (all/generate); `batch_adaptive`: `0` (all/generate); `batch_session`: `0` (all/generate); `thin_fixed`: `0` (all/generate); `batch_compromise`: `0` (all/generate); `thin_full_layers`: `0` (all/generate).
 
-**Measured effect.** N xd06 fixed5 BATCH8/one-verifier pilot at 150 W: grids148/74/222/296 give structured318.94/279.34/322.29/323.94, code245.93/212.46/245.48/247.53 and prose156.35/134.60/156.36/157.53 tok/s. All400/95/400 selected records agree. This is an inherited pilot, not a native180W/full-serving or fresh S measurement. Main242e6ef merges the selector with default0 (retained148-block grid); no axis selects a nonzero override (packet RND_N.md 4 Nov19:56; source model_v41_program.c:2935). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** N xd06 fixed5 BATCH8/one-verifier pilot at 150 W: grids148/74/222/296 give structured318.94/279.34/322.29/323.94, code245.93/212.46/245.48/247.53 and prose156.35/134.60/156.36/157.53 tok/s. All400/95/400 selected records agree. This is an inherited pilot, not a native180W/full-serving or fresh S measurement. main 242e6ef merges the selector with default0 (retained148-block grid); no axis selects a nonzero override (packet RND_N.md 4 Nov19:56; source model_v41_program.c:2935). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-exl3_expert_rotation"></a>
@@ -2366,7 +2463,7 @@ Native help describes the selected path as: `--exl3_expert_rotation=0|1|2 (defau
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rb02 rotation2 about1%30K gain with changed numerics; rotation1 OOM on old57.9GB/card recipe. Not a current fit guarantee (RND_B.md/RND_E.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rb02 rotation2 about1%30K gain with changed numerics; rotation1 OOM on old57.9GB/card recipe. Not a current fit guarantee (RND_B.md/RND_E.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_router_mma"></a>
@@ -2385,7 +2482,7 @@ Use this only in the corresponding product family; compare numerical records and
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** dense02 48-row router60.4 ->25.6us, maxscore-relative error6e-7 (other order-changing); rb02 mode2 about1% 30K gain in old joint recipe (GAP_ANALYSIS.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** dense02 48-row router60.4 ->25.6us, maxscore-relative error6e-7 (other order-changing); rb02 mode2 about1% 30K gain in old joint recipe (GAP_ANALYSIS.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-exl3_tcp_two_blocks"></a>
@@ -2402,7 +2499,7 @@ Use this only in the corresponding product family; compare numerical records and
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri03 2048-row product call -15%, Fraser first token -17 ms; same bits (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri03 2048-row product call -15%, Fraser first token -17 ms; same bits (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 ### 8.8. Tensor transport, graphs and overlap
@@ -2423,7 +2520,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_graph_parts"></a>
@@ -2442,7 +2539,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri05 parts8:30K8.488 ->8.871s (+383ms, slower), identical (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri05 parts8:30K8.488 ->8.871s (+383ms, slower), identical (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_ordered_wide"></a>
@@ -2459,7 +2556,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_graph_branches"></a>
@@ -2478,7 +2575,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** engab18 C1 round -0.34 ms; same bits (RND_E.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** engab18 C1 round -0.34 ms; same bits (RND_E.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_piece_rings"></a>
@@ -2493,7 +2590,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** order-changing; same bits scoped to column-owner recipe. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_trunk_shape_slices"></a>
@@ -2510,7 +2607,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** trunk01 ordered chains maxdiff0 at1..16 slices; engab02 same tokens,255token2.032 ->1.975s (+2.9% rate). Six-row wkv25.6 ->15.4us (GAP_ANALYSIS.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** trunk01 ordered chains maxdiff0 at1..16 slices; engab02 same tokens,255token2.032 ->1.975s (+2.9% rate). Six-row wkv25.6 ->15.4us (GAP_ANALYSIS.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_bf16_slab_rings"></a>
@@ -2525,7 +2622,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** lossy (BF16 intermediate sums); order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_wide_exchange"></a>
@@ -2544,7 +2641,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** pf19 CE owner sums/overlap: 30K prefill19.08 ->14.80 s; joint recipe (GAP_ANALYSIS.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** pf19 CE owner sums/overlap: 30K prefill19.08 ->14.80 s; joint recipe (GAP_ANALYSIS.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_split_overlap"></a>
@@ -2563,7 +2660,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri01 same bits; earlier mode6 rb02 12.370 ->12.057 s (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri01 same bits; earlier mode6 rb02 12.370 ->12.057 s (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_split_least_rows"></a>
@@ -2582,7 +2679,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `512` (all/generate); `batch_adaptive`: `512` (all/generate); `batch_session`: `512` (all/generate); `batch_compromise`: `512` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_launch_trims"></a>
@@ -2599,7 +2696,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rd04-series BATCH12 launches/card2112 ->1906 across retained trim package; reference identity qualified before windows; no isolated percentage inferred (RND_D.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rd04-series BATCH12 launches/card2112 ->1906 across retained trim package; reference identity qualified before windows; no isolated percentage inferred (RND_D.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_full_split_overlap"></a>
@@ -2618,7 +2715,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_replicated_embedding"></a>
@@ -2635,7 +2732,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_ring_column_owners"></a>
@@ -2654,7 +2751,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** mc_check2 refs since7f9c389: 30K41eeb9c16e10, Fraser f49e8badff47; different from old row-owner sums (RND_PIPELINE.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** mc_check2 refs since7f9c389: 30K41eeb9c16e10, Fraser f49e8badff47; different from old row-owner sums (RND_PIPELINE.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-step_graphs"></a>
@@ -2671,7 +2768,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `original_tp_serial2`: `1` (all/generate); `original_pp_depth8`: `1` (all/generate); `original_pp_depth5`: `1` (all/generate); `thin_full_layers`: `1` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `1` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-pipeline_steps"></a>
@@ -2688,7 +2785,7 @@ Use this to isolate the named launch/transport dependency; compare complete targ
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `2` (all/generate); `batch_compromise`: `1` (all/generate); `original_tp_serial2`: `2` (all/generate); `original_pp_depth8`: `8`, `2` (generate); `original_pp_depth5`: `5`, `2` (generate); `thin_full_layers`: `2` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `1` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Original PP5 source75 repaired pair: depth2->5 cold prefill3502->4450tok/s; Fraser C1/C4/C8 medianTTFT1475.55/6739.35/12005.55->1278.75/4308.65/7165.80ms, aggregateE2E159.306/272.776/281.481->161.620/446.244/465.998tok/s. Independent literal source/config/power/cold/lifetime and46Fraser+9fixed API identities pass. NativeV1 check_failed/exit1 are preserved; repair-aware controller/root derived proof passes. Not the separate three-genre decode sweep,1M,official equality or S10 serving result. The f52c9c5 depth5 default is now merged for the qualifying raw serve route; current parser receipts verify it. The shipped original decode axes still explicitly choose PP8. No original TTFT/prefill tuple is admitted by this note (RND_O.md5Nov11:21). Integration batch applies f52c9c5; explicit depths retain their values. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Original PP5 source75 repaired pair: depth2->5 cold prefill3502->4450tok/s; Fraser C1/C4/C8 medianTTFT1475.55/6739.35/12005.55->1278.75/4308.65/7165.80ms, aggregateE2E159.306/272.776/281.481->161.620/446.244/465.998tok/s. Independent literal source/config/power/cold/lifetime and46Fraser+9fixed API identities pass. NativeV1 check_failed/exit1 are preserved; repair-aware controller/root derived proof passes. Not the separate three-genre decode sweep,1M,official equality or S10 serving result. The f52c9c5 depth5 default is now merged for the qualifying raw serve route; current parser receipts verify it. The shipped original decode axes still explicitly choose PP5 at pipeline depth 8 with 8 serving slots. No original TTFT/prefill tuple is admitted by this note (RND_O.md5Nov11:21). Integration batch applies f52c9c5; explicit depths retain their values. Source: `source/commands.c` and shipped knob catalog.
 
 
 ### 8.9. Precision, exactness, head and dense forms
@@ -2707,7 +2804,7 @@ The exact/raw numerical selector is separate from S's exactness axis. Changing p
 
 **Precision class:** same bits for an unchanged product form; order-changing when a different head form is activated. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_head_stream"></a>
@@ -2722,7 +2819,7 @@ The exact/raw numerical selector is separate from S's exactness axis. Changing p
 
 **Precision class:** same bits for an unchanged product form; order-changing when a different head form is activated. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_head_mma"></a>
@@ -2739,7 +2836,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** head01/02:48-row443 versus dense_stream4642us, relative difference<=1e-5; split-K head8 284..291us at1/6/8 rows. Changes old target numerics; not a same-bits toggle (GAP_ANALYSIS.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** head01/02:48-row443 versus dense_stream4642us, relative difference<=1e-5; split-K head8 284..291us at1/6/8 rows. Changes old target numerics; not a same-bits toggle (GAP_ANALYSIS.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_trunk_mma"></a>
@@ -2756,7 +2853,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** relbench02 six-row wq_a16.38 versus reference21.50us; BATCH12 wq_a95.2 ->23.6us. Fixed alternate sums; old-target equality not established (GAP_ANALYSIS.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** relbench02 six-row wq_a16.38 versus reference21.50us; BATCH12 wq_a95.2 ->23.6us. Fixed alternate sums; old-target equality not established (GAP_ANALYSIS.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_trunk_mma_fused"></a>
@@ -2773,7 +2870,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rj03p BATCH48: 38.44 -> 42.98 ms (+11.8%, slower), same bits (RND_J.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rj03p BATCH48: 38.44 -> 42.98 ms (+11.8%, slower), same bits (RND_J.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_trunk_mma_thin_splits"></a>
@@ -2790,7 +2887,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-dense_skinny_bf16"></a>
@@ -2809,7 +2906,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-dense_skinny_f32"></a>
@@ -2828,7 +2925,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** ri05 mode1:30K8.488 ->8.694s (+206ms, slower), Fraser1.459s; identical (RND_I.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** ri05 mode1:30K8.488 ->8.694s (+206ms, slower), Fraser1.459s; identical (RND_I.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-dense_staged"></a>
@@ -2845,7 +2942,7 @@ Native help describes the selected path as: `--dense_staged=0|8|16|32|64 (defaul
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rk05 2K prompt1.175 ->1.150 s; Fraser1.393 ->1.385 s, 30K equal; same bits (RND_K.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rk05 2K prompt1.175 ->1.150 s; Fraser1.393 ->1.385 s, 30K equal; same bits (RND_K.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_front_branch"></a>
@@ -2864,7 +2961,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rj03p THIN C1 round 20.23 -> 19.94 ms (-1.4%), same bits; level2 20.12 ms (RND_J.md). S default remains0. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** rj03p THIN C1 round 20.23 -> 19.94 ms (-1.4%), same bits; level2 20.12 ms (RND_J.md). S default remains0. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_decode_round_once"></a>
@@ -2879,7 +2976,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** precision up; changed target bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `0` (all/generate); `batch_adaptive`: `0` (all/generate); `batch_session`: `0` (all/generate); `thin_fixed`: `0` (all/generate); `batch_compromise`: `0` (all/generate); `thin_full_layers`: `0` (all/generate).
 
-**Measured effect.** N xd09_v7 same24/core2, RATE2/session0/learn1/costs14300,0,690 three-pass C1/C8 control0/candidate1/repeat0 tests pass each arm's 72 concurrent plus15 C1 text/native-count/finish comparisons per genre and exact control repeat. Candidate prose differs from legacy; code/structured match in these fixtures. Structured rates334.877/782.980 ->269.850/584.648, code241.247/448.561 ->198.730/345.576, prose170.027/469.349 ->139.366/351.201 tok/s (C1/C8). Candidate is about18-19% slower at C1 and23-25% slower at C8. Full-vocabulary deviation/quality capture was deferred. Main242e6ef contains this research implementation, but default0 remains; nonzero has no active axis mapping or default/merge recommendation. Inherited N evidence is not a new S qualification (packet RND_N.md 5 Nov03:28; xd09_v7_budget/precision_serving_fair.json and control_repeat_fair.json). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** N xd09_v7 same24/core2, RATE2/session0/learn1/costs14300,0,690 three-pass C1/C8 control0/candidate1/repeat0 tests pass each arm's 72 concurrent plus15 C1 text/native-count/finish comparisons per genre and exact control repeat. Candidate prose differs from legacy; code/structured match in these fixtures. Structured rates334.877/782.980 ->269.850/584.648, code241.247/448.561 ->198.730/345.576, prose170.027/469.349 ->139.366/351.201 tok/s (C1/C8). Candidate is about18-19% slower at C1 and23-25% slower at C8. Full-vocabulary deviation/quality capture was deferred. main 242e6ef contains this research implementation, but default0 remains; nonzero has no active axis mapping or default/merge recommendation. Inherited N evidence is not a new S qualification (packet RND_N.md 5 Nov03:28; xd09_v7_budget/precision_serving_fair.json and control_repeat_fair.json). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_wire_bf16"></a>
@@ -2894,7 +2991,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** lossy. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `1` (all/generate); `batch_adaptive`: `1` (all/generate); `batch_session`: `1` (all/generate); `thin_fixed`: `1` (all/generate); `batch_compromise`: `1` (all/generate); `thin_full_layers`: `1` (all/generate).
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-linear_profile"></a>
@@ -2911,7 +3008,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Selects measured slice counts; reference-order chains remain identical across slices. Isolated profile0/1 whole-workload effect unmeasured (source/linear.c, trunk01). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Selects measured slice counts; reference-order chains remain identical across slices. Isolated profile0/1 whole-workload effect unmeasured (source/linear.c, trunk01). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-linear_order"></a>
@@ -2928,7 +3025,7 @@ Use this to compare a specific numerical form against a pinned control. A matchi
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `original_tp_serial2`: `1` (all/generate); `original_pp_depth8`: `1` (all/generate); `original_pp_depth5`: `1` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `1` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-official_hc_rows"></a>
@@ -2945,7 +3042,7 @@ Native help describes the selected path as: `--official_hc_rows=0|1|3|4|8 (defau
 
 **Precision class:** order-changing toward pinned-source HC; the standalone component does not establish full-model identity. The composite original reference profile has the bounded section 9.7 proof. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `0` (all/generate); `batch_adaptive`: `0` (all/generate); `batch_session`: `0` (all/generate); `thin_fixed`: `0` (all/generate); `batch_compromise`: `0` (all/generate); `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate); `thin_full_layers`: `0` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `1` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Merged default0 through the R HC subset in main75d3d17/S829ac34. Inherited XR04 ordinary preservation343/343 and first-attention HC1/HC8 checks retain their limited runtime scope. XR06 passes64 crossed direct/staged complete HC sites,48 fixed-F HC prefixes and corrected norm/rotation/observer gates. Not complete runtime composition, persisted logical-state, generation or speculation proof. Component CMP R1/F1 projection11.296us versus legacy5.040; stagedR8/F8 22.488us versus direct92.864/legacy12.064. No full S C1/C8 step-cost inference. Those XR06 results were a component dependency; the current original exact profile now selects HC1 under official_reference1, with its bounded composite proof in section 9.7. No nonzero balanced/fast/EXL3 HC axis mapping (RND_R.md 5 Nov02:46; FIXES.md:23-26). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default0 through the R HC subset in main75d3d17/S829ac34. Inherited XR04 ordinary preservation343/343 and first-attention HC1/HC8 checks retain their limited runtime scope. XR06 passes64 crossed direct/staged complete HC sites,48 fixed-F HC prefixes and corrected norm/rotation/observer gates. Not complete runtime composition, persisted logical-state, generation or speculation proof. Component CMP R1/F1 projection11.296us versus legacy5.040; stagedR8/F8 22.488us versus direct92.864/legacy12.064. No full S C1/C8 step-cost inference. Those XR06 results were a component dependency; the current original exact profile now selects HC1 under official_reference1, with its bounded composite proof in section 9.7. No nonzero balanced/fast/EXL3 HC axis mapping (RND_R.md 5 Nov02:46; FIXES.md:23-26). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-numerics"></a>
@@ -2960,7 +3057,7 @@ Native help describes the selected path as: `--official_hc_rows=0|1|3|4|8 (defau
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `relaxed` (all/generate); `batch_adaptive`: `relaxed` (all/generate); `batch_session`: `relaxed` (all/generate); `thin_fixed`: `relaxed` (all/generate); `batch_compromise`: `relaxed` (all/generate); `original_tp_serial2`: `exact` (all/generate); `original_pp_depth8`: `exact` (all/generate); `original_pp_depth5`: `exact` (all/generate); `thin_full_layers`: `relaxed` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `exact` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** source/startup_policy.c:101..135; RND_PIPELINE.md. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/startup_policy.c:101..135; RND_PIPELINE.md. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-placement"></a>
@@ -2975,7 +3072,7 @@ Native help describes the selected path as: `--official_hc_rows=0|1|3|4|8 (defau
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `tp4_exl3` (all/generate); `batch_adaptive`: `tp4_exl3` (all/generate); `batch_session`: `tp4_exl3` (all/generate); `thin_fixed`: `tp4_exl3` (all/generate); `batch_compromise`: `tp4_exl3` (all/generate); `original_tp_serial2`: `tp4_pro` (all/generate); `original_pp_depth8`: `pp5` (all/generate); `original_pp_depth5`: `pp5` (all/generate); `thin_full_layers`: `tp4_exl3` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `pp5` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** source/startup_policy.c; COMPARISON_MATRIX.md recipe epochs; no isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/startup_policy.c; COMPARISON_MATRIX.md recipe epochs; no isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-cmp_order"></a>
@@ -2990,7 +3087,7 @@ Native help describes the selected path as: `--official_hc_rows=0|1|3|4|8 (defau
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `batch_fixed`: `reference` (all/generate); `batch_adaptive`: `reference` (all/generate); `batch_session`: `reference` (all/generate); `thin_fixed`: `reference` (all/generate); `batch_compromise`: `reference` (all/generate); `original_tp_serial2`: `reference` (all/generate); `original_pp_depth8`: `reference` (all/generate); `original_pp_depth5`: `reference` (all/generate); `thin_full_layers`: `reference` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `reference` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** source/startup_policy.c. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/startup_policy.c. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 
@@ -3002,12 +3099,12 @@ Native help describes the selected path as: `--official_hc_rows=0|1|3|4|8 (defau
 
 **Mechanics and interactions.** Select the prepared original-weight reference compositions, including the qualified HC, norm/rotation, round-trip, window, router/core and head forms. Requires PP5, one ordinary row, no wide/full program, capacity at most 512, one session, one pipeline step and one chunk in flight, no speculation/BATCH, official_hc_rows1, native PRO, exact/reference CMP and linear arithmetic, and no incompatible TP/overlap/original experiment path. Serving additionally requires prefix_reuse0, prefix_reuse_exact0 and session_fork0. The exact axis supplies its pinned layout; conflicting overrides refuse.
 
-**Precision, effects and axes.** Original reference arithmetic within the admitted serial M1 scope; no new balanced arithmetic. Exact F32 logits do not guarantee stochastic ID identity, since the RNG/sampler order differs at T>0. The qualified T=0 fixtures and C1 cost of 9.7375× PP5 are detailed in section 9.7. Axis mapping: original weights, exactness=exact, concurrency=single, category code/prose/structured/balanced and all four focus values, always constrained to this 512-token recipe. EXL3 exact refuses; wider/batched/TP/speculative/vision scopes remain open. Source: source/main.c, tools/cli/axes.json and Track R USAGE_REFERENCE_v4.md.
+**Precision, effects and axes.** Original reference arithmetic within the admitted serial M1 scope; no new balanced arithmetic. Exact F32 logits do not guarantee stochastic ID identity, since the RNG/sampler order differs at T>0. The qualified T=0 fixtures and C1 cost of 9.7375× PP5 are detailed in section 9.7. Axis mapping: original weights, exactness=exact, concurrency=single, category code/prose/structured/balanced and all four focus values, always constrained to this 512-token recipe. EXL3 exact refuses; wider/batched/TP/speculative/vision scopes remain open. Source: source/commands.c, tools/cli/axes.json and Track R USAGE_REFERENCE_v4.md.
 
 
 ### 8.10. Cache, prefix reuse and snapshots
 
-The default namespace policy is scope0 and prefix reuse is enabled, with exact-reuse mode0. A cache hit needs both namespace equality and eligible numerical/state provenance. Exact modes1/2 restrict same-length cold-provenance reuse and require row-invariant forms; Main stable1 adds qualified growing-prefix reuse with a separate cold identity; it does not enable the copy32/v5 branch. Snapshot policy uses actual saved token progress and arithmetic/namespace identity. Omitted save/load/idle thresholds use1024/256/120; the main CLI requires positive values. The server API zero-initialized default convention is not accepted explicit CLI syntax.
+The default namespace policy is scope0 and prefix reuse is enabled, with exact-reuse mode0. A cache hit needs both namespace equality and eligible numerical/state provenance. Exact modes1/2 restrict same-length cold-provenance reuse and require row-invariant forms; main's stable1 adds qualified growing-prefix reuse with a separate cold identity; it does not enable the copy32/v5 branch. Snapshot policy uses actual saved token progress and arithmetic/namespace identity. Omitted save/load/idle thresholds use1024/256/120; the main CLI requires positive values. The server API zero-initialized default convention is not accepted explicit CLI syntax.
 
 <a id="knob-prefix_reuse"></a>
 
@@ -3023,7 +3120,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** order-changing (cross-plan risk; see P). **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. Shipped resolver writes: `batch_fixed`: `0` (serve); `batch_adaptive`: `0` (serve); `batch_session`: `0` (serve); `thin_fixed`: `0` (serve); `batch_compromise`: `0` (serve); `original_tp_serial2`: `0` (serve); `original_pp_depth8`: `0` (serve); `original_pp_depth5`: `0` (serve); `thin_full_layers`: `0` (serve). The `original_reference_serial_m1` exact strategy additionally inserts `0` for serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** xc01 baseline: cold-solo TTFT median0.712954s versus legacy repeat0.014448s; repeat text matches cold14/16. 25005-token cold7.697177s versus repeat0.015356s agrees; 6004-token repeat differs. Observed speed/identity tradeoff, not exact-cache qualification (RND_P.md 16:07; baseline_repeat_cost.json). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** xc01 baseline: cold-solo TTFT median0.712954s versus legacy repeat0.014448s; repeat text matches cold14/16. 25005-token cold7.697177s versus repeat0.015356s agrees; 6004-token repeat differs. Observed speed/identity tradeoff, not exact-cache qualification (RND_P.md 16:07; baseline_repeat_cost.json). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefix_reuse_exact"></a>
@@ -3038,7 +3135,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits within the qualified cold recipe; target-form invariance required. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The `original_reference_serial_m1` exact strategy additionally inserts `0` for serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Merged raw/default0 retains legacy policy. P c52ce71 modes1/2 retain16cold+160warm+14stress and separate114coldABA/xc08 checkpoint proofs; Q final06 gpq05 closes its57request BATCH coldABA, not a fresh114matrix. Main5029986 mpqa2048/mpqb1024 passes full8/256 selected records06:15:58-06:19:13; fresh S8d6bb95 qualification is separate. No automatic axis selection or original-weight-equivalence claim. Unmerged P stable1 extension evidence is confined to its branch row (RND_P/Q.md; RND_Q5Nov06:23). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged raw/default0 retains legacy policy. P c52ce71 modes1/2 retain16cold+160warm+14stress and separate114coldABA/xc08 checkpoint proofs; Q final06 gpq05 closes its57request BATCH coldABA, not a fresh114matrix. main 5029986 mpqa2048/mpqb1024 passes full8/256 selected records06:15:58-06:19:13; fresh S8d6bb95 qualification is separate. No automatic axis selection or original-weight-equivalence claim. Unmerged P stable1 extension evidence is confined to its branch row (RND_P/Q.md; RND_Q5Nov06:23). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-cache_scope"></a>
@@ -3055,7 +3152,7 @@ Native help describes the selected path as: `--cache_scope=0|1|2 (default 0: API
 
 **Precision class:** same bits; service and reuse eligibility policy. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Merged default0. Frozen Q gpq01 namespace112/112, final06 native/Responses and gpq05 cold controls pass within their epochs; actualCodex gpq06 passes18Responses/17laterhits, not paired latency evidence. Main5029986 both-width references and one-slot two-user Chat/Responses smoke pass: each HTTP200/1905input/8output, equal content/reasoning, cache0 for both users. First pre-binary permission failure remains retained. Service policy orthogonal to all axes; no S axes/default change (RND_Q.md5Nov03:20,04:20,06:19,06:23). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default0. Frozen Q gpq01 namespace112/112, final06 native/Responses and gpq05 cold controls pass within their epochs; the real-client gpq06 passes18Responses/17laterhits, not paired latency evidence. main 5029986 both-width references and one-slot two-user Chat/Responses smoke pass: each HTTP200/1905input/8output, equal content/reasoning, cache0 for both users. First pre-binary permission failure remains retained. Service policy orthogonal to all axes; no S axes/default change (RND_Q.md5Nov03:20,04:20,06:19,06:23). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-session_grace_seconds"></a>
@@ -3072,7 +3169,7 @@ Native help describes the selected path as: `--session_grace_seconds=0..3600 (de
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Merged default30. Q namespace/affinity and merged smoke proofs are aggregate service-policy evidence; isolated latency/capacity effect unmeasured. Orthogonal to the four axes; no automatic mapping. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default30. Q namespace/affinity and merged smoke proofs are aggregate service-policy evidence; isolated latency/capacity effect unmeasured. Orthogonal to the four axes; no automatic mapping. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-session_save_tokens"></a>
@@ -3089,7 +3186,7 @@ Native help describes the selected path as: `--session_save_tokens=N (default 10
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Merged default1024. Snapshot and namespace correctness proofs do not supply an isolated performance result; no automatic axes mapping. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default1024. Snapshot and namespace correctness proofs do not supply an isolated performance result; no automatic axes mapping. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-session_load_tokens"></a>
@@ -3106,7 +3203,7 @@ Native help describes the selected path as: `--session_load_tokens=N (default 25
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Merged default256. Version/namespace/replacement correctness gates do not measure an isolated latency or throughput gain; no automatic axes mapping. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default256. Version/namespace/replacement correctness gates do not measure an isolated latency or throughput gain; no automatic axes mapping. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-session_idle_save_seconds"></a>
@@ -3123,7 +3220,7 @@ Native help describes the selected path as: `--session_idle_save_seconds=1..8640
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Merged default120. No isolated snapshot-I/O/performance measurement or automatic axes mapping. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default120. No isolated snapshot-I/O/performance measurement or automatic axes mapping. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-session_directory"></a>
@@ -3138,7 +3235,7 @@ Native help describes the selected path as: `--session_idle_save_seconds=1..8640
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-session_fork"></a>
@@ -3153,7 +3250,7 @@ Native help describes the selected path as: `--session_idle_save_seconds=1..8640
 
 **Precision class:** same bits for exact-copy service policy; target-form qualification required. **Four-axis mapping:** Orthogonal service policy; all categories only where qualified, concurrency=multiple independent slots, cache reuse/TTFT scope. No automatic tuple or official-exact claim. The `original_reference_serial_m1` exact strategy additionally inserts `0` for serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Q92af3e2 is integrated default off. Complete gpq12 fresh24-request legacy fallback supplement passed; gpq11 retains its earlier whole-job failure. New cross-session copies require stable1; donor ownership, namespace, leases and generations remain checked. Main integration smoke is independently required (MERGE_A21_v4.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Q92af3e2 is integrated default off. Complete gpq12 fresh24-request legacy fallback supplement passed; gpq11 retains its earlier whole-job failure. New cross-session copies require stable1; donor ownership, namespace, leases and generations remain checked. An integration smoke on main is independently required (MERGE_A21_v4.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 ### 8.11. HTTP server, authentication and queues
@@ -3176,7 +3273,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-user_queue_depth"></a>
@@ -3191,7 +3288,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-port"></a>
@@ -3208,7 +3305,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-bind_address"></a>
@@ -3223,7 +3320,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-key_file"></a>
@@ -3238,7 +3335,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-stats_users"></a>
@@ -3253,7 +3350,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-model_alias"></a>
@@ -3268,7 +3365,7 @@ Use this within the named subsystem and retain a startup/result receipt when cha
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-port-stats"></a>
@@ -3334,7 +3431,7 @@ Use this to set the request default deliberately; hold the rendered prompt and n
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-seed"></a>
@@ -3351,7 +3448,7 @@ Use this to set the request default deliberately; hold the rendered prompt and n
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-reasoning_effort"></a>
@@ -3368,7 +3465,7 @@ Use this to set the request default deliberately; hold the rendered prompt and n
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-temperature"></a>
@@ -3383,7 +3480,7 @@ Use this to set the request default deliberately; hold the rendered prompt and n
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-top_p"></a>
@@ -3398,7 +3495,7 @@ Use this to set the request default deliberately; hold the rendered prompt and n
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_usage"></a>
@@ -3413,7 +3510,7 @@ Use this to set the request default deliberately; hold the rendered prompt and n
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 
@@ -3423,7 +3520,7 @@ Use this to set the request default deliberately; hold the rendered prompt and n
 
 **Type/range:** unsigned32, 0 or 1. **Default:** 0 on every placement. **Commands:** generate, serve; non-speculative THIN only. Value 1 continues after EOS until the ordinary output/context limit, useful for the reference fixture's fixed 256-draw horizon. Normal serving should retain EOS stopping. Nonzero refuses speculation or BATCH; existing placement/engine gates still apply.
 
-**Precision and axes.** Output stopping policy, not a model-arithmetic change. It does not synchronize stochastic RNG or enable a new numerical tier. The exact reference fixture uses T=0 and explicit1 to continue after draw135; no axis turns it on automatically. Cost is the additional requested post-EOS generation, with no isolated speed measurement. Source: source/main.c and Track R USAGE_REFERENCE_v4.md.
+**Precision and axes.** Output stopping policy, not a model-arithmetic change. It does not synchronize stochastic RNG or enable a new numerical tier. The exact reference fixture uses T=0 and explicit1 to continue after draw135; no axis turns it on automatically. Cost is the additional requested post-EOS generation, with no isolated speed measurement. Source: source/commands.c and Track R USAGE_REFERENCE_v4.md.
 
 
 <a id="knob-prompt_token_ids"></a>
@@ -3432,12 +3529,34 @@ Use this to set the request default deliberately; hold the rendered prompt and n
 
 **Type/range:** nonempty file path; default absent on every placement. **Command:** generate only. The file is a nonempty JSON array of unsigned decimal IDs below the pack vocabulary size, with room left for generation. It replaces the messages-file input, bypasses tokenization/chat rendering and accepts exactly one weight source. It supplies prompt IDs, never generated tokens or activations. Standard positional syntax is TOKENIZER_TABLES WEIGHT_SOURCE after this option, with no messages positional argument. Serve refuses the option.
 
-**Precision, effects and axes.** Input/template control, with no change to model arithmetic. Use it to reproduce the published eight-ID serial source without an appended assistant prefix. The original exact fixture's full-head/ID/logit proofs are scoped in section 9.7; no isolated speed gain or general exactness admission is implied by bypassing tokenization. No axis inserts a token-ID filename. Source: source/main.c prompt_token_ids_parse and Track R USAGE_REFERENCE_v4.md.
+**Precision, effects and axes.** Input/template control, with no change to model arithmetic. Use it to reproduce the published eight-ID serial source without an appended assistant prefix. The original exact fixture's full-head/ID/logit proofs are scoped in section 9.7; no isolated speed gain or general exactness admission is implied by bypassing tokenization. No axis inserts a token-ID filename. Source: source/commands.c prompt_token_ids_parse and Track R USAGE_REFERENCE_v4.md.
 
 
 ### 8.13. Logging, profiling and diagnostic dumps
 
 Logging and counter presentation normally observe the selected computation, but observation overhead is not measured as zero. Release compiles timing/checking hooks out. The main parser's evaluated bounds can therefore reduce a diagnostic option to zero only. Dumps and environment probes are research interfaces with file/format and semantic constraints; they are not normal API output or stable model-result formats.
+
+<a id="knob-metrics"></a>
+
+#### `--metrics`
+
+**Type/range:** unsigned32 decimal scalar, 0 or 1. **Default:** 0. **Commands:** serve.
+**Placement:** all admitted recipes; this observation option does not select numerical kernels.
+
+**Mechanics.** Enable `GET /metrics` on the serving listener, using Prometheus text exposition 0.0.4.
+With zero, the parser treats `/metrics` exactly like an unknown path, before authentication,
+method and GET-body policy. With one, bearer authentication and `--stats_users` apply as they
+do to JSON stats; without `--key_file`, access is anonymous.
+
+**Use and interactions.** See [METRICS.md](METRICS.md) for exported families, label keys,
+units, buckets and compatibility limits. The exported model identity must be valid UTF-8
+without carriage returns; invalid identities refuse startup. Failed scrapes do not count
+as failed generations. Existing JSON stats and live printing remain independently available.
+
+**Precision class:** observation only; arithmetic is unchanged. The option is explicit and
+default-off, with no automatic four-axis selection. Native overhead/equivalence evidence is
+recipe/binary specific; the source contract and host checks do not qualify every deployment.
+
 
 <a id="knob-live_stats"></a>
 
@@ -3451,7 +3570,7 @@ Logging and counter presentation normally observe the selected computation, but 
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-draft_trace"></a>
@@ -3466,7 +3585,7 @@ Logging and counter presentation normally observe the selected computation, but 
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 In this release build the evaluated upper bound is0, so the checked example disables tracing. A profile/debug build with timing hooks has a different upper bound; repeat its parser check before enabling1.
@@ -3483,7 +3602,7 @@ In this release build the evaluated upper bound is0, so the checked example disa
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-live_stats_format"></a>
@@ -3498,7 +3617,7 @@ In this release build the evaluated upper bound is0, so the checked example disa
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-host-stats"></a>
@@ -3573,7 +3692,7 @@ In this release build the evaluated upper bound is0, so the checked example disa
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** M7d86c45/xp04: all required reference/boot/mixed/decode gates pass; table retains scoped pilot tradeoffs and final default. M12qualified BATCH1024 only; S qualification independent (packet RND_M.md19:14). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** M7d86c45/xp04: all required reference/boot/mixed/decode gates pass; table retains scoped pilot tradeoffs and final default. M12qualified BATCH1024 only; S qualification independent (packet RND_M.md19:14). Source: `source/commands.c` and shipped knob catalog.
 
 
 ### 8.14. Original weights and PRO arithmetic
@@ -3590,11 +3709,11 @@ These controls belong to the original FP8/FP4 placement family. Native PRO math 
 
 Native help describes the selected path as: `--pro_emulation=0|1 (default 0: the PRO's own arithmetic, bits depend on the placement)`. Evaluated defaults/ranges above take precedence where this prose is build-dependent.
 
-**Use and interactions.** Native PRO outputs depend on layers placed there; emulation costs2..4x on affected PP5 PRO products. Nonzero is refused by every current TP startup path (MEMORY.md; main.c startup_placement_status). Admission: G0.
+**Use and interactions.** Native PRO outputs depend on layers placed there; emulation costs2..4x on affected PP5 PRO products. Nonzero is refused by every current TP startup path (MEMORY.md; commands.c startup_placement_status). With emulation, an output fed an infinity or a not-a-number can be a not-a-number where a CMP gives the IEEE result (section 2.3); finite inputs give a CMP's bits. Admission: G0.
 
 **Precision class:** order-changing. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_code_wire"></a>
@@ -3609,7 +3728,7 @@ Native help describes the selected path as: `--pro_emulation=0|1 (default 0: the
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Unmeasured isolated effect. Source implementation/CLI contract only. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-original_dense_staged"></a>
@@ -3626,7 +3745,7 @@ Native help describes the selected path as: `--original_dense_staged=0|16 (defau
 
 **Precision class:** same bits. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Merged default0. Inherited XO04 eight dense shapes are byte-identical. XO05 selected/digest/canonical-state continuity passes Fraser/2K/30K; strict nine-request cold controls all cached0 give staged967 versus TP965 tok/s. Older962/965 values were cold-HOLD. No material whole-model gain, fresh S speed result or automatic prefill/ttft axis promotion (original_axis_handoff_v2.md:77,101; RND_O.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default0. Inherited XO04 eight dense shapes are byte-identical. XO05 selected/digest/canonical-state continuity passes Fraser/2K/30K; strict nine-request cold controls all cached0 give staged967 versus TP965 tok/s. Older962/965 values were cold-HOLD. No material whole-model gain, fresh S speed result or automatic prefill/ttft axis promotion (original_axis_handoff_v2.md:77,101; RND_O.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-original_wide_experts"></a>
@@ -3641,7 +3760,7 @@ Native help describes the selected path as: `--original_dense_staged=0|16 (defau
 
 **Precision class:** same bits in recorded current-recipe fixtures; joins unqualified. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Measured O source75 raw/alias both-parent gate now passes: cold-prefill median967->1363tok/s(+40.95%); Fraser C1/C4/C8 medianTTFT4417.75/17609.85/35087.25->3197.60/12706.85/25290.30ms(-27.62/-27.84/-27.92%); aggregate end-to-end throughput improves9.63/9.72/9.69%, while C8per-stream rate falls0.48%. All46fullFraser responses plus9fixedAPI outputs/counts/finishes agree; fixed-input GEN00/10 preserve selected records,904960activeF32 logits and canonical state. Cold nonce calls have small prompt-count differences, not identical input IDs. NativeV1windows remain exit1; independent repair-aware whole-proof equality/alias lineage passes, first50sCPUreader attempt failed then unchanged120sallowance passed. Not currentS10/official/overlap+wide/mixed/1M proof. Historical raw default0/no S axis; final main now selects1 only within compatible admission; conditional original/balanced/single-or-multiple/prefill-or-ttft mapping was held at the measurement epoch; current parser default resolution is independently checked here (O REPORT_v3.md; evidence/o3_tp_wide_both_parent_root02.json SHA0da4dae92d6e9a72ad6b1cadc26f5d34a2eec4ea2ea6b337bdc70dcff2a6df38). Historical GEN06 pilot remains in RND_O.md. Integration batch selects this default only within existing admission, with chunk_core0; explicit0 retains the slab path. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Measured O source75 raw/alias both-parent gate now passes: cold-prefill median967->1363tok/s(+40.95%); Fraser C1/C4/C8 medianTTFT4417.75/17609.85/35087.25->3197.60/12706.85/25290.30ms(-27.62/-27.84/-27.92%); aggregate end-to-end throughput improves9.63/9.72/9.69%, while C8per-stream rate falls0.48%. All46fullFraser responses plus9fixedAPI outputs/counts/finishes agree; fixed-input GEN00/10 preserve selected records,904960activeF32 logits and canonical state. Cold nonce calls have small prompt-count differences, not identical input IDs. NativeV1windows remain exit1; independent repair-aware whole-proof equality/alias lineage passes, first50sCPUreader attempt failed then unchanged120sallowance passed. Not currentS10/official/overlap+wide/mixed/1M proof. Historical raw default0/no S axis; final main now selects1 only within compatible admission; conditional original/balanced/single-or-multiple/prefill-or-ttft mapping was held at the measurement epoch; current parser default resolution is independently checked here (O REPORT_v3.md; evidence/o3_tp_wide_both_parent_root02.json SHA0da4dae92d6e9a72ad6b1cadc26f5d34a2eec4ea2ea6b337bdc70dcff2a6df38). Historical GEN06 pilot remains in RND_O.md. Integration batch selects this default only within existing admission, with chunk_core0; explicit0 retains the slab path. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-original_chunk_core"></a>
@@ -3656,7 +3775,7 @@ Native help describes the selected path as: `--original_dense_staged=0|16 (defau
 
 **Precision class:** same bits in recorded current-recipe fixtures; joins unqualified. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Merged default0. Inherited source8a434dc/GEN03 completes3 Fraser/2K/30K knob0/1 pairs and3 XO05 continuity controls with power restoration. Selected records, prompt IDs, digests, canonical SAVE and active last-target full-vocabulary F32 bits agree. Single-arm CLI prompt+first diagnostics improve about2%, not HTTP TTFT, fresh S serving or a core/query/wide join. No active S axis selects nonzero; no official-reference claim (RND_O.md 5 Nov02:32,02:42). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default0. Inherited source8a434dc/GEN03 completes3 Fraser/2K/30K knob0/1 pairs and3 XO05 continuity controls with power restoration. Selected records, prompt IDs, digests, canonical SAVE and active last-target full-vocabulary F32 bits agree. Single-arm CLI prompt+first diagnostics improve about2%, not HTTP TTFT, fresh S serving or a core/query/wide join. No active S axis selects nonzero; no official-reference claim (RND_O.md 5 Nov02:32,02:42). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-original_batch"></a>
@@ -3671,7 +3790,7 @@ Native help describes the selected path as: `--original_dense_staged=0|16 (defau
 
 **Precision class:** same bits in recorded current-recipe scope; all-step scope unqualified. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `original_tp_serial2`: `0` (serve); `original_pp_depth8`: `0` (serve); `original_pp_depth5`: `0` (serve). The `original_reference_serial_m1` exact strategy additionally inserts `0` for serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Merged default0. Inherited XO08 target/GEN preservation and XO09 source434a895/rndo_05 serving pass. Six eligible architecture windows each have12 cells and141 request/text/native-count comparisons; BATCH code C1/C2/C4/C8=76.97/119.64/214.25/347.99 tok/s. BATCH C8 beats TP overlap304.48 but loses PP8 539.36. Eight concurrent requests are not an all-eight-owner STEP logits/state or mixed-rollback proof. PP5 depth1 remains a preserved rejection; campaign complete=false with independently valid subsets. No active S axis selects the pilot; original balanced-exactness multiple/decode remains the inherited candidate scope (RND_O.md 5 Nov01:25,01:42). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default0. Inherited XO08 target/GEN preservation and XO09 source434a895/rndo_05 serving pass. Six eligible architecture windows each have12 cells and141 request/text/native-count comparisons; BATCH code C1/C2/C4/C8=76.97/119.64/214.25/347.99 tok/s. BATCH C8 beats TP overlap304.48 but loses to PP5 at pipeline depth 8 with 8 serving slots at 539.36. Eight concurrent requests are not an all-eight-owner STEP logits/state or mixed-rollback proof. PP5 depth1 remains a preserved rejection; campaign complete=false with independently valid subsets. No active S axis selects the pilot; original balanced-exactness multiple/decode remains the inherited candidate scope (RND_O.md 5 Nov01:25,01:42). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_pipeline_overlap"></a>
@@ -3686,7 +3805,7 @@ Native help describes the selected path as: `--original_dense_staged=0|16 (defau
 
 **Precision class:** same bits in recorded current-recipe scope; joins unqualified. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. Shipped resolver writes: `original_tp_serial2`: `0` (all/generate); `original_pp_depth8`: `0` (all/generate); `original_pp_depth5`: `0` (all/generate). The `original_reference_serial_m1` exact strategy additionally inserts `0` for generate and serve, within the one-session capacity-512 profile in section 9.7.
 
-**Measured effect.** Merged default0. Inherited XO06 preservation and XO09 source434a895/rndo_05 gxo10/11 serving pass:12 cells and141 request/text/native-count pairs per window. TP C2-C8 improves41-47%; code C1/C2/C4/C8 serial220.75/201.47/206.24/207.30 versus overlap220.50/284.58/295.79/304.48 tok/s. Best measured PP5 remains faster at C2-C8. Prefix_reuse1 warm decode scope, not fresh S prefix_reuse0, all-step logits/state, mixed or TTFT qualification. No active S axis selects nonzero (RND_O.md 5 Nov01:19). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Merged default0. Inherited XO06 preservation and XO09 source434a895/rndo_05 gxo10/11 serving pass:12 cells and141 request/text/native-count pairs per window. TP C2-C8 improves41-47%; code C1/C2/C4/C8 serial220.75/201.47/206.24/207.30 versus overlap220.50/284.58/295.79/304.48 tok/s. Best measured PP5 remains faster at C2-C8. Prefix_reuse1 warm decode scope, not fresh S prefix_reuse0, all-step logits/state, mixed or TTFT qualification. No active S axis selects nonzero (RND_O.md 5 Nov01:19). Source: `source/commands.c` and shipped knob catalog.
 
 
 ### 8.15. Axes and branch feature boundaries
@@ -3697,30 +3816,30 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 #### `--category`
 
-**Type/range:** text/enum; code / prose / structured / vision / balanced. **Default:** unset; no axis default selected **Commands:** generate, serve. **Placement:** tuple table: original / EXL3; explicit placement selects family, omission selects original; tuple chooses placement and explicit placement wins.
+**Type/range:** text/enum; code / prose / structured / vision / balanced. **Default:** unset: balanced (an empty set on every split) **Commands:** generate, serve. **Placement:** GPU split tables pp5 (default), tp4_pro and tp4_exl3; `--placement` picks the split and no tuple changes it.
 
-**Mechanics.** Choose the workload objective; balanced requires the full mixed-user benchmark.
+**Mechanics.** Choose the workload objective; EXL3 balanced requires its scoped mixed-user benchmark; on TP4_EXL3, code adds fixed draft prices. The measured TP4_PRO single-user decode recipe is GPU split TP4_PRO's concurrency=single set.
 
-**Use and interactions.** Explicit low-level knobs and existing aliases override inserted settings in either order. Duplicate axis selection refuses. No named presets or aliases exist. Partial tuples apply only a common plan without filling unset axes. Admission: No axes: CLI unchanged. Held dependencies and unsupported partial tuples refuse; ordinary startup/model gates remain authoritative..
+**Use and interactions.** Explicit low-level knobs and existing aliases override inserted settings in either order. Duplicate axis selection refuses. No named presets or aliases exist. An unset axis takes balanced, so a partial tuple resolves to that row of the split's table. Admission: No axes: CLI unchanged. A held value refuses with its reason, and a split without a table refuses any axis flag; ordinary startup/model gates remain authoritative..
 
-**Precision class:** axis-dependent; see help axes. **Four-axis mapping:** Selector itself; all values and partial-resolution rules are in section7. No axis is selected by default. This selector is parsed on main; held tuples and incompatible partial selections refuse.
+**Precision class:** axis-dependent; see help axes. **Four-axis mapping:** Selector itself; all values and partial-resolution rules are in section7. No axis is selected by default. This selector is parsed on main; held values refuse.
 
-**Measured effect.** tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. Source: `source/main.c` (main's axis_expand), `source/startup_axes.c` and shipped knob catalog.
 
 
 <a id="knob-exactness"></a>
 
 #### `--exactness`
 
-**Type/range:** text/enum; exact / balanced / fast. **Default:** unset; no axis default selected **Commands:** generate, serve. **Placement:** tuple table: original / EXL3; explicit placement selects family, omission selects original; tuple chooses placement and explicit placement wins.
+**Type/range:** text/enum; exact / balanced / fast. **Default:** unset: balanced (an empty set on every split) **Commands:** generate, serve. **Placement:** GPU split tables pp5 (default), tp4_pro and tp4_exl3; `--placement` picks the split and no tuple changes it.
 
-**Mechanics.** Choose original-weight serial M1 reference arithmetic, current reproducible arithmetic, or qualified bounded-loss arithmetic. Original exact is now admitted only within section 9.7; EXL3 exact refuses.
+**Mechanics.** Choose original-weight serial M1 reference arithmetic, current reproducible arithmetic, or qualified bounded-loss arithmetic. Original exact is admitted only within section 9.7; EXL3 exact runs the exact-shaping set on quantized weights (not official-exact).
 
-**Use and interactions.** Explicit low-level knobs and existing aliases override inserted settings in either order. Duplicate axis selection refuses. No named presets or aliases exist. Partial tuples apply only a common plan without filling unset axes. Admission: No axes: CLI unchanged. Held dependencies and unsupported partial tuples refuse; ordinary startup/model gates remain authoritative..
+**Use and interactions.** Explicit low-level knobs and existing aliases override inserted settings in either order. Duplicate axis selection refuses. No named presets or aliases exist. An unset axis takes balanced, so a partial tuple resolves to that row of the split's table. Admission: No axes: CLI unchanged. A held value refuses with its reason, and a split without a table refuses any axis flag; ordinary startup/model gates remain authoritative..
 
-**Precision class:** axis-dependent; see help axes. **Four-axis mapping:** Selector itself; all values and partial-resolution rules are in section7. No axis is selected by default. This selector is parsed on main; held tuples and incompatible partial selections refuse.
+**Precision class:** axis-dependent; see help axes. **Four-axis mapping:** Selector itself; all values and partial-resolution rules are in section7. No axis is selected by default. This selector is parsed on main; held values refuse.
 
-**Measured effect.** tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. Source: `source/main.c` (main's axis_expand), `source/startup_axes.c` and shipped knob catalog.
 
 
 
@@ -3728,30 +3847,30 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 #### `--concurrency`
 
-**Type/range:** text/enum; single / multiple / balanced. **Default:** unset; no axis default selected **Commands:** generate, serve. **Placement:** tuple table: original / EXL3; explicit placement selects family, omission selects original; tuple chooses placement and explicit placement wins.
+**Type/range:** text/enum; single / multiple / balanced. **Default:** unset: balanced (an empty set on every split) **Commands:** generate, serve. **Placement:** GPU split tables pp5 (default), tp4_pro and tp4_exl3; `--placement` picks the split and no tuple changes it.
 
 **Mechanics.** Choose a C1 recipe, a C2-C8 recipe, or a measured compromise.
 
-**Use and interactions.** Explicit low-level knobs and existing aliases override inserted settings in either order. Duplicate axis selection refuses. No named presets or aliases exist. Partial tuples apply only a common plan without filling unset axes. Admission: No axes: CLI unchanged. Held dependencies and unsupported partial tuples refuse; ordinary startup/model gates remain authoritative..
+**Use and interactions.** Explicit low-level knobs and existing aliases override inserted settings in either order. Duplicate axis selection refuses. No named presets or aliases exist. An unset axis takes balanced, so a partial tuple resolves to that row of the split's table. Admission: No axes: CLI unchanged. A held value refuses with its reason, and a split without a table refuses any axis flag; ordinary startup/model gates remain authoritative..
 
-**Precision class:** axis-dependent; see help axes. **Four-axis mapping:** Selector itself; all values and partial-resolution rules are in section7. No axis is selected by default. This selector is parsed on main; held tuples and incompatible partial selections refuse.
+**Precision class:** axis-dependent; see help axes. **Four-axis mapping:** Selector itself; all values and partial-resolution rules are in section7. No axis is selected by default. This selector is parsed on main; held values refuse.
 
-**Measured effect.** tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. Source: `source/main.c` (main's axis_expand), `source/startup_axes.c` and shipped knob catalog.
 
 
 <a id="knob-focus"></a>
 
 #### `--focus`
 
-**Type/range:** text/enum; balanced / ttft / decode / prefill. **Default:** unset; no axis default selected **Commands:** generate, serve. **Placement:** tuple table: original / EXL3; explicit placement selects family, omission selects original; tuple chooses placement and explicit placement wins.
+**Type/range:** text/enum; balanced / ttft / decode / prefill. **Default:** unset: balanced (an empty set on every split) **Commands:** generate, serve. **Placement:** GPU split tables pp5 (default), tp4_pro and tp4_exl3; `--placement` picks the split and no tuple changes it.
 
 **Mechanics.** Choose the optimization objective within the selected numerical tier.
 
-**Use and interactions.** Explicit low-level knobs and existing aliases override inserted settings in either order. Duplicate axis selection refuses. No named presets or aliases exist. Partial tuples apply only a common plan without filling unset axes. Admission: No axes: CLI unchanged. Held dependencies and unsupported partial tuples refuse; ordinary startup/model gates remain authoritative..
+**Use and interactions.** Explicit low-level knobs and existing aliases override inserted settings in either order. Duplicate axis selection refuses. No named presets or aliases exist. An unset axis takes balanced, so a partial tuple resolves to that row of the split's table. Admission: No axes: CLI unchanged. A held value refuses with its reason, and a split without a table refuses any axis flag; ordinary startup/model gates remain authoritative..
 
-**Precision class:** axis-dependent; see help axes. **Four-axis mapping:** Selector itself; all values and partial-resolution rules are in section7. No axis is selected by default. This selector is parsed on main; held tuples and incompatible partial selections refuse.
+**Precision class:** axis-dependent; see help axes. **Four-axis mapping:** Selector itself; all values and partial-resolution rules are in section7. No axis is selected by default. This selector is parsed on main; held values refuse.
 
-**Measured effect.** tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. Source: `source/main.c` (main's axis_expand), `source/startup_axes.c` and shipped knob catalog.
 
 
 <a id="knob-tp5_expert_csf"></a>
@@ -3766,7 +3885,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** same bits intended for storage-only codec; runtime unqualified. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Historical source25/8ba73bde full448 program factory FAILED before device load. Corrected27 repairs W1/W3/W2 engine ordering from W1/W2/W3 storage without changing sidecar ordinals. Guarded join794acd4+style11777a6 passes16release/debug host/factory invocations,151actual-parser controls,all90CUDA images literal27 and zero hooks in8host executables/3newCSF modules. Full448 sidecar274651646720bytes/230400entries has source byte/word proof. Actual five-rank device load/numerics/ring/physical fit/C1 speed remain UNMEASURED. Default0; CSF+third composition explicitly refuses before I/O/planning. No active axis, only held original/balanced/single/decode dependency (RND_O.md5Nov14:03,14:20). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Historical source25/8ba73bde full448 program factory FAILED before device load. Corrected27 repairs W1/W3/W2 engine ordering from W1/W2/W3 storage without changing sidecar ordinals. Guarded join794acd4+style11777a6 passes16release/debug host/factory invocations,151actual-parser controls,all90CUDA images literal27 and zero hooks in8host executables/3newCSF modules. Full448 sidecar274651646720bytes/230400entries has source byte/word proof. Actual five-rank device load/numerics/ring/physical fit/C1 speed remain UNMEASURED. Default0; CSF+third composition explicitly refuses before I/O/planning. No active axis, only held original/balanced/single/decode dependency (RND_O.md5Nov14:03,14:20). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp5_expert_sidecar"></a>
@@ -3781,7 +3900,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** same bits intended for storage-only codec; runtime unqualified. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Absolute full448 A20 path remains paired iff tp5_expert_csf1; guarded join794acd4/11777a6 explicitly refuses CSF plus raw384/768 third-share before sidecar I/O/stage planning. Full448 storage/source proof and corrected host factory pass; historical source25factory failure retained. No device/load/fault/lifetime/physical-fit or isolated path-selection performance claim. Defaults absent/codec0, no active axis (RND_O.md5Nov14:20; conditional MERGE_REQUEST_v3.md). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Absolute full448 A20 path remains paired iff tp5_expert_csf1; guarded join794acd4/11777a6 explicitly refuses CSF plus raw384/768 third-share before sidecar I/O/stage planning. Full448 storage/source proof and corrected host factory pass; historical source25factory failure retained. No device/load/fault/lifetime/physical-fit or isolated path-selection performance claim. Defaults absent/codec0, no active axis (RND_O.md5Nov14:20; conditional MERGE_REQUEST_v3.md). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp5_pro_third"></a>
@@ -3796,7 +3915,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** order-changing; new placement arithmetic unqualified. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Guarded join794acd4+style11777a6 passes16release/debug host/factory invocations,151actual-parser cases including127old vectors+24join controls,90literalCUDA images and zero hooks in8release host executables/3newCSF modules. Actual raw384/768 allocation plans pass; no CUDA physical-fit/device/head/draft/ring/generation/rollback/speed proof. CSF+third composition explicitly refuses before I/O/planning. Default0 retains raw448/512/PRO head; no active axis, only held original/balanced/single/decode candidate. Earlier26/f388b980 host proof remains historical (RND_O.md5Nov14:03,14:20). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Guarded join794acd4+style11777a6 passes16release/debug host/factory invocations,151actual-parser cases including127old vectors+24join controls,90literalCUDA images and zero hooks in8release host executables/3newCSF modules. Actual raw384/768 allocation plans pass; no CUDA physical-fit/device/head/draft/ring/generation/rollback/speed proof. CSF+third composition explicitly refuses before I/O/planning. Default0 retains raw448/512/PRO head; no active axis, only held original/balanced/single/decode candidate. Earlier26/f388b980 host proof remains historical (RND_O.md5Nov14:03,14:20). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-session_snapshot_format"></a>
@@ -3811,7 +3930,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** same bits for exact-copy service policy; target-form qualification required. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Branch-only P23/b12744b plus test-only80f23b9, default4. Actual format5 eviction/restart LOADs retain25000/25016tokens and260771840/260817920bytes; native/visible output equals cold, HTTP TTFT311.510/282.318ms versus7246.065cold. Actual8192-generated source serializesG8272/255604736payloadbytes. Overall xc38v4 exit1: anonymous child correctly cold-misses under Q hard-owner rule; harness wrongly expected a fork hit. Full checkpoint restart/fork and authenticated import proof remain UNQUALIFIED; prepared40v2 not queued under pause. No namespace or product gate weakened, no automatic axis (RND_P.md5Nov13:16,13:28; results/gxc38v4snapshot/partial_read.json qualified=false). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Branch-only P23/b12744b plus test-only80f23b9, default4. Actual format5 eviction/restart LOADs retain25000/25016tokens and260771840/260817920bytes; native/visible output equals cold, HTTP TTFT311.510/282.318ms versus7246.065cold. Actual8192-generated source serializesG8272/255604736payloadbytes. Overall xc38v4 exit1: anonymous child correctly cold-misses under Q hard-owner rule; harness wrongly expected a fork hit. Full checkpoint restart/fork and authenticated import proof remain UNQUALIFIED; prepared40v2 not queued under pause. No namespace or product gate weakened, no automatic axis (RND_P.md5Nov13:16,13:28; results/gxc38v4snapshot/partial_read.json qualified=false). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp5_host_channels"></a>
@@ -3826,7 +3945,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** same bits intended; composed device proof pending. **Four-axis mapping:** Candidate original text/category; exactness=balanced; concurrency=single; focus=decode diagnostic. No active tuple; exact/fast/vision/multiple/TTFT held.
 
-**Measured effect.** Current main78 candidate aab1daf (engine_rnd_o_tp5_main78/source/main.c:906,1413,2946), following 5166a00. Source/CPU-only, no GPU transport identity, physical fit, serving speed or official-exact proof. Candidate original text/balanced/single/decode diagnostic only; no active axis. Direct0 retained. Source21/23 has12 focused checks,54 current-main parser controls and unchanged87 CUDA images (RND_O.md5Nov09:34,10:17). Source: `source/main.c` and shipped knob catalog. Later branch details retain their named RND epoch.
+**Measured effect.** Current main78 candidate aab1daf (engine_rnd_o_tp5_main78/source/main.c:906,1413,2946), following 5166a00. Source/CPU-only, no GPU transport identity, physical fit, serving speed or official-exact proof. Candidate original text/balanced/single/decode diagnostic only; no active axis. Direct0 retained. Source21/23 has12 focused checks,54 current-main parser controls and unchanged87 CUDA images (RND_O.md5Nov09:34,10:17). Source: `source/commands.c` and shipped knob catalog. Later branch details retain their named RND epoch.
 
 
 <a id="knob-tp5_original_draft"></a>
@@ -3841,7 +3960,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** draft-only intended; target-bit and rollback proof pending. **Four-axis mapping:** Category: all supported workloads unless the named path restricts it. Exactness: the entry's precision class and source gates apply. Concurrency: only the prepared THIN/BATCH/placement forms named here. Focus: target product/transport/runtime cost; no isolated objective gain implied. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** Source d9388b7/21 and main78 aab1daf/23 (main.c:908,1522,2946) have CPU construction/parser proof only; current54-case parser suite fixes guard ordering after placement defaults. All40 64K DSpark arena plan is77.335GB PRO and60.581/59.257/59.257/58.669GB CMP plus optional918528000 host bytes: an allocation plan, not physical-fit proof. No generation/rollback/speed/official equality, no automatic axis; held original text/balanced/single/decode candidate (RND_O.md5Nov09:34,10:17). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Source d9388b7/21 and main78 aab1daf/23 (main.c:908,1522,2946) have CPU construction/parser proof only; current54-case parser suite fixes guard ordering after placement defaults. All40 64K DSpark arena plan is77.335GB PRO and60.581/59.257/59.257/58.669GB CMP plus optional918528000 host bytes: an allocation plan, not physical-fit proof. No generation/rollback/speed/official equality, no automatic axis; held original text/balanced/single/decode candidate (RND_O.md5Nov09:34,10:17). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_core_queries"></a>
@@ -3856,7 +3975,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** same bits intended; safety/reference campaign incomplete. **Four-axis mapping:** Candidate category=code; exactness=balanced relative to the pinned Anemone family; concurrency=single true-THIN; focus=decode. All other mappings held; no active tuple.
 
-**Measured effect.** Historical M25 prototype dfd803f/frozen32 only; removed from isolated main78 N8dd9dfc/frozen36. Default0/NO MERGE. xd17b passes memcheck/racecheck/synccheck (eight cases each, zero reported errors), then first required fault control fails: generic CUDA launch failure does not prove the intended overflow guard. Later controls, OFF/ON references, native ABA, HTTP and speed remain unrun. Prior loader/LSan failures remain failures. No active axis; proposed code/balanced/single/decode stays held (RND_N.md5Nov12:56,13:02,13:29; M25_VERDICT_v4.md). Source: `source/main.c` and shipped knob catalog. Later branch details retain their named RND epoch.
+**Measured effect.** Historical M25 prototype dfd803f/frozen32 only; removed from isolated main78 N8dd9dfc/frozen36. Default0/NO MERGE. xd17b passes memcheck/racecheck/synccheck (eight cases each, zero reported errors), then first required fault control fails: generic CUDA launch failure does not prove the intended overflow guard. Later controls, OFF/ON references, native ABA, HTTP and speed remain unrun. Prior loader/LSan failures remain failures. No active axis; proposed code/balanced/single/decode stays held (RND_N.md5Nov12:56,13:02,13:29; M25_VERDICT_v4.md). Source: `source/commands.c` and shipped knob catalog. Later branch details retain their named RND epoch.
 
 
 <a id="knob-original_queries_piece"></a>
@@ -3871,7 +3990,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** same bits in recorded current-recipe fixtures; joins unqualified. **Four-axis mapping:** Held original-weight balanced-exactness prefill/TTFT experiment; no S tuple sets a nonzero value. Reference/exact claims require separate proof.
 
-**Measured effect.** Source74b24a5 completes three Fraser/2K/30K knob0/1 pairs and three XO05 baseline controls, including selected records, prompt IDs, digests, canonical SAVE and active last-target full-vocabulary F32 bits; power restoration passes. CLI prompt+first changes -0.09%/-0.06%/+0.16%; no standalone speed win, HTTP TTFT or serving/join qualification. Default0 retained for later composition. Held original balanced-exactness prefill/ttft candidate; no S axis enables it (RND_O.md 5 Nov 02:42). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Source74b24a5 completes three Fraser/2K/30K knob0/1 pairs and three XO05 baseline controls, including selected records, prompt IDs, digests, canonical SAVE and active last-target full-vocabulary F32 bits; power restoration passes. CLI prompt+first changes -0.09%/-0.06%/+0.16%; no standalone speed win, HTTP TTFT or serving/join qualification. Default0 retained for later composition. Held original balanced-exactness prefill/ttft candidate; no S axis enables it (RND_O.md 5 Nov 02:42). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-original_dense_shards"></a>
@@ -3886,7 +4005,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** same bits intended; device-unqualified. **Four-axis mapping:** Held original-weight balanced-exactness prefill/TTFT experiment; no S tuple sets a nonzero value. Reference/exact claims require separate proof.
 
-**Measured effect.** O1cb6928/ff91cfe host preparation remains separate from device proof. XO18 dense starts0 of9 planned arms: 197 work seconds remained against a 900-second floor. This is a budget deferral, not a device or numerical failure. Default0; GPU identity/speed and any original balanced-exactness prefill/ttft mapping remain held; no S axis enables it (RND_O.md 5 Nov 02:42). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** O1cb6928/ff91cfe host preparation remains separate from device proof. XO18 dense starts0 of9 planned arms: 197 work seconds remained against a 900-second floor. This is a budget deferral, not a device or numerical failure. Default0; GPU identity/speed and any original balanced-exactness prefill/ttft mapping remain held; no S axis enables it (RND_O.md 5 Nov 02:42). Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-prefill_small_copy_rows"></a>
@@ -3901,7 +4020,7 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 
 **Precision class:** same bits within qualified64K stable1; strict cold/1M admission held. **Four-axis mapping:** Candidate TP4_EXL3 text cache form in exactness=exact, conditional on its cold/state/capacity gates; no automatic category/concurrency/focus selection. Copy32 targets prefill/TTFT copying only after device proof.
 
-**Measured effect.** Frozen18 xc38v4 full306 native/observable PASS:102cold+204warm, all accepted IDs/selected-logit bits equal own cold;102/102 cold controls equal accepted form14. Short append warm ABA362.311/214.198/362.160ms, ratio0.59301(95%0.58865-0.59810); phase345.339/199.033/344.657ms, ratio0.57608(0.56739-0.58491); tool-cycle warm ratio0.99616(0.91396-1.00434). Strict cold gate FAILS: short ratio1.00116886(1.00069573-1.00243898); tool1.00172992,phase0.92088957. Sampling intervals do not bound hardware drift. 1M readiness fails before token0. Manual/default0/HOLD; no active axes, default or legacy-speed parity. Full window exit1 remains separate from completed306 leaves (RND_P.md5Nov13:10,13:28; results/gxc38v4/small_copy_report.json). Source: `source/main.c` and shipped knob catalog.
+**Measured effect.** Frozen18 xc38v4 full306 native/observable PASS:102cold+204warm, all accepted IDs/selected-logit bits equal own cold;102/102 cold controls equal accepted form14. Short append warm ABA362.311/214.198/362.160ms, ratio0.59301(95%0.58865-0.59810); phase345.339/199.033/344.657ms, ratio0.57608(0.56739-0.58491); tool-cycle warm ratio0.99616(0.91396-1.00434). Strict cold gate FAILS: short ratio1.00116886(1.00069573-1.00243898); tool1.00172992,phase0.92088957. Sampling intervals do not bound hardware drift. 1M readiness fails before token0. Manual/default0/HOLD; no active axes, default or legacy-speed parity. Full window exit1 remains separate from completed306 leaves (RND_P.md5Nov13:10,13:28; results/gxc38v4/small_copy_report.json). Source: `source/commands.c` and shipped knob catalog.
 
 
 ### 8.16. Environment variables, debugging and sanitizers
@@ -3926,7 +4045,7 @@ The production source has exactly four literal `getenv` names. They are diagnost
 
 #### `DIAG_STATE_DIGESTS`
 
-**Type/range/default:** presence; absent by default. **Mechanics/use:** At generate shutdown, compute and emit digests of state tensors after generated work. Generate only; serving does not enable this shutdown path. **Precision and axes:** Same-bits observation; diagnostic overhead unmeasured. Category/exactness/concurrency/focus orthogonal, no automatic axis setting. **Measured effect:** no isolated timing or whole-workload gain is established. Source: `source/main.c`, `source/model_v41_program.c`.
+**Type/range/default:** presence; absent by default. **Mechanics/use:** At generate shutdown, compute and emit digests of state tensors after generated work. Generate only; serving does not enable this shutdown path. **Precision and axes:** Same-bits observation; diagnostic overhead unmeasured. Category/exactness/concurrency/focus orthogonal, no automatic axis setting. **Measured effect:** no isolated timing or whole-workload gain is established. Source: `source/commands.c`, `source/model_v41_program.c`.
 
 
 ```sh
@@ -3939,7 +4058,7 @@ Check: `env_DIAG_STATE_DIGESTS` — environment supplied and argv parsed; diagno
 
 #### `DIAG_DRAFT_STAGES`
 
-**Type/range/default:** strtoul decimal then uint32 cast; absent means3 stages. **Mechanics/use:** Limit the draft stage loop to the smaller of the parsed count and the three model draft stages.0 executes no draft stage. This is not the strict CLI number parser; malformed strings and overflow do not gain normal CLI validation. **Precision and axes:** Changes draft computation; target-bit invariance across resulting verification forms is required. Raw diagnostic only, no S tuple. **Measured effect:** no isolated timing or whole-workload gain is established. Source: `source/main.c`, `source/model_v41_program.c`.
+**Type/range/default:** strtoul decimal then uint32 cast; absent means3 stages. **Mechanics/use:** Limit the draft stage loop to the smaller of the parsed count and the three model draft stages.0 executes no draft stage. This is not the strict CLI number parser; malformed strings and overflow do not gain normal CLI validation. **Precision and axes:** Changes draft computation; target-bit invariance across resulting verification forms is required. Raw diagnostic only, no S tuple. **Measured effect:** no isolated timing or whole-workload gain is established. Source: `source/commands.c`, `source/model_v41_program.c`.
 
 
 ```sh
@@ -3952,7 +4071,7 @@ Check: `env_DIAG_DRAFT_STAGES` — environment supplied and argv parsed; diagnos
 
 #### `DIAG_DRAFT_SKIP_FFN`
 
-**Type/range/default:** exact string1 enables; absent/other strings disable. **Mechanics/use:** Skip FFN sites in the draft stage probe. This deliberately changes draft computation and is not a production speed recipe. **Precision and axes:** Draft-only conditional/order-changing if target verification forms change. No axis admission. **Measured effect:** no isolated timing or whole-workload gain is established. Source: `source/main.c`, `source/model_v41_program.c`.
+**Type/range/default:** exact string1 enables; absent/other strings disable. **Mechanics/use:** Skip FFN sites in the draft stage probe. This deliberately changes draft computation and is not a production speed recipe. **Precision and axes:** Draft-only conditional/order-changing if target verification forms change. No axis admission. **Measured effect:** no isolated timing or whole-workload gain is established. Source: `source/commands.c`, `source/model_v41_program.c`.
 
 
 ```sh
@@ -3965,7 +4084,7 @@ Check: `env_DIAG_DRAFT_SKIP_FFN` — environment supplied and argv parsed; diagn
 
 #### `DIAG_DRAFT_PROBE`
 
-**Type/range/default:** presence; absent by default. **Mechanics/use:** With the required batch-join kernel, expose stage0 intermediate query/attention/rotation streams in the logits probe layout and omit normal head/following work. It can affect preparation of the joined draft path. Output is diagnostic, not valid ordinary draft logits. **Precision and axes:** Draft diagnostic with altered semantics; no normal exactness or performance claim and no automatic axis mapping. **Measured effect:** no isolated timing or whole-workload gain is established. Source: `source/main.c`, `source/model_v41_program.c`.
+**Type/range/default:** presence; absent by default. **Mechanics/use:** With the required batch-join kernel, expose stage0 intermediate query/attention/rotation streams in the logits probe layout and omit normal head/following work. It can affect preparation of the joined draft path. Output is diagnostic, not valid ordinary draft logits. **Precision and axes:** Draft diagnostic with altered semantics; no normal exactness or performance claim and no automatic axis mapping. **Measured effect:** no isolated timing or whole-workload gain is established. Source: `source/commands.c`, `source/model_v41_program.c`.
 
 
 ```sh
@@ -4035,7 +4154,7 @@ S04's older core2 BATCH recipe measured structured aggregate C1/C2/C4/C8 **335.3
 
 ### 9.3 Long context and 1M
 
-`--context_tokens=1048576` allocates capacity for **prompt plus generation per slot**. It does not mean every step processes one million live tokens, and it does not make eight slots fit. Use the following one-slot THIN form as a syntax-checked capacity recipe:
+`--context_tokens=1048576` allocates capacity for **prompt plus generation per slot**. It is the default for every session (generate's and each served one's). It does not mean every step processes one million live tokens; serve's default `--session_slots=max` takes as many 1M sessions as the cards hold (5 on PP5, 1 on TP4_PRO, 1 on TP4_EXL3 with the 2.9 bpw map, in a plain default serve of each on the reference machine; see [section 7.1](#71-availability-and-meanings)). Use the following one-slot THIN form as a syntax-checked capacity recipe:
 
 
 ```sh
@@ -4198,7 +4317,7 @@ For performance receipts include power settings, concurrency, prompt/output shap
 
 Use a profile build for enabled timing hooks. Release compiles those hooks out: `--draft_trace` accepts only 0 in release and 0 or 1 in debug/thread/profile. `--linear_profile` accepts 0 or 1 in every build mode, subject to the selected recipe's precision requirements. Sanitizer results should state the build and test scope rather than imply GPU execution from a host-only pass.
 
-`SIGINT` and `SIGTERM` stop the server. **SIGHUP reloads configured server keys transactionally**: a failed reload retains the old set, lifetime user totals retain their ordinals, and in-flight requests keep their authenticated username. Do not use SIGHUP as a shutdown command. This is the server's implemented signal contract; the main signal-array name alone is not sufficient to infer it. Closing/resetting a client connection cancels its active generation at the next step or removes its queued request. Streaming errors and cancellations must remain distinct from normal finish events. The engine drains in-flight work before releasing state, with bounded shutdown waits. `source/main.c`, `include/anemone/server.h`.
+`SIGINT` and `SIGTERM` stop the server. **SIGHUP reloads configured server keys transactionally**: a failed reload retains the old set, lifetime user totals retain their ordinals, and in-flight requests keep their authenticated username. Do not use SIGHUP as a shutdown command. This is the server's implemented signal contract; the main signal-array name alone is not sufficient to infer it. Closing/resetting a client connection cancels its active generation at the next step or removes its queued request. Streaming errors and cancellations must remain distinct from normal finish events. The engine drains in-flight work before releasing state, with bounded shutdown waits. `source/commands.c`, `include/anemone/server.h`.
 
 ## 12. Troubleshooting
 
@@ -4206,7 +4325,7 @@ Use a profile build for enabled timing hooks. Release compiles those hooks out: 
 
 First distinguish lexical acceptance, model/state planning, arena allocation, graph preparation and a runtime allocation failure. The `context_tokens` numeric maximum is not a guarantee that the selected slots, wide rows, BATCH forms, tails, graphs and scratch banks fit. Every slot reserves its own state; more slots multiply important allocations. A larger wide ladder adds prepared programs and workspace. Other processes and kept-free reservations reduce the available budget.
 
-Start from the one-slot 1M recipe. For BATCH, keep wide1024/tail128/fine0; do not add the 2K compromise ladder. Check the actual card free-memory receipt. Reduce slot count or context when capacity is insufficient; do not disable validation or reinterpret an OOM as a parser bug. `card_memory_kept_free_mib` reserves more space, so increasing it reduces placement capacity. Main stable-prefix and fork opt-ins, and the separate branch-only small-copy/v5 features, have their own capacity and prepared-set evidence. Do not transfer a stable0 fit to stable1 or a checkpoint-bearing branch.
+Start from the one-slot 1M recipe. For BATCH, keep wide1024/tail128/fine0; do not add the 2K compromise ladder. Check the actual card free-memory receipt. Reduce slot count or context when capacity is insufficient; do not disable validation or reinterpret an OOM as a parser bug. `card_memory_kept_free_mib` reserves more space, so increasing it reduces placement capacity. The main stable-prefix and fork opt-ins, and the separate branch-only small-copy/v5 features, have their own capacity and prepared-set evidence. Do not transfer a stable0 fit to stable1 or a checkpoint-bearing branch.
 
 The historical 15/53 MiB headroom is small enough that a source change or an additional graph can invalidate it. No eight-slot 1M guarantee follows from either historical boot. The exact selected recipe and requested card set must be requalified in an authorized GPU window.
 
@@ -4218,7 +4337,7 @@ The historical 15/53 MiB headroom is small enough that a source change or an add
 | TP requires DSpark/reference CMP/context | Use DSpark/hybrid, reference CMP products, native PRO, rows≤8 and context≥16384. A scalar-row non-speculative raw command is not an admitted TP boot. |
 | BF16 wire requires relaxed TP | Select relaxed/fast numerics explicitly and a TP placement; exact plus BF16 wire is refused. |
 | TP5 refuses | Expected: TP5 remains branch-only. A recognized internal enum does not admit the geometry. |
-| Axis command refuses | Axes are main; inspect invalid values, duplicate selectors, incompatible partial plans or a scope/refusal for EXL3 exact, fast, vision or mixed qualification. |
+| Axis command refuses | Axes are main; inspect invalid values, duplicate selectors, incompatible partial plans or a scope refusal for exact beyond one session, lossy fast, vision or mixed qualification. |
 | A TP `load` command refuses | TP is an inference startup route here, not the load-only command's admitted path. |
 | Original experiment refuses | Exact TP4_PRO pilots have strict exclusion lists. Do not join BATCH, wide experts, chunk core, overlap, code/owner or staging controls unless that composition is admitted. |
 | Card/peer/program preparation fails | Check actual card classes/order, CUDA driver, topology, memory budgets and prepared row/state shape. Syntax success proves none of those resources. |
@@ -4284,7 +4403,7 @@ original scope; a parser check does not load weights or qualify a full workload.
 
 | Source | Purpose |
 | --- | --- |
-| `source/main.c` | Numeric options, parser, resolved defaults and startup admission. |
+| `source/commands.c` | Numeric options, parser, resolved defaults and startup admission. |
 | `include/anemone/startup_policy.h` | Weight-family, placement and numerical contracts. |
 | `include/anemone/server.h`, `include/anemone/chat_completions.h` | HTTP, authentication and request contracts. |
 | `source/server_cache.c`, `source/server_forks.c` | Cache and session identity. |
@@ -4300,6 +4419,7 @@ do not establish full agent, tool, reasoning or stored-response compatibility.
 
 | Knob | Context | Availability |
 | --- | --- | --- |
+| [`--adopt`](#knob-adopt-replicate) | replicate | main |
 | [`--batch_context_slabs`](#knob-batch_context_slabs) | main CLI | main |
 | [`--batch_core_once`](#knob-batch_core_once) | main CLI | main |
 | [`--batch_draft_rows`](#knob-batch_draft_rows) | main CLI | main |
@@ -4374,6 +4494,7 @@ do not establish full agent, tool, reasoning or stored-response compatibility.
 | [`--lookup_ngram_max`](#knob-lookup_ngram_max) | main CLI | main |
 | [`--lookup_ngram_min`](#knob-lookup_ngram_min) | main CLI | main |
 | [`--map_reads`](#knob-map_reads) | main CLI | main |
+| [`--metrics`](#knob-metrics) | main CLI | main |
 | [`--model_alias`](#knob-model_alias) | main CLI | main |
 | [`--numerics`](#knob-numerics) | main CLI | main |
 | [`--official_hc_rows`](#knob-official_hc_rows) | main CLI | main |
@@ -4498,7 +4619,7 @@ do not establish full agent, tool, reasoning or stored-response compatibility.
 
 ## 15. Compact serve-flag reference
 
-**Main `69d4d967880fb39c9ed3f82bf646f95149374d04`, `bin/tcb82/anemone`.** This is the compact companion to the sections above. It lists every flag the final-main serve parser accepts; it does not import the older production tree's transport/scheduler switches.
+**On main `69d4d967880fb39c9ed3f82bf646f95149374d04`, `bin/tcb82/anemone`.** This is the compact companion to the sections above. It lists every flag the final-main serve parser accepts; it does not import the older production tree's transport/scheduler switches.
 
 Defaults are stated for PP5, TP4_PRO and TP4_EXL3 wherever they differ. Unqualified numeric defaults apply to all three. A conditional default is part of a recipe: omitted pipeline depth becomes5 only for qualifying PP5 multi-session DSpark serve; compatible TP4_PRO wide experts become1; explicit values retain precedence. Four unset axes insert nothing. PRO uses class120 native/sm_120a math by default; `pro_emulation=1` is the opt-in class80 emulation and is refused by current TP startup.
 
@@ -4511,12 +4632,12 @@ Copy32, snapshot v5, TP5/M25 and pending O query/dense-shard controls are branch
 ### Loader and turbo replicas
 
 - [`--card_order`](#knob-card_order) — **Default:** Automatic backend enumeration/fill; TP4_EXL3 auto-selects four CMPs. The table's zero is array storage, not a request for card0 only. **Meaning:** Choose backend card ordinals in stage-fill order. Check: `knob_card_order` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--reader_threads_per_copy`](#knob-reader_threads_per_copy) — **Default:** 2. **Meaning:** Allocate this many asynchronous readers per pack copy. Check: `knob_reader_threads_per_copy` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--reader_threads_per_copy`](#knob-reader_threads_per_copy) — **Default:** 4. **Meaning:** Allocate this many asynchronous readers per pack copy. Check: `knob_reader_threads_per_copy` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 - [`--tp_load_threads`](#knob-tp_load_threads) — **Default:** 32. **Meaning:** Load TP card weights concurrently; zero keeps the serial loader. Check: `knob_tp_load_threads` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 - [`--turbo_load`](#knob-turbo_load) — **Default:** 1. **Meaning:** Discover and read receipted replicas on other drives. Check: `knob_turbo_load` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 - [`--map_reads`](#knob-map_reads) — **Default:** 4 auto:3 when receipted replicas are found, otherwise1. **Meaning:** Choose buffered/direct EXL3-map reads and page-cache eviction policy. Check: `knob_map_reads` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 - [`--tp_load_host_threads`](#knob-tp_load_host_threads) — **Default:** 16; explicit0 inherits tp_load_threads. **Meaning:** Load the host arena with this many workers; zero follows TP load threads. Check: `knob_tp_load_host_threads` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_load_copy_split`](#knob-tp_load_copy_split) — **Default:** 1. **Meaning:** Read host chunks from copy zero and device extents from the last copy. Check: `knob_tp_load_copy_split` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_load_copy_split`](#knob-tp_load_copy_split) — **Default:** 2. **Meaning:** Choose each TP load read's copy: roles with stealing (2), fixed roles (1) or soonest (0). Check: `knob_tp_load_copy_split` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 - [`--tp_load_reads_per_copy`](#knob-tp_load_reads_per_copy) — **Default:** 0. **Meaning:** Limit TP in-flight reads per copy; zero is unlimited. Check: `knob_tp_load_reads_per_copy` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Memory, slots, context and 1M
 
@@ -4701,12 +4822,12 @@ Copy32, snapshot v5, TP5/M25 and pending O query/dense-shard controls are branch
 - [`--tp_pipeline_overlap`](#knob-tp_pipeline_overlap) — **Default:** 0. **Meaning:** Run the CMP prefix and native PRO tail on disjoint workers. Check: `knob_tp_pipeline_overlap` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Axes and branch feature boundaries
 
-- [`--category`](#knob-category) — **Default:** unset; no axis default selected **Meaning:** Choose the workload objective; balanced requires the full mixed-user benchmark. Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--category`](#knob-category) — **Default:** unset; no axis default selected **Meaning:** Choose the workload objective; EXL3 balanced requires its scoped mixed-user benchmark; Original balanced/single/decode is qualified on the per-genre C1 decode wins of TP4_PRO at pipeline depth 2 with 1 serving slot. Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 - [`--exactness`](#knob-exactness) — **Default:** unset; no axis default selected **Meaning:** Choose reference arithmetic, current reproducible arithmetic, or qualified bounded-loss arithmetic. Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 - [`--concurrency`](#knob-concurrency) — **Default:** unset; no axis default selected **Meaning:** Choose a C1 recipe, a C2-C8 recipe, or a measured compromise. Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 - [`--focus`](#knob-focus) — **Default:** unset; no axis default selected **Meaning:** Choose the optimization objective within the selected numerical tier. Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
-Original exact is limited to the capacity-512 serial M1 recipe. EXL3 exact, fast, vision and full mixed-envelope holds still apply. Order3 is opt-in and refuses exact-prefix modes1/2, stable1 and fork1. Forking additionally needs authenticated hard-owner equality, stable1 donor provenance, independent slots and immutable cold-plan capability; stable0 follows the legacy cold fallback. Snapshot format remains v4; main has no v5 format-selection flag.
+Original exact is limited to the capacity-512 serial M1 recipe; EXL3 exact is the one-session exact-shaping set (not official-exact). Additional lossy fast, vision and full mixed-envelope holds still apply. Order3 is opt-in and refuses exact-prefix modes1/2, stable1 and fork1. Forking additionally needs authenticated hard-owner equality, stable1 donor provenance, independent slots and immutable cold-plan capability; stable0 follows the legacy cold fallback. Snapshot format remains v4; main has no v5 format-selection flag.
 
 ### Additional main options in tcb82
 
@@ -4715,3 +4836,43 @@ Original exact is limited to the capacity-512 serial M1 recipe. EXL3 exact, fast
 - [`--ignore_eos`](#knob-ignore_eos) — **Default:** 0 on all placements. **Meaning:** Continue after EOS in non-speculative THIN fixed-horizon checks; ordinary serving retains stopping. Check: `knob_ignore_eos` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 `--prompt_token_ids` is generate-only and therefore does not appear as a serve flag.
+
+### Retained raw PP5 banked head
+
+No axis selects the banked head after the same-binary decode comparison.
+TP4_PRO at pipeline depth 2 with 1 serving slot (session0) wins structured/code/prose C1 at284.74/203.40/148.02
+tok/s versus250.51/193.00/131.28 for bankedPP5/session6, with identical outputs.
+GPU split TP4_PRO's concurrency=single set is therefore that recipe, including fast compatibility.
+The banked recipe retains much lower TTFT (about14.5–18ms versus75–103ms), but
+this does not admit a held TTFT or joint tuple.
+
+The generated original_pp_banked_single declaration retains the complete raw
+PP5 recipe: original_head_offload2, draft=dspark, pipeline5,8allocated slots,
+65536context, native PRO and measured layer layout, COST1 prices and session6.
+Both architecture head modules must be embedded. Set the complete recipe for
+one active workload; setting head2 on the selected TP route is incompatible.
+Raw head0 restores the PRO head within PP5. Defaults stay0. C2/prefill/vision,
+strict original exactness and arbitrary full-context state remain unqualified.
+Generate's retained PP5 recipe uses1slot/pipeline1 without a speed claim.
+
+### Session acceptance preserves the measured route
+
+A session policy modifies its measured placement and schedule. It does not
+replace a faster measured route or admit a held tuple. GPU split TP4_PRO's single set
+keeps TP4_PRO at pipeline depth 2 with 1 serving slot; PP5's multiple set keeps PP5 at pipeline depth 8 with 8 serving slots.
+Both retain session0 until route-local session6 comparisons pass. Structured
+retains0. Banked6 is raw-only. Exact, EXL3 and raw no-axis defaults are unchanged.
+Explicit low-level overrides still win.
+
+The PP5 depth5 session0/6/10 confirmation preserved all C1/C4 outputs. Session6
+structured C1 lost0.23% beyond0.007% spread; its measured control is0. Code/prose
+gained decode throughput with6, but proseC4 TTFTp90 off/6/10 was112.5/138.3/112.6ms:
+about26ms of p90 cost for6. Session10 preserves that measured PP5 TTFT tail.
+These component results remain unselected metadata and do not qualify6 on PP5 at pipeline depth 8 with 8 serving slots
+or TP4_PRO, a new joint/TTFT tuple, full context, vision or strict exactness.
+
+The banked+6 C1 route gained in all three genres; captures78/42/42/42/42 plus144
+shared reuses preserved all outputs. The direct comparison made TP4_PRO at pipeline depth 2 with 1 serving slot the
+single set of its own split (`--placement=tp4_pro`) while retaining banked as a raw latency alternative. Eight allocated PP5 slots describe capacity, not a
+qualification for multiple active banked workloads. Generate keeps its measured
+route and command-specific slot/pipeline settings, without a new speed claim.

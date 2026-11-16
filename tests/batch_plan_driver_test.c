@@ -26,7 +26,7 @@
 #define PLAN_REPORTED_BYTES (1ull << 40u)
 #define PLAN_SESSIONS 8u
 #define PLAN_WIDE_ROWS 1024u
-#define PLAN_MOST_BATCH 8u /* main.c's MOST_BATCH_PROGRAMS */
+#define PLAN_MOST_BATCH 8u /* commands.h's MOST_BATCH_PROGRAMS */
 #define PLAN_CHUNK_PROGRAMS \
 	6u /* wide and full programs of 1,024, 256 and 64 rows */
 #define PLAN_MOST_PROGRAMS (PLAN_MOST_BATCH + PLAN_CHUNK_PROGRAMS)
@@ -34,6 +34,10 @@
 #define PLAN_DRAFT_ROWS (MODEL_DRAFT_BLOCK + 1u)
 #define PLAN_LAYOUTS 3u
 #define PLAN_CASES 8u
+#define PLAN_CHUNK_KINDS \
+	2u /* the chunk programs: WIDE ones, then as many FULL ones */
+#define PLAN_WIDE_QUARTERS 4u
+#define PLAN_TWIN_BATCH 2 /* the BATCH program of program 1's row count */
 
 /* A drawing step of sessions drafting sessions, rows_each rows a session, and the program (rows, verifiers) it
  * takes. */
@@ -175,8 +179,9 @@ int main(void)
 		const struct plan_layout *const own = &layouts[layout];
 		const uint32_t program_count =
 			own->batch_count + PLAN_CHUNK_PROGRAMS;
-		const uint32_t chunk_rows[PLAN_CHUNK_PROGRAMS / 2u] = {
-			PLAN_WIDE_ROWS, PLAN_WIDE_ROWS / 4u,
+		const uint32_t chunk_rows[PLAN_CHUNK_PROGRAMS /
+					  PLAN_CHUNK_KINDS] = {
+			PLAN_WIDE_ROWS, PLAN_WIDE_ROWS / PLAN_WIDE_QUARTERS,
 			MODEL_WIDE_LEAST_ROWS
 		};
 		struct execution_program *programs[PLAN_MOST_PROGRAMS] = { 0 };
@@ -189,11 +194,13 @@ int main(void)
 			const uint32_t chunk =
 				batch ? 0 :
 					(index - own->batch_count) %
-						(PLAN_CHUNK_PROGRAMS / 2u);
+						(PLAN_CHUNK_PROGRAMS /
+						 PLAN_CHUNK_KINDS);
 			const enum program_kind kind =
 				batch ? PROGRAM_BATCH :
 				index - own->batch_count <
-						PLAN_CHUNK_PROGRAMS / 2u ?
+						PLAN_CHUNK_PROGRAMS /
+							PLAN_CHUNK_KINDS ?
 					PROGRAM_WIDE :
 					PROGRAM_FULL;
 			const uint32_t rows = batch ? own->rows[index] :
@@ -240,7 +247,7 @@ int main(void)
 			/* two BATCH programs of one row count must verify for different counts of sessions */
 			uint32_t equal[PLAN_MOST_PROGRAMS];
 			memcpy(equal, verifiers, sizeof(equal));
-			equal[1] = equal[2];
+			equal[1] = equal[PLAN_TWIN_BATCH];
 			expect(step_batch_verifiers_attach(driver, equal,
 							   program_count) ==
 				       STATUS_INVALID_ARGUMENT,

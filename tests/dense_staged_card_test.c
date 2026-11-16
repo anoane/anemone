@@ -38,6 +38,7 @@
 #define WARM_RUNS 3u
 #define TIME_SAMPLES 9u
 #define FIRST_STREAM 17u /* the cases' streams from here on */
+#define SIGN_SHIFT 32 /* the hash bit that signs a value */
 enum { WIDE_FORM, STAGED_FORM, FORMS };
 
 struct dense_case {
@@ -85,19 +86,18 @@ static bool case_run(struct test_linear_card *card,
 			    FLOAT_WEIGHT_EXPONENT |
 			    (uint32_t)(hash &
 				       ((1u << FLOAT_MANTISSA_BITS) - 1u)) |
-			    ((hash >> 32) & 1u ? FLOAT_SIGN : 0u);
+			    ((hash >> SIGN_SHIFT) & 1u ? FLOAT_SIGN : 0u);
 		    memcpy(stored + index * FLOAT_BYTES, &bits, FLOAT_BYTES);
 	    }
     } else {
-	    for (uint32_t output = 0; output < dense->outputs; output++)
-		    test_linear_values(
-			    (uint16_t *)(void *)(stored +
-						 (uint64_t)output *
-							 dense->inputs *
-							 BFLOAT16_BYTES),
-			    dense->inputs,
-			    (stream ^ WEIGHT_STREAM) * MOST_OUTPUTS + output,
-			    TEST_LINEAR_VALUES_PLAIN);
+	    static uint16_t weight_row[MOST_INPUTS];
+	    for (uint32_t output = 0; output < dense->outputs; output++) {
+		    test_linear_values(weight_row, dense->inputs,
+				       (stream ^ WEIGHT_STREAM) * MOST_OUTPUTS + output,
+				       TEST_LINEAR_VALUES_PLAIN);
+		    memcpy(stored + (uint64_t)output * dense->inputs * BFLOAT16_BYTES,
+			   weight_row, (size_t)dense->inputs * BFLOAT16_BYTES);
+	    }
     }
     static uint16_t rows[MOST_ROWS * MOST_INPUTS];
     for (uint32_t row = 0; row < dense->rows; row++)

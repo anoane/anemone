@@ -31,6 +31,8 @@
 #define SPLIT_LADDER_1536_ROWS 1536u /* --prefill_ladder_1536's programs */
 #define SPLIT_WIDEST_ROWS 2048u /* V41_DATA_TP_SPLIT_MOST_ROWS */
 #define SPLIT_PROGRAMS 3u
+#define SPLIT_FULL 2 /* the PROGRAM_FULL program's index in a program table */
+#define SPLIT_HALVES 2u /* a split slab's two halves, each a view */
 #define SPLIT_TAIL_ROWS 128u /* --prefill_tail_rows: a full program of two 64-row tail chunks */
 #define SPLIT_LONG_TAIL_ROWS 320u /* --prefill_tail_rows=320: and one of five, unsplit */
 #define SPLIT_WIDEST_TAIL_ROWS 448u /* --prefill_tail_rows=448: and one of seven, unsplit */
@@ -39,6 +41,7 @@
 #define SPLIT_WAIT_NS 1000000000ull
 #define SPLIT_RUNS_A_LAYER 3u
 #define SPLIT_MARKS (LAUNCH_SIDE_MORE + 1u) /* a count for each branch */
+#define SPLIT_SKINNY_BF16 4u /* --dense_skinny_bf16=4 */
 
 static uint32_t failures;
 static struct device_card
@@ -276,10 +279,11 @@ int main(void)
 		for (uint32_t card = 0; card < SPLIT_CARDS; card++) {
 			const uint32_t slabs =
 				SPLIT_WIDE_ROWS / LINEAR_MAXIMUM_ROWS;
-			expect(whole[index]->cards[card].view_count == 0 || whole[index]->cards[card].view_count == slabs,
+			expect(whole[index]->cards[card].view_count == 0 ||
+				       whole[index]->cards[card].view_count == slabs,
 			       "without split_overlap a wide card's views are its slabs");
 			expect(split[index]->cards[card].view_count == 0 ||
-				       split[index]->cards[card].view_count == slabs + 2u,
+				       split[index]->cards[card].view_count == slabs + SPLIT_HALVES,
 			       "with split_overlap a wide card's views are its slabs and the two halves");
 			expect(off[card][LAUNCH_SIDE] == 0 &&
 				       off[card][LAUNCH_RESUME] == 0 &&
@@ -335,7 +339,7 @@ int main(void)
 		branches(widest[index], marks);
 		expect(widest[index]->cards[0].view_count ==
 				       SPLIT_WIDEST_ROWS / LINEAR_MAXIMUM_ROWS +
-					       2u &&
+					       SPLIT_HALVES &&
 			       marks[0][LAUNCH_RESUME] ==
 				       marks[0][LAUNCH_JOIN] &&
 			       marks[0][LAUNCH_RESUME] != 0,
@@ -348,7 +352,8 @@ int main(void)
 	}
 	/* the joint mode: as many side runs as the pipeline (the FFN sums of A beside B's shared expert) */
 	for (uint32_t index = 1; index < SPLIT_PROGRAMS; index++) {
-		uint32_t piped[SPLIT_CARDS][SPLIT_MARKS], joined[SPLIT_CARDS][SPLIT_MARKS], wide[SPLIT_CARDS][SPLIT_MARKS];
+		uint32_t piped[SPLIT_CARDS][SPLIT_MARKS], joined[SPLIT_CARDS][SPLIT_MARKS],
+			 wide[SPLIT_CARDS][SPLIT_MARKS];
 		branches(pipelined[index], piped);
 		branches(joint[index], joined);
 		branches(joint_widest[index], wide);
@@ -416,8 +421,8 @@ int main(void)
 	expect(wide_balance_ready, "the joint programs with gather_balance of the wide programs prepare");
 	for (uint32_t card = 0; card < SPLIT_CARDS && wide_balance_ready && balance_ready; card++)
 		expect(balance_wide_only[1]->cards[card].launch_count == balance_only[1]->cards[card].launch_count &&
-			       balance_wide_only[2]->cards[card].launch_count ==
-				       joint_widest[2]->cards[card].launch_count,
+			       balance_wide_only[SPLIT_FULL]->cards[card].launch_count ==
+				       joint_widest[SPLIT_FULL]->cards[card].launch_count,
 		       "gather_balance 2: the wide program balanced, the full program as without it");
 	/* --tp_full_split_overlap=5 with --tp_split_overlap=6: the 2,048-row wide program the joint mode's, the full
 	 * program the pipeline's */
@@ -428,7 +433,8 @@ int main(void)
 	expect(mixed_ready, "the joint programs with the pipeline's full program prepare");
 	for (uint32_t card = 0; card < SPLIT_CARDS && mixed_ready; card++)
 		expect(mixed[1]->cards[card].launch_count == joint_widest[1]->cards[card].launch_count &&
-			       mixed[2]->cards[card].launch_count == widest[2]->cards[card].launch_count,
+			       mixed[SPLIT_FULL]->cards[card].launch_count ==
+				       widest[SPLIT_FULL]->cards[card].launch_count,
 		       "full_split_overlap: the wide program the joint mode's, the full program the pipeline's");
 	/* mode 7: the joint call's down GEMM and combine a half each (three launches more a split layer), the joint
 	 * mode's side runs, each resumed and joined once */
@@ -443,8 +449,8 @@ int main(void)
 		for (uint32_t card = 0; card < SPLIT_CARDS; card++) {
 			const uint32_t joint_launches = joint_widest[index]->cards[card].launch_count;
 			const uint32_t down_launches = down_halves[index]->cards[card].launch_count;
-			printf("program %" PRIu32 " card %" PRIu32 " a half's down GEMMs: launches %" PRIu32 " -> %" PRIu32
-			       "\n", index, card, joint_launches, down_launches);
+			printf("program %" PRIu32 " card %" PRIu32 " a half's down GEMMs: launches %" PRIu32
+			       " -> %" PRIu32 "\n", index, card, joint_launches, down_launches);
 			expect(down_launches > joint_launches &&
 				       (down_launches - joint_launches) %
 						       EXL3_TCP_PART_LAUNCHES ==
@@ -457,8 +463,8 @@ int main(void)
 		}
 	}
 	/* --prefill_tail_rows=128: the 128-row full program takes its 64-row groups in the 64-row chunk's forms (the
-	 * decode TC MoE's launches, trunk_mma's _64 form a group); a wide program of 128 rows too (main.c prepares one
-	 * with --prefill_front_tail alone: no ladder has 128 rows then) */
+	 * decode TC MoE's launches, trunk_mma's _64 form a group); a wide program of 128 rows too (commands.c prepares
+	 * one with --prefill_front_tail alone: no ladder has 128 rows then) */
 	const bool plain_ready = programs_prepare(
 		V41_DATA_SPLIT_JOINT, rings, true, SPLIT_TAIL_ROWS, tail_plain);
 	tail_rows = SPLIT_TAIL_ROWS;
@@ -485,13 +491,14 @@ int main(void)
 	expect(long_ready && ladder_plain_ready, "the 320-row tail program and the 256-row ladder programs prepare");
 	for (uint32_t card = 0; card < SPLIT_CARDS && long_ready && ladder_plain_ready; card++) {
 		uint32_t marks[SPLIT_CARDS][SPLIT_MARKS];
-		branches(long_tail[2], marks);
+		branches(long_tail[SPLIT_FULL], marks);
 		printf("card %" PRIu32
 		       " 320-row tail program: launches %" PRIu32
 		       ", side runs %" PRIu32 "\n",
-		       card, long_tail[2]->cards[card].launch_count,
+		       card, long_tail[SPLIT_FULL]->cards[card].launch_count,
 		       marks[card][LAUNCH_SIDE]);
-		expect(ladder_256[2]->cards[card].launch_count == ladder_256_plain[2]->cards[card].launch_count,
+		expect(ladder_256[SPLIT_FULL]->cards[card].launch_count ==
+			       ladder_256_plain[SPLIT_FULL]->cards[card].launch_count,
 		       "tail_rows 320: the 256-row full program as without it");
 	}
 	/* --prefill_tail_rows=448: the 448-row full program in the tail's forms (seven 64-row groups, one decode TC MoE
@@ -508,8 +515,9 @@ int main(void)
 	expect(widest_ready, "the 448-row tail program and the 320-row one beside it prepare");
 	for (uint32_t card = 0; card < SPLIT_CARDS && widest_ready && long_ready; card++) {
 		printf("card %" PRIu32 " 448-row tail program: launches %" PRIu32 "\n", card,
-		       widest_tail[2]->cards[card].launch_count);
-		expect(widest_long[2]->cards[card].launch_count == long_tail[2]->cards[card].launch_count,
+		       widest_tail[SPLIT_FULL]->cards[card].launch_count);
+		expect(widest_long[SPLIT_FULL]->cards[card].launch_count ==
+			       long_tail[SPLIT_FULL]->cards[card].launch_count,
 		       "tail_rows 448: the 320-row tail program as with tail_rows 320");
 	}
 	/* --prefill_tail_overlay=1: the tail programs' TC MoE workspace over the prefill form's: the same launches */
@@ -561,26 +569,36 @@ int main(void)
 	expect(thin_ready && least_ready, "thin_tail: the 40- and 16-row full programs prepare");
 	for (uint32_t card = 0; card < SPLIT_CARDS && thin_ready && least_ready; card++)
 		printf("card %" PRIu32 " thin_tail: 40-row full program launches %" PRIu32 ", 16-row %" PRIu32 "\n",
-		       card, thin_forms[2]->cards[card].launch_count, thin_least[2]->cards[card].launch_count);
+		       card, thin_forms[SPLIT_FULL]->cards[card].launch_count,
+		       thin_least[SPLIT_FULL]->cards[card].launch_count);
 	for (uint32_t card = 0; card < SPLIT_CARDS && sets_ready && widest_ready && tail_ready; card++) {
 		printf("card %" PRIu32 " tail_sets: 448-row tail program launches %" PRIu32 " -> %" PRIu32
 		       ", 128-row %" PRIu32 " -> %" PRIu32 "\n",
-		       card, widest_tail[2]->cards[card].launch_count, sets_widest[2]->cards[card].launch_count,
-		       tail_forms[2]->cards[card].launch_count, sets_short[2]->cards[card].launch_count);
-		expect(sets_widest[2]->cards[card].launch_count < widest_tail[2]->cards[card].launch_count &&
-			       sets_short[2]->cards[card].launch_count < tail_forms[2]->cards[card].launch_count,
+		       card, widest_tail[SPLIT_FULL]->cards[card].launch_count,
+		       sets_widest[SPLIT_FULL]->cards[card].launch_count,
+		       tail_forms[SPLIT_FULL]->cards[card].launch_count,
+		       sets_short[SPLIT_FULL]->cards[card].launch_count);
+		expect(sets_widest[SPLIT_FULL]->cards[card].launch_count <
+				       widest_tail[SPLIT_FULL]->cards[card].launch_count &&
+			       sets_short[SPLIT_FULL]->cards[card].launch_count <
+				       tail_forms[SPLIT_FULL]->cards[card].launch_count,
 		       "tail_sets: fewer launches in the tail programs");
 	}
 	for (uint32_t card = 0; card < SPLIT_CARDS && overlay_ready && widest_ready && tail_ready; card++)
-		expect(overlay_widest[2]->cards[card].launch_count == widest_tail[2]->cards[card].launch_count &&
-			       overlay_long[2]->cards[card].launch_count == long_tail[2]->cards[card].launch_count &&
-			       overlay_short[2]->cards[card].launch_count == tail_forms[2]->cards[card].launch_count,
+		expect(overlay_widest[SPLIT_FULL]->cards[card].launch_count ==
+				       widest_tail[SPLIT_FULL]->cards[card].launch_count &&
+			       overlay_long[SPLIT_FULL]->cards[card].launch_count ==
+				       long_tail[SPLIT_FULL]->cards[card].launch_count &&
+			       overlay_short[SPLIT_FULL]->cards[card].launch_count ==
+				       tail_forms[SPLIT_FULL]->cards[card].launch_count,
 		       "tail_overlay: each tail program's launches as without it");
 	for (uint32_t card = 0; card < SPLIT_CARDS && plain_ready && tail_ready; card++) {
 		printf("card %" PRIu32 " 128-row full program, the tail's forms: launches %" PRIu32 " -> %" PRIu32 "\n",
-		       card, tail_plain[2]->cards[card].launch_count, tail_forms[2]->cards[card].launch_count);
+		       card, tail_plain[SPLIT_FULL]->cards[card].launch_count,
+		       tail_forms[SPLIT_FULL]->cards[card].launch_count);
 		expect(tail_forms[1]->cards[card].launch_count != tail_plain[1]->cards[card].launch_count &&
-			       tail_forms[2]->cards[card].launch_count != tail_plain[2]->cards[card].launch_count,
+			       tail_forms[SPLIT_FULL]->cards[card].launch_count !=
+				       tail_plain[SPLIT_FULL]->cards[card].launch_count,
 		       "tail_rows: the full and the wide program of 128 rows in the tail's forms");
 	}
 	/* --tp_pool_gather=1 (with --tp_pool_chunk=1): the wide and the full program of 2,048 rows gather the pooled
@@ -600,19 +618,21 @@ int main(void)
 	for (uint32_t card = 0; card < SPLIT_CARDS && pool_plain_ready && pool_gathered_ready; card++) {
 		printf("card %" PRIu32 " pool_gather: wide launches %" PRIu32 " -> %" PRIu32 ", full %" PRIu32
 		       " -> %" PRIu32 "\n", card, pool_plain[1]->cards[card].launch_count,
-		       pool_gathered[1]->cards[card].launch_count, pool_plain[2]->cards[card].launch_count,
-		       pool_gathered[2]->cards[card].launch_count);
+		       pool_gathered[1]->cards[card].launch_count, pool_plain[SPLIT_FULL]->cards[card].launch_count,
+		       pool_gathered[SPLIT_FULL]->cards[card].launch_count);
 		const uint32_t more = POOL_GATHER_POOLED_LAYERS * POOL_GATHER_HALVES * POOL_GATHER_HALF_LAUNCHES;
 		const uint32_t thin = pool_plain[0]->cards[card].launch_count;
 		const uint32_t wide = pool_plain[1]->cards[card].launch_count;
-		const uint32_t full = pool_plain[2]->cards[card].launch_count;
+		const uint32_t full = pool_plain[SPLIT_FULL]->cards[card].launch_count;
 		expect(pool_gathered[0]->cards[card].launch_count == thin &&
 			       pool_gathered[1]->cards[card].launch_count == wide + more &&
-			       pool_gathered[2]->cards[card].launch_count == full + more,
+			       pool_gathered[SPLIT_FULL]->cards[card].launch_count == full + more,
 		       "pool_gather: the gathers' launches more in the wide and full programs, the thin one unchanged");
 	}
-	/* --prefill_dead_halves=1: the full programs of 1,024 and 2,048 rows (joint mode 6, and 7 at 2,048) leave a dead
-	 * half's sums and gathers (fewer launches, every side run resumed and joined once); the thin and wide ones the same */
+	/* --prefill_dead_halves=1: the full programs of 1,024 and 2,048 rows (joint mode 6, and 7 at 2,048) leave a
+	 * dead
+	 * half's sums and gathers (fewer launches, every side run resumed and joined once); the thin and wide ones the
+	 * same */
 	struct execution_program *dead_wide[SPLIT_PROGRAMS] = { 0 },
 				 *dead_widest[SPLIT_PROGRAMS] = { 0 },
 				 *dead_down[SPLIT_PROGRAMS] = { 0 };
@@ -642,11 +662,12 @@ int main(void)
 	expect(trimmed_ready, "the programs with trimmed dead rows prepare");
 	for (uint32_t card = 0; card < SPLIT_CARDS && trimmed_ready && dead_ready; card++) {
 		uint32_t marks[SPLIT_CARDS][SPLIT_MARKS];
-		branches(trimmed[2], marks);
+		branches(trimmed[SPLIT_FULL], marks);
 		printf("card %" PRIu32 " trimmed dead rows: full launches %" PRIu32 " -> %" PRIu32 "\n", card,
-		       dead_widest[2]->cards[card].launch_count, trimmed[2]->cards[card].launch_count);
-		expect(trimmed[2]->cards[card].launch_count <=
-				       dead_widest[2]->cards[card].launch_count &&
+		       dead_widest[SPLIT_FULL]->cards[card].launch_count,
+		       trimmed[SPLIT_FULL]->cards[card].launch_count);
+		expect(trimmed[SPLIT_FULL]->cards[card].launch_count <=
+				       dead_widest[SPLIT_FULL]->cards[card].launch_count &&
 			       trimmed[1]->cards[card].launch_count ==
 				       dead_widest[1]->cards[card].launch_count &&
 			       marks[card][LAUNCH_RESUME] ==
@@ -659,21 +680,21 @@ int main(void)
 							 down_halves };
 	for (uint32_t set = 0; set < sizeof(dead_sets) / sizeof(dead_sets[0]) && dead_ready; set++) {
 		uint32_t marks[SPLIT_CARDS][SPLIT_MARKS];
-		branches(dead_sets[set][2], marks);
+		branches(dead_sets[set][SPLIT_FULL], marks);
 		for (uint32_t card = 0; card < SPLIT_CARDS; card++) {
 			printf("set %" PRIu32 " card %" PRIu32
 			       " dead halves: full launches %" PRIu32
 			       " -> %" PRIu32 ", side runs %" PRIu32 "\n",
 			       set, card,
-			       live_sets[set][2]->cards[card].launch_count,
-			       dead_sets[set][2]->cards[card].launch_count,
+			       live_sets[set][SPLIT_FULL]->cards[card].launch_count,
+			       dead_sets[set][SPLIT_FULL]->cards[card].launch_count,
 			       marks[card][LAUNCH_RESUME]);
 			for (uint32_t index = 0; index + 1u < SPLIT_PROGRAMS; index++)
 				expect(dead_sets[set][index]->cards[card].launch_count ==
 					       live_sets[set][index]->cards[card].launch_count,
 				       "dead halves: the thin and wide programs as without them");
-			expect(dead_sets[set][2]->cards[card].launch_count <
-					       live_sets[set][2]
+			expect(dead_sets[set][SPLIT_FULL]->cards[card].launch_count <
+					       live_sets[set][SPLIT_FULL]
 						       ->cards[card]
 						       .launch_count &&
 				       marks[card][LAUNCH_RESUME] ==
@@ -711,12 +732,13 @@ int main(void)
 		for (uint32_t index = 0; index < SPLIT_PROGRAMS; index++) {
 			const uint32_t fewer = joint_widest[index]->cards[card].launch_count -
 					       pieces_queries[index]->cards[card].launch_count;
-			printf("program %" PRIu32 " card %" PRIu32 " queries_piece: %" PRIu32 " launches fewer\n", index,
-			       card, fewer);
+			printf("program %" PRIu32 " card %" PRIu32 " queries_piece: %" PRIu32 " launches fewer\n",
+			       index, card, fewer);
 			expect(index == 0 ? fewer == 0 : fewer != 0 && fewer % QUERIES_PIECE_HALF_LAUNCHES == 0,
 			       "queries_piece: the thin program the same, a half's span queries and copy fewer");
 		}
-	/* --tp_index_span=1 (with --tp_pool_chunk=1): the wide and full programs' index scans a span of 8 slabs a launch */
+	/* --tp_index_span=1 (with --tp_pool_chunk=1): the wide and full programs' index scans a span of 8 slabs a
+	 * launch */
 	struct execution_program *spans[SPLIT_PROGRAMS] = { 0 };
 	index_span = pool_chunk_alone = true;
 	const bool spans_ready = programs_prepare(
@@ -727,9 +749,10 @@ int main(void)
 		for (uint32_t index = 0; index < SPLIT_PROGRAMS; index++) {
 			const uint32_t fewer = pool_plain[index]->cards[card].launch_count -
 					       spans[index]->cards[card].launch_count;
-			printf("program %" PRIu32 " card %" PRIu32 " index_span: %" PRIu32 " launches fewer\n", index, card,
-			       fewer);
-			expect(index == 0 ? fewer == 0 : fewer != 0 && fewer < pool_plain[index]->cards[card].launch_count,
+			printf("program %" PRIu32 " card %" PRIu32 " index_span: %" PRIu32 " launches fewer\n",
+			       index, card, fewer);
+			expect(index == 0 ? fewer == 0 :
+				       fewer != 0 && fewer < pool_plain[index]->cards[card].launch_count,
 			       "index_span: the thin program the same, fewer wide and full launches");
 		}
 	/* --tp_gather_balance=3 (with --tp_pool_chunk=1): every rank a part of the index scans, the wider ranks fewer
@@ -745,9 +768,10 @@ int main(void)
 		for (uint32_t card = 0; card < SPLIT_CARDS; card++) {
 			plain_all += pool_plain[index]->cards[card].launch_count;
 			weighted_all += weighted[index]->cards[card].launch_count;
-			moved += pool_plain[index]->cards[card].launch_count != weighted[index]->cards[card].launch_count;
-			printf("program %" PRIu32 " card %" PRIu32 " weighted gather balance: launches %" PRIu32 " -> %" PRIu32
-			       "\n", index, card, pool_plain[index]->cards[card].launch_count,
+			moved += pool_plain[index]->cards[card].launch_count !=
+				 weighted[index]->cards[card].launch_count;
+			printf("program %" PRIu32 " card %" PRIu32 " weighted gather balance: launches %" PRIu32
+			       " -> %" PRIu32 "\n", index, card, pool_plain[index]->cards[card].launch_count,
 			       weighted[index]->cards[card].launch_count);
 		}
 		expect(plain_all == weighted_all && (index == 0) == (moved == 0),
@@ -757,7 +781,7 @@ int main(void)
 	 * --tp_gather_balance=3 with --tp_pool_chunk=1): the programs prepare, the thin one as without them */
 	struct execution_program *combined[SPLIT_PROGRAMS] = { 0 };
 	queries_piece = index_span = balance_weighted = pool_chunk_alone = true;
-	skinny_bf16 = 4u;
+	skinny_bf16 = SPLIT_SKINNY_BF16;
 	const bool combined_ready = programs_prepare(
 		V41_DATA_SPLIT_JOINT, rings, true, SPLIT_WIDEST_ROWS, combined);
 	queries_piece = index_span = balance_weighted = pool_chunk_alone = false;
@@ -766,18 +790,21 @@ int main(void)
 	for (uint32_t card = 0; card < SPLIT_CARDS && combined_ready && pool_plain_ready; card++) {
 		printf("card %" PRIu32 " the four knobs: launches %" PRIu32 " / %" PRIu32 " / %" PRIu32 "\n", card,
 		       combined[0]->cards[card].launch_count, combined[1]->cards[card].launch_count,
-		       combined[2]->cards[card].launch_count);
+		       combined[SPLIT_FULL]->cards[card].launch_count);
 		expect(combined[0]->cards[card].launch_count == pool_plain[0]->cards[card].launch_count &&
-			       combined[2]->cards[card].launch_count < pool_plain[2]->cards[card].launch_count,
+			       combined[SPLIT_FULL]->cards[card].launch_count <
+				       pool_plain[SPLIT_FULL]->cards[card].launch_count,
 		       "the four knobs: the thin program as without them, the full one fewer launches");
 	}
-	/* --tp_core_compact_halves=1: the split halves' cores write wo_a's compact rows, two copies a split layer fewer */
+	/* --tp_core_compact_halves=1: the split halves' cores write wo_a's compact rows, two copies a split layer
+	 * fewer */
 	struct execution_program *halves_compact[SPLIT_PROGRAMS] = { 0 };
 	core_compact_halves = true;
 	const bool halves_compact_ready =
 		programs_prepare(V41_DATA_SPLIT_JOINT, rings, true,
 				 SPLIT_WIDEST_ROWS, halves_compact);
-	/* and with the round's defaults beside it: mode 7, dead halves (trimmed), pool gather, at 2,048 and 1,024 rows */
+	/* and with the round's defaults beside it: mode 7, dead halves (trimmed), pool gather, at 2,048 and 1,024 rows
+	 * */
 	struct execution_program *compact_defaults[SPLIT_PROGRAMS] = { 0 },
 				 *compact_wide[SPLIT_PROGRAMS] = { 0 };
 	cone_behind = MODEL_FULL_CONE_LEAST_ROWS - DEAD_HALVES_MARGIN;
@@ -791,7 +818,8 @@ int main(void)
 	rows_trimmed = pool_gather = false;
 	core_compact_halves = false;
 	expect(compact_defaults_ready, "core_compact_halves with mode 7, dead halves and pool gather prepares");
-	/* --prefill_ladder_1536: a 1,536-row plan's programs (split halves of 768 rows) with mode 7, dead halves and pool
+	/* --prefill_ladder_1536: a 1,536-row plan's programs (split halves of 768 rows) with mode 7, dead halves and
+	 * pool
 	 * gather prepare */
 	struct execution_program *ladder_1536[SPLIT_PROGRAMS] = { 0 };
 	cone_behind = MODEL_FULL_CONE_LEAST_ROWS - DEAD_HALVES_MARGIN;

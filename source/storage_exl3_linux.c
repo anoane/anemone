@@ -47,6 +47,7 @@ struct storage_reader {
 	/* each source opened once more with O_DIRECT (-1: not), and the alignment its direct reads need */
 	int direct_sources[EXL3_MAP_MAXIMUM_SOURCES];
 	uint32_t direct_alignment[EXL3_MAP_MAXIMUM_SOURCES];
+	uint64_t map_device, map_inode; /* the map file as opened */
 };
 
 static enum exl3_read_mode read_mode = EXL3_READS_DIRECT;
@@ -100,6 +101,16 @@ static void direct_open(struct storage_reader *reader, uint32_t source,
 			open(path,
 			     O_RDONLY | O_DIRECT | O_CLOEXEC | O_NONBLOCK) :
 			-1;
+	/* the direct descriptor reads the same file as the checked one, or none (the checked one then serves) */
+	struct stat checked, direct;
+	if (reader->direct_sources[source] >= 0 &&
+	    (fstat(reader->sources[source], &checked) != 0 ||
+	     fstat(reader->direct_sources[source], &direct) != 0 ||
+	     checked.st_dev != direct.st_dev ||
+	     checked.st_ino != direct.st_ino)) {
+		(void)close(reader->direct_sources[source]);
+		reader->direct_sources[source] = -1;
+	}
 	struct statx status = { .stx_mask = 0 };
 	const bool stated = reader->direct_sources[source] >= 0 &&
 			    statx(reader->direct_sources[source], "",
@@ -160,12 +171,16 @@ MUST_CHECK static result_status map_open(const char *const *paths,
 			-1 :
 			open(paths[0], O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	result_status status = STATUS_CORRUPT_PACK;
+	struct stat map_metadata;
 	if (reader->sources[0] < 0 ||
+	    fstat(reader->sources[0], &map_metadata) != 0 ||
 	    !read_exact(reader->sources[0], 0, &reader->header,
 			sizeof(reader->header))) {
 		status = STATUS_INPUT_OUTPUT_ERROR;
 		goto refused;
 	}
+	reader->map_device = map_metadata.st_dev;
+	reader->map_inode = map_metadata.st_ino;
 	const struct map_header *const header = &reader->header;
 	if (memcmp(header->magic, magic, sizeof(magic)) != 0 ||
 	    header->byte_count == 0 || header->byte_count > INT64_MAX ||
@@ -220,7 +235,11 @@ MUST_CHECK static result_status map_open(const char *const *paths,
 				source);
 		}
 		sizes[source] = (uint64_t)metadata.st_size;
-		direct_open(reader, source, source == 0 ? paths[0] : path);
+		/* checking builds: the direct open meets another file than the checked one (the map) */
+		direct_open(reader, source,
+			    source == 0 || FAULT_POINT(exl3_direct_other_file) ?
+				    paths[0] :
+				    path);
 	}
 	const uint64_t segment_bytes =
 		(uint64_t)header->segment_count * sizeof(struct map_segment);
@@ -295,7 +314,7 @@ map_describe(const struct storage_reader *reader,
 		1u + (reader->flat != NULL ?
 			      reader->flat_description.copy_count :
 			      0u),
-		EXL3_MAP_BLOCK_BYTES
+		EXL3_MAP_BLOCK_BYTES, reader->map_device, reader->map_inode
 	};
 	return STATUS_OK;
 }
@@ -316,7 +335,8 @@ MUST_CHECK static result_status map_read(const struct storage_reader *reader,
 	    count > SIZE_MAX) {
 		return STATUS_INVALID_ARGUMENT;
 	}
-	/* bytes no segment holds read as zero: the holes are cleared as the segments are walked, each byte written once */
+	/* bytes no segment holds read as zero: the holes are cleared as the segments are walked, each byte written
+	 * once */
 	unsigned char *const bytes = destination;
 	uint64_t cleared_to = offset;
 	uint32_t low = 0, high = reader->header.segment_count;
@@ -355,7 +375,7 @@ MUST_CHECK static result_status map_read(const struct storage_reader *reader,
 			segment->source_offset + begin - segment->byte_offset;
 		unsigned char *const piece = bytes + (begin - offset);
 		const uint64_t alignment = reader->direct_alignment[source];
-		/* the mode now, not at open: the engine may leave DIRECT_DROPPED for DROPPED after it (main.c) */
+		/* the mode now, not at open: the engine may leave DIRECT_DROPPED for DROPPED after it (commands.c) */
 		const bool direct =
 			(read_mode == EXL3_READS_DIRECT ||
 			 read_mode == EXL3_READS_DIRECT_DROPPED) &&
@@ -399,4 +419,41 @@ const struct storage_operations_record *storage_for_path(const char *path)
 				      suffix) == 0 ?
 		       &storage_exl3 :
 		       &storage_direct;
+}
+
+const char *storage_device_path(const char *path,
+				char output[EXL3_MAP_PATH_BYTES])
+{
+	if (output == NULL || storage_for_path(path) != &storage_exl3) {
+		return path;
+	}
+	struct storage_reader *reader = NULL;
+	/* each source's logical bytes */
+	uint64_t held[EXL3_MAP_MAXIMUM_SOURCES] = { 0 };
+	const bool opened = map_open(&path, 1, &reader) == STATUS_OK;
+	for (uint32_t index = 0; opened && index < reader->header.segment_count;
+	     index++) {
+		held[reader->segments[index].source_index] +=
+			reader->segments[index].byte_count;
+	}
+	uint32_t most = 0;
+	for (uint32_t source = 1;
+	     opened && source < reader->header.source_count; source++) {
+		most = held[source] > held[most] ? source : most;
+	}
+	/* the open checked the path table: each path absolute and terminated within its bytes */
+	char largest[EXL3_MAP_PATH_BYTES];
+	const bool named =
+		opened && most != 0 &&
+		read_exact(reader->sources[0],
+			   sizeof(reader->header) +
+				   (uint64_t)most * EXL3_MAP_PATH_BYTES,
+			   largest, sizeof(largest)) &&
+		memchr(largest, 0, sizeof(largest)) != NULL;
+	map_close(reader);
+	if (!named) {
+		return path;
+	}
+	memcpy(output, largest, sizeof(largest));
+	return output;
 }

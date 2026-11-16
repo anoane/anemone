@@ -290,24 +290,50 @@ static void input_item(struct reader *reader, struct json_value item)
 static void tools(struct reader *reader, struct json_value array,
 		  struct json_value space, bool *first)
 {
+	/* Two frames: root tools and one namespace, 112 bytes on x86-64. */
+	enum { TOOL_LEVELS = 2 };
+	struct tools_frame {
+		struct json_value array, space;
+		size_t cursor;
+	} frames[TOOL_LEVELS];
 	if (!kind(array, '[')) {
 		refuse(reader, "Responses tools must be an array");
 		return;
 	}
-	struct json_value tool = { 0 };
-	for (size_t cursor = array.begin;
-	     json_next(array, &cursor, NULL, &tool);) {
+	unsigned depth = 1;
+	frames[0] = (struct tools_frame){ array, space, array.begin };
+	while (depth != 0) {
+		struct tools_frame *const frame = &frames[depth - 1u];
+		struct json_value tool = { 0 };
+		if (!json_next(frame->array, &frame->cursor, NULL, &tool)) {
+			depth--;
+			continue;
+		}
 		const struct json_value type = member(reader, tool, "type");
-		if (word(reader, type, "namespace") && space.text == NULL) {
+		if (word(reader, type, "namespace") &&
+		    frame->space.text == NULL && depth < TOOL_LEVELS) {
 			const struct json_value name =
 				member(reader, tool, "name");
 			if (!kind(name, '"')) {
+				/* Refused namespaces skip nested translation: an oversized
+				 * refused request stays 400 instead of a buffer error. */
 				refuse(reader,
 				       "a tool namespace needs its name string");
+				continue;
 			}
-			tools(reader, member(reader, tool, "tools"), name,
-			      first);
+			const struct json_value nested =
+				member(reader, tool, "tools");
+			if (!kind(nested, '[')) {
+				refuse(reader,
+				       "Responses tools must be an array");
+				continue;
+			}
+			frames[depth] = (struct tools_frame){ nested, name,
+							      nested.begin };
+			depth++;
 		} else if (word(reader, type, "function")) {
+			const struct json_value current_space = frame->space;
+
 			text(reader->body,
 			     *first ? "{\"type\":\"function\",\"function\":{" :
 				      ",{\"type\":\"function\",\"function\":{");
@@ -325,7 +351,7 @@ static void tools(struct reader *reader, struct json_value array,
 				text(reader->body, ":");
 				if (word(reader, key, "name")) {
 					qualified_name(reader, reader->body,
-						       value, space);
+						       value, current_space);
 				} else {
 					raw(reader->body, value);
 				}
@@ -366,24 +392,7 @@ static void known_fields(struct reader *reader, struct json_value object,
 /* json.h accepts Python's nonfinite literals; reflected fields must remain strict JSON on the wire. */
 static bool standard_json(struct json_value value)
 {
-	if (value.text == NULL) {
-		return true;
-	}
-	if (kind(value, 'N') || kind(value, 'I') ||
-	    (kind(value, '-') && value.begin + 1u < value.end &&
-	     value.text[value.begin + 1u] == 'I')) {
-		return false;
-	}
-	if (kind(value, '[') || kind(value, '{')) {
-		struct json_value child = { 0 };
-		for (size_t at = value.begin;
-		     json_next(value, &at, NULL, &child);) {
-			if (!standard_json(child)) {
-				return false;
-			}
-		}
-	}
-	return true;
+	return !json_has_unquoted(value, "NI");
 }
 
 static void settings(struct reader *reader, struct json_value root)

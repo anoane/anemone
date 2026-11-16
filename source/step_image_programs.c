@@ -43,7 +43,7 @@ step_image_programs_attach(struct step_driver *driver,
 	if (driver == NULL || programs == NULL || program_count == 0 ||
 	    program_count != driver->program_count ||
 	    driver->image_programs != NULL || driver->sequence != 0 ||
-	    driver->pipeline != NULL) {
+	    driver->pipeline != NULL || driver->flight_bank_count != 0) {
 		return STATUS_INVALID_ARGUMENT;
 	}
 	if (driver->failure != STATUS_OK) {
@@ -190,7 +190,7 @@ result_status step_batch_verifiers_attach(struct step_driver *driver,
 					  const uint32_t *verifiers,
 					  uint32_t program_count)
 {
-	if (driver == NULL || verifiers == NULL ||
+	if (driver == NULL || verifiers == NULL || program_count == 0 ||
 	    driver->batch_verifiers != NULL ||
 	    program_count != driver->program_count || driver->sequence != 0 ||
 	    !step_rounds_is_batch(driver))

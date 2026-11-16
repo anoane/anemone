@@ -380,7 +380,7 @@ static void test_steps(void)
 	struct step_driver *const driver = driver_of(&fixture, PROGRAMS);
 	expect(test_host_memory_backend_work_count() == work_before,
 	       "nothing reaches a card before the first step");
-	const struct step_session settings = { .seed = SESSION_SEED,
+	const struct step_session settings = { .seed = { SESSION_SEED, 0 },
 					       .temperature =
 						       SESSION_TEMPERATURE,
 					       .top_p = SESSION_TOP_P };
@@ -393,7 +393,7 @@ static void test_steps(void)
 		{ POSITION_TWO, VOCABULARY - 1u, 0, STEP_ROW_LOGITS }
 	};
 	step_expecting(driver, first_rows, FIRST_STEP_ROWS, ROW_CAPACITY);
-	const struct step_session first_settings = { .seed = 0,
+	const struct step_session first_settings = { .seed = { 0 },
 						     .temperature = 0.0f,
 						     .top_p = 1.0f };
 	expect(settings_held(&first_settings, &settings),
@@ -410,7 +410,7 @@ static void test_steps(void)
 		       UPLOADS_TO_THE_LAST_CARD,
 	       "card 2 receives its step area, its n-gram rows, the streams and the pool: no settings");
 	/* slot 0's settings set after a step reach the card with the next, slot 1's kept */
-	const struct step_session later = { .seed = LATER_SEED,
+	const struct step_session later = { .seed = { LATER_SEED, 0 },
 					    .temperature = LATER_TEMPERATURE,
 					    .top_p = LATER_TOP_P };
 	expect_status(step_session_set(driver, 0, &later), STATUS_OK,

@@ -689,7 +689,7 @@ static bool gate_open(const char *path, struct gate_sources *sources)
 int main(int argument_count, char **arguments)
 {
     static struct gate_sources sources;
-    struct storage_description description = { 0, 0, 0 };
+    struct storage_description description = { 0 };
     uint32_t card_count = 0;
     uint32_t failed_count = 0;
 

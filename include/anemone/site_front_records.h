@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
  * site_front_records.h: the records of the fused fronts of a block's sites (source/kernel_site_front.cu, the phases C,
- * D and E of tmp/rnd/20261025/codex_brrr_v1/REPORT_AC_oproj_mhc.md). The site front is a site's mix project, its mix
+ * D and E of the 25 Oct 2026 report on the oproj and mHC fronts). The site front is a site's mix project, its mix
  * finish and the quantization of the sublayer's input in one launch (the attention site's, ahead of attn.wq_a with
  * attn.wkv); the FFN front is the same for the FFN site with the router's scores and its select in the same launch.
  * C11 and CUDA, including of the engine the record layouts of the linear, the dense products, the hyper connection

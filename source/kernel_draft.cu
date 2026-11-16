@@ -20,6 +20,12 @@
 #define VALUES_PER_LOAD_OF_SIXTEEN 8u /* bfloat16 values in a 16-byte load */
 #define VALUES_PER_WORD 2u
 #define LOW_HALF_MASK 0xFFFFu
+/* lane = 4 g + t: its place t and its group g */
+#define LANE_PLACE_MASK (LANES_PER_LANE_GROUP - 1u)
+#define LANE_GROUP_SHIFT 2
+#define UINT2_PER_UINT4 2u
+/* the uint2 a step's four lanes load */
+#define MARKOV_STEP_PAIRS (UINT2_PER_UINT4 * LANES_PER_LANE_GROUP)
 #define NO_BATCH_ROW DRAFT_BATCH_MOST_ROWS /* no row of a step of any program */
 #define CONFIDENCE_WARPS (DRAFT_CONFIDENCE_THREADS / THREADS_PER_WARP)
 #define MARKOV_LOADS \
@@ -272,13 +278,17 @@ extern "C" __global__ void __launch_bounds__(VERIFY_MATCHES_THREADS, 1)
 	}
 }
 
-__device__ static __forceinline__ void markov_mma(float (&d)[4], uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
+__device__ static __forceinline__ void markov_mma(float (&d)[ELEMENTS_PER_LANE],
+						  uint32_t a0, uint32_t a1,
+						  uint32_t a2, uint32_t a3,
 						  uint32_t b0, uint32_t b1)
 {
-	asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, "
-		     "{%0,%1,%2,%3};"
-		     : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
-		     : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
+	asm volatile(
+		"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, "
+		"{%0,%1,%2,%3};"
+		: "+f"(d[0]), "+f"(d[1]), "+f"(d[COLUMNS_PER_LANE]),
+		  "+f"(d[COLUMNS_PER_LANE + 1u])
+		: "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
 }
 
 /* BATCHED: position j's Markov bias of every slot below view 0's row count on the tensor cores. Warp w of block b takes
@@ -296,7 +306,9 @@ markov_bias_slots_mma(const struct draft_markov_bias_arguments &arguments,
 	const uint32_t slots = view->row_count < DRAFT_BATCH_SLOTS ?
 				       view->row_count :
 				       DRAFT_BATCH_SLOTS;
-	const uint32_t lane = threadIdx.x % THREADS_PER_WARP, quad = lane & 3u, column = lane >> 2;
+	const uint32_t lane = threadIdx.x % THREADS_PER_WARP,
+		       quad = lane & LANE_PLACE_MASK,
+		       column = lane >> LANE_GROUP_SHIFT;
 	const uint32_t warp = threadIdx.x / THREADS_PER_WARP;
 	/* each lane's slot (its column g) and that slot's token */
 	const uint32_t slot = column < slots ? column : 0u;
@@ -339,36 +351,48 @@ markov_bias_slots_mma(const struct draft_markov_bias_arguments &arguments,
 	const uint32_t first =
 		(blockIdx.x * (DRAFT_MARKOV_THREADS / THREADS_PER_WARP) +
 		 warp) *
-		16u;
+		OUTPUTS_PER_TILE;
 	if (first >= arguments.vocabulary_size)
 		return;
 	const uint32_t last = arguments.vocabulary_size - 1u;
-	const uint32_t low = min(first + column, last), high = min(first + column + 8u, last);
-	const uint4 *const head_low = (const uint4 *)(arena + arguments.head_offset) + (size_t)low * MARKOV_LOADS + quad;
-	const uint4 *const head_high = (const uint4 *)(arena + arguments.head_offset) + (size_t)high * MARKOV_LOADS + quad;
+	const uint32_t low = min(first + column, last),
+		       high = min(first + column + OUTPUTS_PER_HALF_TILE, last);
+	const uint4 *const head_low =
+		(const uint4 *)(arena + arguments.head_offset) +
+		(size_t)low * MARKOV_LOADS + quad;
+	const uint4 *const head_high =
+		(const uint4 *)(arena + arguments.head_offset) +
+		(size_t)high * MARKOV_LOADS + quad;
 	const uint2 *const embedded =
-		(const uint2 *)((const uint4 *)(arena + arguments.embedding_offset) + (size_t)token * MARKOV_LOADS) +
-		2u * quad;
-	float sums[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		(const uint2 *)((const uint4 *)(arena +
+						arguments.embedding_offset) +
+				(size_t)token * MARKOV_LOADS) +
+		UINT2_PER_UINT4 * quad;
+	float sums[ELEMENTS_PER_LANE] = { 0.0f, 0.0f, 0.0f, 0.0f };
 #pragma unroll
-	for (uint32_t step = 0; step < MARKOV_LOADS / 4u; step++) {
-		const uint4 a_low = head_low[4u * step], a_high = head_high[4u * step];
-		const uint2 b_first = embedded[8u * step], b_second = embedded[8u * step + 1u];
+	for (uint32_t step = 0; step < MARKOV_LOADS / LANES_PER_LANE_GROUP;
+	     step++) {
+		const uint4 a_low = head_low[LANES_PER_LANE_GROUP * step],
+			    a_high = head_high[LANES_PER_LANE_GROUP * step];
+		const uint2 b_first = embedded[MARKOV_STEP_PAIRS * step],
+			    b_second = embedded[MARKOV_STEP_PAIRS * step + 1u];
 		markov_mma(sums, a_low.x, a_high.x, a_low.y, a_high.y, b_first.x, b_first.y);
 		markov_mma(sums, a_low.z, a_high.z, a_low.w, a_high.w, b_second.x, b_second.y);
 	}
 #pragma unroll
-	for (uint32_t pair = 0; pair < 2u; pair++) {
-		const uint32_t row = 2u * quad + pair;
+	for (uint32_t pair = 0; pair < COLUMNS_PER_LANE; pair++) {
+		const uint32_t row = COLUMNS_PER_LANE * quad + pair;
 		if (row >= slots)
 			continue;
 #pragma unroll
-		for (uint32_t half = 0; half < 2u; half++) {
-			const uint32_t entry = first + column + 8u * half;
+		for (uint32_t half = 0; half < OUTPUT_HALVES; half++) {
+			const uint32_t entry =
+				first + column + OUTPUTS_PER_HALF_TILE * half;
 			if (entry < arguments.vocabulary_size) {
 				float *const logit = (float *)(arena + arguments.logits_offset) +
 						     (size_t)row * arguments.vocabulary_size + entry;
-				*logit = *logit + sums[2u * half + pair];
+				*logit = *logit +
+					 sums[COLUMNS_PER_LANE * half + pair];
 			}
 		}
 	}
@@ -434,8 +458,8 @@ extern "C" __global__ void __launch_bounds__(DRAFT_CONFIDENCE_THREADS, 1)
 			->row_count;
 	const bool table = (arguments.flags & DRAFT_ROUND_TABLE) != 0;
 	const bool batched = (arguments.flags & DRAFT_BATCHED) != 0;
-	/* ROUND_TABLE: a draft step of any row stands for its draft_positions rows; BATCHED: view 0, the verifier's slot
-	 * below its row count (draft_records.h) */
+	/* ROUND_TABLE: a draft step of any row stands for its draft_positions rows; BATCHED: view 0, the verifier's
+	 * slot below its row count (draft_records.h) */
 	const bool drafts = batched ? arguments.verifier < step_rows : step_rows != 0;
 	const uint32_t rows = table ? (drafts ? arguments.draft_positions : 0u) :
 			      step_rows < arguments.draft_positions ? step_rows :

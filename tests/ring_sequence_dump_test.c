@@ -17,6 +17,7 @@
 #include "anemone/dense_linear_records.h"
 #include "anemone/exact_ring_records.h"
 #include "anemone/exl3_tc_records.h"
+#include "anemone/hooks.h"
 #include "anemone/attention_state_records.h"
 #include "anemone/relaxed_linear_records.h"
 #include "anemone/sampler_shard_records.h"
@@ -38,6 +39,25 @@
 #define DUMP_TILE_OUTPUTS 16u     /* trunk_mma's tile */
 #define DUMP_THIN_SPLIT_TILES 128u /* the 1-8-row form: split 16 up to 128 tiles, 4 up to 512, else 2 */
 #define DUMP_THIN_SPLIT_MORE_TILES 512u
+#define DUMP_THIN_SPLIT 16u
+#define DUMP_THIN_SPLIT_MORE 4u
+#define DUMP_THIN_SPLIT_LEAST 2u
+#define DUMP_PATH_BYTES 256
+#define DUMP_TITLE_BYTES 64
+#define DUMP_GRID_Z 2 /* a launch grid's third dimension */
+#define DUMP_THIRD_CARD 2
+#define DUMP_FOURTH_CARD 3
+/* the rings shown around a first disagreement: from DUMP_SHOWN_BEFORE before it to DUMP_SHOWN_AFTER - 1 after */
+#define DUMP_SHOWN_BEFORE 2u
+#define DUMP_SHOWN_AFTER 3u
+#define DUMP_SIDE_AND_RESUME 2u /* a side run's launch and its resume, before its chain */
+#define DUMP_FNV_OFFSET 14695981039346656037ull /* FNV-1a 64 */
+#define DUMP_FNV_PRIME 1099511628211ull
+#define DUMP_DIGEST_PARTS 4u /* a launch's name, grid, block and arguments */
+#define DUMP_THIN_ROWS 6u
+#define DUMP_BATCH_ROWS 12u
+#define DUMP_WIDE_PROGRAM 2u /* the WIDE program's index in a recipe's programs; FULL follows it */
+#define DUMP_DECOUPLED_FIELDS 2 /* a decoupled case's rows and verifiers */
 
 struct ring_call {
 	uint64_t bank; /* the bank's place in its channel's region: the same on every card */
@@ -124,14 +144,15 @@ static void launches_write(const char *title,
 		return;
 	for (uint32_t card = 0; card < program->card_count && card < DUMP_CARDS;
 	     card++) {
-		char path[256];
+		char path[DUMP_PATH_BYTES];
 		(void)snprintf(path, sizeof(path), "%s/%s_card%" PRIu32 ".txt",
 			       directory, title, card);
 		for (char *at = path + strlen(directory) + 1u; *at != 0; at++)
-			*at = *at == ' ' ? '_' : *at;
+			*at = (char)(*at == ' ' ? '_' : *at);
 		FILE *const file = fopen(path, "w");
 		if (file == NULL)
 			continue;
+		bool written = true;
 		for (uint32_t segment = 0; segment < program->segment_count;
 		     segment++) {
 			const struct segment_record *const own =
@@ -148,19 +169,26 @@ static void launches_write(const char *title,
 					launch->kernel != BACKEND_COPY &&
 					test_host_memory_backend_kernel_of(
 						card, launch->kernel, &kernel);
-				fprintf(file,
-					"%3" PRIu32
-					" %s grid %u,%u,%u branch %u\n",
-					segment,
-					launch->kernel == BACKEND_COPY ?
-						"(copy)" :
-					named ? kernel.function_name :
-						"?",
-					launch->grid[0], launch->grid[1],
-					launch->grid[2], launch->branch);
+				written =
+					fprintf(file,
+						"%3" PRIu32
+						" %s grid %u,%u,%u branch %u\n",
+						segment,
+						launch->kernel == BACKEND_COPY ?
+							"(copy)" :
+						named ? kernel.function_name :
+							"?",
+						launch->grid[0],
+						launch->grid[1],
+						launch->grid[DUMP_GRID_Z],
+						launch->branch) >= 0 &&
+					written;
 			}
 		}
-		(void)fclose(file);
+		if (fclose(file) != 0 || !written) {
+			printf("  launches: FAILED: %s not written\n", path);
+			dump_failures++;
+		}
 	}
 	for (uint32_t index = 0; index < program->hand_off_count; index++)
 		printf("  hand-off %" PRIu32 ": after segment %" PRIu32
@@ -270,11 +298,13 @@ static void program_report(const char *name,
 						       "drafting" };
 	printf("%s: %" PRIu32 " segments, front %" PRIu32
 	       ", draft from %" PRIu32 ", result card %" PRIu32
-	       "; launches a card %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 "\n",
+	       "; launches a card %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32
+	       "\n",
 	       name, program->segment_count, program->front_segment_count,
 	       program->draft_segment_first, program->result_card,
 	       program->cards[0].launch_count, program->cards[1].launch_count,
-	       program->cards[2].launch_count, program->cards[3].launch_count);
+	       program->cards[DUMP_THIRD_CARD].launch_count,
+	       program->cards[DUMP_FOURTH_CARD].launch_count);
 	sampler_steps_report(program);
 	/* --tp_ring_column_owners: every card's BF16 sums with column owners (mode 2), none with row
 	 * quarters (mode 1) */
@@ -308,8 +338,8 @@ static void program_report(const char *name,
 			counts[card] = calls_below(card, ends[range]);
 		printf("  %-8s rings a card: %" PRIu32 " %" PRIu32 " %" PRIu32
 		       " %" PRIu32 "\n",
-		       range_names[range], counts[0], counts[1], counts[2],
-		       counts[3]);
+		       range_names[range], counts[0], counts[1],
+		       counts[DUMP_THIRD_CARD], counts[DUMP_FOURTH_CARD]);
 		uint32_t most = 0;
 		for (uint32_t card = 0; card < DUMP_CARDS; card++)
 			most = counts[card] > most ? counts[card] : most;
@@ -334,8 +364,8 @@ static void program_report(const char *name,
 			       ":\n",
 			       range_names[range], index);
 			for (uint32_t card = 0; card < DUMP_CARDS; card++) {
-				for (uint32_t at = index > 2u ? index - 2u : 0;
-				     at < index + 3u && at < counts[card];
+				for (uint32_t at = index > DUMP_SHOWN_BEFORE ? index - DUMP_SHOWN_BEFORE : 0;
+				     at < index + DUMP_SHOWN_AFTER && at < counts[card];
 				     at++) {
 					const struct ring_call *const call =
 						&calls[card][at];
@@ -397,7 +427,8 @@ static uint32_t dump_core_once; /* and --batch_core_once (track J) */
 static bool
 	dump_round_once; /* target THIN/BATCH owner exchange with FP32 sums of BF16 partials */
 /* the core-once recipe's prepares of each multi-slab BATCH program in report order: level 2's windows replace them */
-static uint32_t core_once_prepares[16], core_once_windows[16], core_once_ordinal;
+#define CORE_ONCE_PROGRAMS 16
+static uint32_t core_once_prepares[CORE_ONCE_PROGRAMS], core_once_windows[CORE_ONCE_PROGRAMS], core_once_ordinal;
 static uint32_t dump_front_branch; /* and --tp_front_branch (track J) */
 static bool dump_draft_bf16_rows; /* and --draft_bf16_rows (track J) */
 static uint32_t dump_draft_wide; /* and --batch_draft_wide (track L) */
@@ -410,12 +441,27 @@ static bool dump_draft_operands; /* and --draft_bf16_operands (track L) */
 	3u /* step-wide pools followed by deferred slot retention */
 #define DUMP_DRAFT_WIDE_PRODUCTS 2u /* --batch_draft_wide=2: the draft's products over all its rows too */
 #define DUMP_DRAFT_WIDE_CORES 3u /* --batch_draft_wide=3: and its window writes and cores once */
+#define DUMP_CORE_ONCE_WINDOWS 2u /* --batch_core_once=2: level 2's windows replace the prepares */
+#define DUMP_FRONT_BRANCH_FFN 2u /* --tp_front_branch=2: the FFN's input fronts side runs too */
+#define DUMP_GROUPED_ROWS 48u /* --batch_grouped_rows=48 */
+#define DUMP_GROUPED_ROWS_DEFAULT 16u
+#define DUMP_TC_PAIRED_WIDE 27u /* --batch_tc_paired=27: BATCH-32 and 48 */
+#define DUMP_TC_PAIRED_ABOVE_8 9u /* --batch_tc_paired=9: every BATCH step above 8 rows */
+#define DUMP_ROW_SETS_LEAST 8u /* --batch_row_sets from 8 to 24 rows by 8 */
+#define DUMP_ROW_SETS_MOST 24u
+#define DUMP_ROW_SETS_STEP 8u
+#define DUMP_BATCH_FIELDS 2u /* a BATCH program's rows and verifiers */
+#define DUMP_LEADING_BATCH_PROGRAMS \
+	2u /* a BATCH recipe's programs 0 and 1 are BATCH (kinds, rows) */
 static uint32_t draft_wide_rings[sizeof(core_once_prepares) / sizeof(core_once_prepares[0])],
 	draft_wide_posts[sizeof(core_once_prepares) / sizeof(core_once_prepares[0])], draft_wide_ordinal;
-static uint32_t plain_quantized_trunks[2]; /* the THIN recipe's quantized trunk launches of THIN 6 and 8 */
+#define PLAIN_THIN_PROGRAMS 2 /* THIN 6 and 8 */
+/* the THIN recipe's quantized trunk launches of THIN 6 and 8 */
+static uint32_t plain_quantized_trunks[PLAIN_THIN_PROGRAMS];
 static uint32_t one_slab_cores; /* the target cores of the recipe's one-slab BATCH program (BATCH 8) */
 /* the plain BATCH recipe's WIDE and FULL programs at 64 rows (launch digests): the thin-bits recipe's equal them */
-static uint64_t chunk_digests[2];
+#define CHUNK_PROGRAMS 2 /* WIDE and FULL */
+static uint64_t chunk_digests[CHUNK_PROGRAMS];
 
 /* --tp_trunk_mma_thin_splits: of every card's _64 trunk_mma launches (the record of
  * trunk_relaxed_bfloat16_arguments), how many split the input groups as the 1-8-row form of the shape does
@@ -479,9 +525,9 @@ static void thin_splits_report(const char *title,
 			const uint32_t tiles =
 				record.output_size / DUMP_TILE_OUTPUTS;
 			const uint32_t split =
-				tiles <= DUMP_THIN_SPLIT_TILES ? 16u :
-				tiles <= DUMP_THIN_SPLIT_MORE_TILES ? 4u :
-								      2u;
+				tiles <= DUMP_THIN_SPLIT_TILES ? DUMP_THIN_SPLIT :
+				tiles <= DUMP_THIN_SPLIT_MORE_TILES ? DUMP_THIN_SPLIT_MORE :
+								      DUMP_THIN_SPLIT_LEAST;
 			total++;
 			thin += record.k_split_count == split ? 1u : 0u;
 		}
@@ -572,7 +618,7 @@ static void front_branch_report(const char *title,
 				side > index + 1u &&
 				launches[side].branch == LAUNCH_SIDE_MORE &&
 				launches[side - 1u].branch == LAUNCH_SIDE;
-			uint32_t at = side + 2u;
+			uint32_t at = side + DUMP_SIDE_AND_RESUME;
 			while (at < end && launches[at].branch == LAUNCH_CHAIN)
 				at++;
 			if (at >= end || launches[at].branch != LAUNCH_JOIN)
@@ -585,7 +631,8 @@ static void front_branch_report(const char *title,
 	       " (each joined in its segment); site fronts %" PRIu32 ", FFN fronts %" PRIu32 "\n", title, inputs,
 	       attention, ffn, site_fronts, ffn_fronts);
 	if (dump_front_branch != 0 &&
-	    (inputs == 0 || attention + ffn != inputs || attention == 0 || (ffn == 0) != (dump_front_branch < 2u))) {
+	    (inputs == 0 || attention + ffn != inputs || attention == 0 ||
+	     (ffn == 0) != (dump_front_branch < DUMP_FRONT_BRANCH_FFN))) {
 		printf("  %s: FAILED: with --tp_front_branch every input front a side run joined in its segment\n",
 		       title);
 		dump_failures++;
@@ -777,7 +824,7 @@ static void thin_bits_report(const char *title,
 		core_once_windows[ordinal] = windows; /* the draft's own window launches */
 	}
 	/* --batch_draft_wide=2: the draft's qr alone over its rows is a prepare launch of its own a layer */
-	if (dump_core_once == 2u && dump_draft_wide < DUMP_DRAFT_WIDE_PRODUCTS &&
+	if (dump_core_once == DUMP_CORE_ONCE_WINDOWS && dump_draft_wide < DUMP_DRAFT_WIDE_PRODUCTS &&
 	    (windows <= core_once_windows[ordinal] ||
 	     prepares + (windows - core_once_windows[ordinal]) * slabs != core_once_prepares[ordinal])) {
 		printf("  %s: FAILED: with --batch_core_once=2 each window launch in place of %" PRIu32
@@ -806,7 +853,7 @@ static void thin_bits_report(const char *title,
 /* FNV-1a over every card's launches: kernel names, grids, blocks and records. */
 static uint64_t launches_digest(const struct execution_program *program)
 {
-	uint64_t digest = 14695981039346656037ull;
+	uint64_t digest = DUMP_FNV_OFFSET;
 	for (uint32_t card = 0; card < program->card_count && card < DUMP_CARDS;
 	     card++) {
 		for (uint32_t index = 0;
@@ -830,13 +877,70 @@ static uint64_t launches_digest(const struct execution_program *program)
 				sizeof(launch->grid), sizeof(launch->block),
 				launch->argument_byte_count
 			};
-			for (uint32_t part = 0; part < 4u; part++)
+			for (uint32_t part = 0; part < DUMP_DIGEST_PARTS; part++)
 				for (size_t byte = 0; byte < sizes[part]; byte++)
 					digest = (digest ^ parts[part][byte]) *
-						 1099511628211ull;
+						 DUMP_FNV_PRIME;
 		}
 	}
 	return digest;
+}
+
+/* the draft-wide 2 recipe's slab loop (draft_wide_ffn): a failed router product or quantization of a slab refuses the
+ * program with its status (routed_of's status used to overwrite it, and the site's launches went on) */
+static void draft_slab_faults(struct v41_tp2_program_description build,
+			      uint32_t (*programs)[DUMP_BATCH_FIELDS],
+			      uint32_t program_count)
+{
+#if CHECKING_HOOKS_ENABLED
+	static const char *const faults[] = { "model_v41_draft_slab_dense",
+					      "model_v41_draft_slab_quantize" };
+	for (uint32_t fault = 0; fault < sizeof(faults) / sizeof(faults[0]);
+	     fault++) {
+		uint32_t reached = 0, built = 0;
+		for (uint32_t index = 0; index < program_count; index++) {
+			struct execution_program *program = NULL;
+			struct step_companion_program companions = { 0 };
+			if (!fault_arm(faults[fault], 1)) {
+				printf("  draft slab faults: FAILED: %s was not armed\n",
+				       faults[fault]);
+				dump_failures++;
+				continue;
+			}
+			build.batch_verifiers = programs[index][1];
+			const result_status prepared = v41_tp_program_prepare(
+				&build, &test_host_memory_backend, cards,
+				reported, PROGRAM_BATCH, programs[index][0],
+				&program, &companions);
+			const uint64_t hits = fault_disarm();
+			if (hits != 0 && (prepared != STATUS_INJECTED_FAULT ||
+					  program != NULL)) {
+				printf("  draft slab faults: FAILED: BATCH %" PRIu32
+				       " with %s prepared (%s)\n",
+				       programs[index][0], faults[fault],
+				       status_text(prepared));
+				dump_failures++;
+			}
+			reached += hits != 0 ? 1u : 0u;
+			built += hits == 0 && prepared == STATUS_OK ? 1u : 0u;
+			free(program);
+		}
+		printf("  draft slab faults: %s refused %" PRIu32
+		       " BATCH programs, %" PRIu32
+		       " built without reaching it\n",
+		       faults[fault], reached, built);
+		/* a host without kernel images (the Mac pre-check) builds none, and reaches none */
+		if (reached == 0 && built != 0) {
+			printf("  draft slab faults: FAILED: no program reached %s\n",
+			       faults[fault]);
+			dump_failures++;
+		}
+	}
+#else
+	(void)build;
+	(void)programs;
+	(void)program_count;
+#endif
 }
 
 static void recipe_report(const char *name, bool batch, uint32_t wide_rows)
@@ -910,7 +1014,7 @@ static void recipe_report(const char *name, bool batch, uint32_t wide_rows)
 		batch ? PROGRAM_BATCH : PROGRAM_THIN,
 		batch ? PROGRAM_BATCH : PROGRAM_THIN, PROGRAM_WIDE, PROGRAM_FULL
 	};
-	const uint32_t rows[DUMP_PROGRAMS] = { batch ? 12u : 6u,
+	const uint32_t rows[DUMP_PROGRAMS] = { batch ? DUMP_BATCH_ROWS : DUMP_THIN_ROWS,
 					       LINEAR_MAXIMUM_ROWS, wide_rows,
 					       wide_rows };
 	const char *const names[DUMP_PROGRAMS] = { batch ? "BATCH" : "THIN",
@@ -922,7 +1026,7 @@ static void recipe_report(const char *name, bool batch, uint32_t wide_rows)
 		const result_status prepared = v41_tp_program_prepare(
 			&build, &test_host_memory_backend, cards, reported,
 			kinds[index], rows[index], &program, &companions);
-		char title[64];
+		char title[DUMP_TITLE_BYTES];
 		(void)snprintf(title, sizeof(title), "%s %s %" PRIu32, name,
 			       names[index], rows[index]);
 		if (prepared != STATUS_OK || program == NULL) {
@@ -932,7 +1036,8 @@ static void recipe_report(const char *name, bool batch, uint32_t wide_rows)
 		}
 		program_report(title, program);
 		/* --draft_bf16_rows: the draft layers' attention products leave the quantized trunk (THIN 6 and 8) */
-		if (!batch && index < 2u && !dump_thin_bits && !dump_column_owners && dump_front_branch == 0) {
+		if (!batch && index < DUMP_WIDE_PROGRAM && !dump_thin_bits && !dump_column_owners &&
+		    dump_front_branch == 0) {
 			const uint32_t trunks = quantized_trunks_of(program);
 			printf("  %s: quantized trunk launches %" PRIu32 "\n", title, trunks);
 			if (!dump_draft_bf16_rows &&
@@ -956,12 +1061,12 @@ static void recipe_report(const char *name, bool batch, uint32_t wide_rows)
 			thin_bits_report(title, program, rows[index]);
 		}
 		/* WIDE and FULL at 64 rows: --batch_thin_bits leaves the chunk programs as they are */
-		if (index >= 2u && wide_rows == MODEL_WIDE_LEAST_ROWS &&
+		if (index >= DUMP_WIDE_PROGRAM && wide_rows == MODEL_WIDE_LEAST_ROWS &&
 		    !dump_thin_splits && !dump_column_owners) {
 			const uint64_t digest = launches_digest(program);
 			if (!dump_thin_bits) {
-				chunk_digests[index - 2u] = digest;
-			} else if (digest != chunk_digests[index - 2u]) {
+				chunk_digests[index - DUMP_WIDE_PROGRAM] = digest;
+			} else if (digest != chunk_digests[index - DUMP_WIDE_PROGRAM]) {
 				printf("  %s: FAILED: --batch_thin_bits changed a chunk program\n",
 				       title);
 				dump_failures++;
@@ -974,11 +1079,13 @@ static void recipe_report(const char *name, bool batch, uint32_t wide_rows)
 	}
 	/* --batch_verifiers: BATCH programs of 16 and 32 rows that verify every session (8 draft walks); track D's
 	 * BATCH-8 of two (a thin walk drafting for two sessions) and BATCH-12 of four */
-	const uint32_t decoupled[][2] = { { 16u, DUMP_SESSIONS },
-					  { 32u, DUMP_SESSIONS },
-					  { 8u, 2u },
-					  { 12u, 4u },
-					  { 48u, DUMP_SESSIONS } };
+	static const uint32_t decoupled[][DUMP_DECOUPLED_FIELDS] = {
+		{ 16u, DUMP_SESSIONS },
+		{ 32u, DUMP_SESSIONS },
+		{ 8u, 2u },
+		{ 12u, 4u },
+		{ 48u, DUMP_SESSIONS }
+	};
 	for (uint32_t index = 0;
 	     batch && index < sizeof(decoupled) / sizeof(decoupled[0]);
 	     index++) {
@@ -990,7 +1097,7 @@ static void recipe_report(const char *name, bool batch, uint32_t wide_rows)
 			PROGRAM_BATCH, decoupled[index][0], &program,
 			&companions);
 		build.batch_verifiers = 0;
-		char title[64];
+		char title[DUMP_TITLE_BYTES];
 		(void)snprintf(title, sizeof(title),
 			       "%s BATCH %" PRIu32 " verifiers %" PRIu32, name,
 			       decoupled[index][0], decoupled[index][1]);
@@ -1007,6 +1114,19 @@ static void recipe_report(const char *name, bool batch, uint32_t wide_rows)
 		}
 		free(program);
 	}
+	/* every BATCH program of the draft-wide 2 recipe, the decoupled ones too: those with several draft slabs
+	 * reach the slab loop */
+	uint32_t batches[DUMP_LEADING_BATCH_PROGRAMS +
+			 sizeof(decoupled) / sizeof(decoupled[0])]
+			[DUMP_BATCH_FIELDS] = { 0 };
+	for (uint32_t index = 0; index < DUMP_LEADING_BATCH_PROGRAMS; index++)
+		batches[index][0] = rows[index];
+	memcpy(batches[DUMP_LEADING_BATCH_PROGRAMS], decoupled,
+	       sizeof(decoupled));
+	if (batch && dump_draft_wide == DUMP_DRAFT_WIDE_PRODUCTS &&
+	    !dump_draft_operands)
+		draft_slab_faults(build, batches,
+				  sizeof(batches) / sizeof(batches[0]));
 	v41_tp2_model_destroy(model);
 	pack_close(pack);
 }
@@ -1038,19 +1158,20 @@ int main(void)
 	dump_thin_splits = false;
 	dump_thin_bits = true;
 	recipe_report("BATCH thin-bits recipe", true, MODEL_WIDE_LEAST_ROWS);
-	dump_grouped_rows = 48u;
+	dump_grouped_rows = DUMP_GROUPED_ROWS;
 	recipe_report("BATCH thin-bits grouped recipe", true,
 		      MODEL_WIDE_LEAST_ROWS);
 	dump_column_owners = true;
 	recipe_report("BATCH column-owners recipe", true,
 		      MODEL_WIDE_LEAST_ROWS);
-	dump_tc_paired = 27u; /* BATCH-32 and 48 */
+	dump_tc_paired = DUMP_TC_PAIRED_WIDE;
 	recipe_report("BATCH column-owners paired recipe", true,
 		      MODEL_WIDE_LEAST_ROWS);
-	dump_grouped_rows = 16u; /* the default */
-	for (uint32_t set_rows = 8u; set_rows <= 24u; set_rows += 8u) {
+	dump_grouped_rows = DUMP_GROUPED_ROWS_DEFAULT;
+	for (uint32_t set_rows = DUMP_ROW_SETS_LEAST;
+	     set_rows <= DUMP_ROW_SETS_MOST; set_rows += DUMP_ROW_SETS_STEP) {
 		dump_row_sets = set_rows;
-		char title[64];
+		char title[DUMP_TITLE_BYTES];
 		(void)snprintf(title, sizeof(title), "BATCH row-sets %" PRIu32 " recipe", set_rows);
 		recipe_report(title, true, MODEL_WIDE_LEAST_ROWS);
 	}
@@ -1059,7 +1180,7 @@ int main(void)
 	     dump_core_once++) {
 		core_once_ordinal = 0;
 		draft_wide_ordinal = 0;
-		char title[64];
+		char title[DUMP_TITLE_BYTES];
 		(void)snprintf(title, sizeof(title), "BATCH core-once %" PRIu32 " recipe", dump_core_once);
 		recipe_report(title, true, MODEL_WIDE_LEAST_ROWS);
 	}
@@ -1092,7 +1213,7 @@ int main(void)
 	dump_front_branch = 1u;
 	recipe_report("THIN front-branch 1 recipe", false,
 		      MODEL_WIDE_LEAST_ROWS);
-	dump_front_branch = 2u;
+	dump_front_branch = DUMP_FRONT_BRANCH_FFN;
 	recipe_report("THIN front-branch 2 recipe", false,
 		      MODEL_WIDE_LEAST_ROWS);
 	recipe_report("BATCH front-branch 2 recipe", true,
@@ -1101,7 +1222,7 @@ int main(void)
 	dump_draft_bf16_rows = true; /* the serving recipe's BATCH programs (batched draft rows) with it */
 	recipe_report("BATCH draft-bf16 recipe", true, MODEL_WIDE_LEAST_ROWS);
 	dump_draft_bf16_rows = false;
-	dump_tc_paired = 9u; /* every BATCH step above 8 rows */
+	dump_tc_paired = DUMP_TC_PAIRED_ABOVE_8;
 	recipe_report("BATCH column-owners paired-9 recipe", true,
 		      MODEL_WIDE_LEAST_ROWS);
 	dump_tc_paired = 0;

@@ -15,6 +15,12 @@
 
 #define RANKS 4u
 #define LAYERS 43u /* the walk's target layers and more: every rotation phase */
+#define FAILURES_SHOWN 10
+/* the chunks alternate, narrow then mixed; four-way: half the experts at each width; three-way: chunks 1 and 3
+ * mixed, 2 narrow */
+#define CHUNK_PAIR 2u
+#define FOUR_WAY_WIDTHS 2u
+#define THREE_WAY_MIXED_CHUNKS 2u
 #define EXPERTS EXL3_TCP_EXPERTS
 #define NARROW (EXL3_TC_MIXED_WIDTH - EXL3_TC_NARROWER)
 
@@ -24,7 +30,7 @@ static void expect(bool condition, const char *what, uint32_t mode, uint32_t ran
 {
 	if (!condition) {
 		failures++;
-		if (failures < 10)
+		if (failures < FAILURES_SHOWN)
 			printf("exl3_rotation_test: %s (mode %u rank %u layer %u expert %u)\n", what, mode, rank, layer,
 			       expert);
 	}
@@ -33,7 +39,7 @@ static void expect(bool condition, const char *what, uint32_t mode, uint32_t ran
 /* chunk c of the 2,304 columns: 512, 640, 512, 640 (exl3_layout's 128-column split, rank c's chunk) */
 static uint32_t chunk_width(uint32_t chunk)
 {
-	return chunk % 2u == 0 ? NARROW : EXL3_TC_MIXED_WIDTH;
+	return chunk % CHUNK_PAIR == 0 ? NARROW : EXL3_TC_MIXED_WIDTH;
 }
 
 int main(void)
@@ -52,7 +58,8 @@ int main(void)
 					const uint32_t rotation =
 						exl3_tc_rotation_of(mode, rank,
 								    layer);
-					/* a record without rotation is the rank's one width: its chunk's for every expert */
+					/* a record without rotation is the rank's one width: its chunk's for every
+					 * expert */
 					const uint32_t intermediate =
 						rotation != 0 ?
 							EXL3_TC_MIXED_WIDTH :
@@ -80,11 +87,12 @@ int main(void)
 			/* four-way: half the experts at each width on every rank; three-way: rank 0 all narrow, ranks
 			 * 1-3 a third of the experts at each of chunks 1, 2 and 3 (640, 512, 640) */
 			const uint64_t four_way =
-				(uint64_t)EXPERTS / 2u *
+				(uint64_t)EXPERTS / FOUR_WAY_WIDTHS *
 				(NARROW + EXL3_TC_MIXED_WIDTH);
 			const uint64_t three_way =
 				(uint64_t)EXPERTS / EXL3_TC_THREE_WAY_RANKS *
-				(NARROW + 2u * EXL3_TC_MIXED_WIDTH);
+				(NARROW +
+				 THREE_WAY_MIXED_CHUNKS * EXL3_TC_MIXED_WIDTH);
 			for (uint32_t rank = 0; rank < RANKS; rank++) {
 				const bool expected =
 					mode == EXL3_TC_ROTATION_FOUR_WAY ?

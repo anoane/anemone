@@ -46,7 +46,7 @@ official_window_prepare(const struct official_window_description *description,
 		{ "input", &norm->input, row_bytes * norm->row_count, false },
 		{ "weight", &norm->weight, row_bytes, false },
 		{ "rotation", &description->rotation,
-		  (uint64_t)norm->row_count * OFFICIAL_ROPE_WIDTH *
+		  (uint64_t)norm->row_count * (uint64_t)OFFICIAL_ROPE_WIDTH *
 			  sizeof(float),
 		  false },
 		{ "output", &norm->output, row_bytes * norm->row_count, false },

@@ -2,6 +2,7 @@
 /* Stage admission reuses the original 80-byte records and product entry names. */
 #include "anemone/exl3_tp.h"
 
+#include "anemone/exl3.h"
 #include "anemone/linear_records.h"
 
 #include <math.h>
@@ -147,16 +148,20 @@ bb_exl3_pass_prepare(const struct bb_exl3_pass_description *description,
 		return STATUS_INVALID_ARGUMENT;
 	}
 	const bool optional_order = plan.order == BB_EXL3_EIGHT_PART_ORDER;
-	const bool k2 = record.bits_per_weight == EXL3_MINIMUM_BITS;
+	const char *const width_name =
+		exl3_width_name(exl3_bits_x2(record.bits_per_weight));
+	const char *const order_suffix = optional_order ? "_s8" : "";
+	char retained_gate_up[BB_EXL3_PRODUCT_NAME_BYTES],
+		retained_down[BB_EXL3_PRODUCT_NAME_BYTES];
+	if (width_name == NULL ||
+	    snprintf(retained_gate_up, sizeof(retained_gate_up),
+		     "exl3_gate_up_%s%s", width_name, order_suffix) <= 0 ||
+	    snprintf(retained_down, sizeof(retained_down), "exl3_down_%s%s",
+		     width_name, order_suffix) <= 0)
+		return STATUS_INVALID_ARGUMENT;
 	const char *const names[BB_EXL3_PASSES] = {
-		"exl3_input",
-		optional_order ?
-			(k2 ? "exl3_gate_up_k2_s8" : "exl3_gate_up_k3_s8") :
-			(k2 ? "exl3_gate_up_k2" : "exl3_gate_up_k3"),
-		BB_EXL3_SHARD_ACTIVATION_KERNEL,
-		optional_order ? (k2 ? "exl3_down_k2_s8" : "exl3_down_k3_s8") :
-				 (k2 ? "exl3_down_k2" : "exl3_down_k3"),
-		"exl3_finish"
+		"exl3_input", retained_gate_up, BB_EXL3_SHARD_ACTIVATION_KERNEL,
+		retained_down, "exl3_finish"
 	};
 	const bool activation = pass == BB_EXL3_ACTIVATE_PASS;
 	const bool product = pass == BB_EXL3_GATE_UP_PASS ||
@@ -182,10 +187,10 @@ bb_exl3_pass_prepare(const struct bb_exl3_pass_description *description,
 					       record.input_size;
 		const int length = snprintf(
 			product_name, sizeof(product_name),
-			"exl3_c_%s_k%u%s_t%u_g%s",
+			"exl3_c_%s_%s%s_t%u_g%s",
 			pass == BB_EXL3_GATE_UP_PASS ? "gate_up" : "down",
-			record.bits_per_weight, optional_order ? "_s8" : "",
-			product_tiles, wide ? "4p" : "1");
+			width_name, order_suffix, product_tiles,
+			wide ? "4p" : "1");
 		if (length <= 0 || (size_t)length >= sizeof(product_name) ||
 		    width / EXL3_TILE % product_tiles != 0)
 			return STATUS_INVALID_ARGUMENT;

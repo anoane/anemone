@@ -27,7 +27,8 @@ round_once_signal(uint4 *bank, uint32_t packs, uint32_t phase, uint32_t rank)
 }
 
 /* All threads publish their own stores before the leader's release; its acquire reaches the other threads through
- * the trailing CTA barrier. Each CTA's packet partition is independent, so no other CTA must be scheduled to progress. */
+ * the trailing CTA barrier. Each CTA's packet partition is independent, so no other CTA must be scheduled to
+ * progress. */
 __device__ static __forceinline__ bool
 round_once_phase(const struct exact_ring_arguments *arguments,
 		 unsigned char *arena,

@@ -84,10 +84,23 @@ static bool is_finite(double value)
 static double power_of_two(int32_t exponent)
 {
     if (exponent < DOUBLE_LEAST_NORMAL_EXPONENT) {
-        return power_of_two(DOUBLE_LEAST_NORMAL_EXPONENT) * power_of_two(exponent - DOUBLE_LEAST_NORMAL_EXPONENT);
+	    const double normal =
+		    double_of((uint64_t)(DOUBLE_LEAST_NORMAL_EXPONENT +
+					 DOUBLE_EXPONENT_BIAS)
+			      << DOUBLE_EXPONENT_SHIFT);
+	    const double scale = double_of(
+		    (uint64_t)(exponent - DOUBLE_LEAST_NORMAL_EXPONENT +
+			       DOUBLE_EXPONENT_BIAS)
+		    << DOUBLE_EXPONENT_SHIFT);
+	    return normal * scale;
     }
     if (exponent > DOUBLE_EXPONENT_BIAS) {
-        return power_of_two(exponent - 1) * power_of_two(1);
+	    const double scale =
+		    double_of((uint64_t)(exponent - 1 + DOUBLE_EXPONENT_BIAS)
+			      << DOUBLE_EXPONENT_SHIFT);
+	    const double two = double_of((uint64_t)(1 + DOUBLE_EXPONENT_BIAS)
+					 << DOUBLE_EXPONENT_SHIFT);
+	    return scale * two;
     }
     return double_of((uint64_t)(exponent + DOUBLE_EXPONENT_BIAS) << DOUBLE_EXPONENT_SHIFT);
 }

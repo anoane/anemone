@@ -83,7 +83,10 @@ static void capture_end_expecting(const char *words, const char *what)
 {
     char text[CAPTURE_CAPACITY];
     const bool is_flushed = fflush(stderr) == 0;
-    const ssize_t byte_count = is_flushed ? pread(capture_descriptor, text, sizeof(text) - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_flushed ? test_log_capture_read(capture_descriptor, text,
+					       sizeof(text)) :
+			 -1;
     expect(dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';

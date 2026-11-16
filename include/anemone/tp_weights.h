@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
- * Lossless rectangular shards of lane-ordered FP8/MXFP4 and EXL3 mul1 K2/K3 matrices. Preparation and extraction
+ * Lossless rectangular shards of lane-ordered FP8/MXFP4 and EXL3 mul1 matrices. Preparation and extraction
  * happen only at load, with caller-owned buffers; this API neither changes the pack nor places weights on cards.
  * Codes and scale bytes are copied without decoding or requantization. A shard retains its original FP8 scale
  * blocks: its first output must be a multiple of 32. MXFP4 output bounds are multiples of 16 and input bounds of

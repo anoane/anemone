@@ -22,6 +22,7 @@
 
 #include "anemone/hooks.h"
 #include "anemone/status.h"
+#include "log_expectation.h"
 
 #define TEST_TIME_LIMIT_SECONDS 300             /* the alarm ends the test here: the deadline of every wait in it */
 #define COUNTED_AMOUNT 7
@@ -150,7 +151,8 @@ static void capture_end(char *text, size_t text_capacity)
 {
     ssize_t byte_count = -1;
     if (fflush(stderr) == 0) {
-        byte_count = pread(capture_descriptor, text, text_capacity - 1, 0);
+	    byte_count = test_log_capture_read(capture_descriptor, text,
+					       text_capacity);
     }
     if (dup2(error_stream_descriptor, STDERR_FILENO) != STDERR_FILENO || byte_count < 0) {
         give_up("the temporary file could not be read back");

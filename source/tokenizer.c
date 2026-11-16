@@ -770,6 +770,16 @@ result_status tokenizer_token_bytes(const struct text_tokenizer *tokenizer,
     return STATUS_OK;
 }
 
+result_status tokenizer_byte_token(const struct text_tokenizer *tokenizer,
+				   uint32_t byte, uint32_t *token_out)
+{
+	if (tokenizer == NULL || token_out == NULL ||
+	    byte >= TOKENIZER_BYTE_VALUES)
+		return STATUS_INVALID_ARGUMENT;
+	*token_out = tokenizer->byte_token_ids[byte];
+	return STATUS_OK;
+}
+
 uint32_t tokenizer_vocabulary_size(const struct text_tokenizer *tokenizer)
 {
     return tokenizer != NULL ? tokenizer->vocabulary_size : 0;

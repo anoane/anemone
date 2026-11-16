@@ -24,6 +24,8 @@
 #include "anemone/hooks.h"
 #include "json.h"
 #include "server_responses.h"
+#include "server_messages.h"
+#include "anemone/sampler_records.h"
 
 #define BAD_REQUEST HTTP_BAD_REQUEST
 #define DIGITS "0123456789"
@@ -110,7 +112,9 @@ char *chat_buffer_room(struct chat_buffer *buffer, size_t more)
 	    buffer->bytes = bytes != NULL ? bytes : buffer->bytes;
 	    buffer->capacity = bytes != NULL ? capacity : buffer->capacity;
     }
-    return buffer->is_short ? NULL : buffer->bytes + buffer->count;
+    return buffer->is_short || buffer->bytes == NULL ?
+		   NULL :
+		   buffer->bytes + buffer->count;
 }
 
 void chat_buffer_write(struct chat_buffer *buffer, const void *bytes,
@@ -132,16 +136,19 @@ static void buffer_text(struct chat_buffer *buffer, const char *text)
 static void buffer_string(struct chat_buffer *buffer, const char *bytes,
 			  size_t count)
 {
-    const size_t most = count * ESCAPED_BYTES_PER_BYTE + QUOTE_BYTES;
-    char *const room = count < CHAT_MOST_OUTPUT_BYTES ?
-			       chat_buffer_room(buffer, most) :
-			       NULL;
-    buffer->is_short = buffer->is_short || room == NULL;
-    if (room != NULL) {
-        struct json_writer writer = {room, most, 0};
-	json_write_string(&writer, (struct json_bytes){ bytes, count });
-	buffer->count += writer.length;
-    }
+	if (count >= CHAT_MOST_OUTPUT_BYTES) {
+		buffer->is_short = true;
+		return;
+	}
+	/* The named output cap proves this product and sum fit size_t. */
+	const size_t most = count * ESCAPED_BYTES_PER_BYTE + QUOTE_BYTES;
+	char *const room = chat_buffer_room(buffer, most);
+	buffer->is_short = buffer->is_short || room == NULL;
+	if (room != NULL) {
+		struct json_writer writer = { room, most, 0 };
+		json_write_string(&writer, (struct json_bytes){ bytes, count });
+		buffer->count += writer.length;
+	}
 }
 
 static void buffer_number(struct chat_buffer *buffer, uint64_t number)
@@ -168,6 +175,7 @@ enum member {
 	MEMBER_MAX_COMPLETION_TOKENS,
 	MEMBER_TEMPERATURE,
 	MEMBER_TOP_P,
+	MEMBER_TOP_K,
 	MEMBER_SEED,
 	MEMBER_STOP,
 	MEMBER_N,
@@ -199,6 +207,7 @@ static const char *const member_names[MEMBER_COUNT] = { "model",
 							"max_completion_tokens",
 							"temperature",
 							"top_p",
+							"top_k",
 							"seed",
 							"stop",
 							"n",
@@ -560,6 +569,7 @@ static void member_read(struct reading *reading, struct json_value key, struct j
 	double number = 0.0;
 	uint64_t integer = 0;
 	struct json_value element = { 0 };
+	size_t tools_cursor = value.begin; /* json_next's cursor for the tools array's first element */
 	if (member == MEMBER_THINKING) {
 		thinking_read(reading, key, value);
 		return;
@@ -604,21 +614,37 @@ static void member_read(struct reading *reading, struct json_value key, struct j
             refuse(reading, BAD_REQUEST, "top_p is a number above 0 and at most 1", key);
         }
         request->top_p = (float)number;
+    } else if (member == MEMBER_TOP_K) {
+	    if (json_is_truthy(&reading->scratch, value)) {
+		    if (!number_of(value, NULL, &integer) ||
+			integer > SAMPLER_MOST_VOCABULARY) {
+			    refuse(reading, BAD_REQUEST,
+				   "top_k is an integer from 0 to the sampler vocabulary bound",
+				   key);
+		    } else {
+			    request->top_k = (uint32_t)integer;
+		    }
+	    }
     } else if (member == MEMBER_SEED) {
-        if (!number_of(value, NULL, &integer)) {
-            refuse(reading, BAD_REQUEST, "seed is an integer from 0 to 18446744073709551615", key);
-        }
-        request->seed = integer;
-        request->is_seeded = true;
+	    if (!number_of(value, NULL, &integer)) {
+		    refuse(reading, BAD_REQUEST,
+			   "seed is an integer from 0 to 18446744073709551615",
+			   key);
+	    }
+	    request->seed = integer;
+	    request->is_seeded = true;
     } else if (member == MEMBER_STOP && kind == '[') {
 	    for (size_t cursor = value.begin;
 		 json_next(value, &cursor, NULL, &element);) {
 		    stop_read(reading, key, element);
 	    }
     } else if (member == MEMBER_STOP) {
-        stop_read(reading, key, value);
-    } else if (member == MEMBER_N && (!number_of(value, NULL, &integer) || integer != 1)) {
-        refuse(reading, BAD_REQUEST, "n above 1 is not supported by this server: it generates one choice", key);
+	    stop_read(reading, key, value);
+    } else if (member == MEMBER_N &&
+	       (!number_of(value, NULL, &integer) || integer != 1)) {
+	    refuse(reading, BAD_REQUEST,
+		   "n above 1 is not supported by this server: it generates one choice",
+		   key);
     } else if (member == MEMBER_REASONING_EFFORT) {
 	    if (effort == effort_count &&
 		(!number_of(value, NULL, &integer) ||
@@ -630,16 +656,19 @@ static void member_read(struct reading *reading, struct json_value key, struct j
 	    }
 	request->reasoning_effort = effort < effort_count ? efforts[effort] : (uint32_t)integer;
     } else if (member == MEMBER_DRAFT_USAGE) {
-        const uint32_t mode_count = sizeof(draft_usage_names) / sizeof(draft_usage_names[0]);
-        const uint32_t mode = name_index(reading, value, draft_usage_names, mode_count);
-        if (mode == mode_count) {
-            refuse(reading, BAD_REQUEST, "anemone_draft_usage is none, compact or full", key);
-        }
-        request->draft_usage = mode;
+	    const uint32_t mode_count =
+		    sizeof(draft_usage_names) / sizeof(draft_usage_names[0]);
+	    const uint32_t mode =
+		    name_index(reading, value, draft_usage_names, mode_count);
+	    if (mode == mode_count) {
+		    refuse(reading, BAD_REQUEST,
+			   "anemone_draft_usage is none, compact or full", key);
+	    }
+	    request->draft_usage = mode;
     } else if (member == MEMBER_TOOLS && kind != '[') {
-        refuse(reading, BAD_REQUEST, "tools is an array of tools", key);
+	    refuse(reading, BAD_REQUEST, "tools is an array of tools", key);
     } else if (member == MEMBER_TOOLS &&
-	       json_next(value, &(size_t){ value.begin }, NULL, &element)) {
+	       json_next(value, &tools_cursor, NULL, &element)) {
 	    tools_read(reading, key, value);
 	    request->tools_declared = true;
 	    request->tools_begin =
@@ -721,6 +750,7 @@ uint32_t chat_request_read(const char *body, size_t byte_count,
 					 .draft_usage = defaults->draft_usage,
 					 .temperature = defaults->temperature,
 					 .top_p = defaults->top_p,
+					 .top_k = defaults->top_k,
 					 .is_seeded = defaults->is_seeded };
 	reading.scratch.capacity =
 		SCRATCH_BYTES_PER_BODY_BYTE * byte_count + SCRATCH_SLACK_BYTES;
@@ -781,12 +811,19 @@ static uint32_t status_place(uint32_t status)
     while (place < sizeof(statuses) / sizeof(statuses[0]) && statuses[place].status != status) {
         place++;
     }
-    return place < sizeof(statuses) / sizeof(statuses[0]) ?
-		   place :
-		   status_place(HTTP_SERVER_ERROR);
+    if (place == sizeof(statuses) / sizeof(statuses[0])) {
+	    for (place = 0; place < sizeof(statuses) / sizeof(statuses[0]);
+		 place++) {
+		    if (statuses[place].status == HTTP_SERVER_ERROR) {
+			    break;
+		    }
+	    }
+    }
+    return place;
 }
 
 /* An empty response whose body begins behind room for its head. */
+
 static void body_begin(struct chat_buffer *output)
 {
 	*output = (struct chat_buffer){ output->bytes, 0, 0, output->capacity,
@@ -812,10 +849,24 @@ static void head_put(struct chat_buffer *output, uint32_t status,
     }
 }
 
+void chat_json_body_begin(struct chat_buffer *output)
+{
+	body_begin(output);
+}
+void chat_json_body_finish(struct chat_buffer *output, uint32_t status,
+			   const char *extra)
+{
+	head_put(output, status, extra);
+}
+
 void chat_refusal_write(struct chat_buffer *output,
 			const struct chat_refusal *refusal, const char *body,
 			uint32_t route)
 {
+	if (route == CHAT_ROUTE_MESSAGES) {
+		server_messages_refuse(output, refusal);
+		return;
+	}
     const uint32_t status = refusal->status;
     const char *const message = refusal->message != NULL ? refusal->message : statuses[status_place(status)].message;
     body_begin(output);
@@ -1021,22 +1072,24 @@ static uint32_t text_given_out(struct chat_answer *answer, uint32_t count,
 		length += is_valid ? bytes : REPLACEMENT_BYTES;
 		position += bytes;
 	}
-    if (length != 0 && answer->request->is_responses) {
-	    server_responses_text(answer, text, length);
-    } else if (length != 0 && answer->request->is_streamed) {
-	    chunk_begin(answer);
-	    buffer_text(&answer->output, answer->is_reasoning ?
-						 "{\"reasoning_content\":" :
-						 "{\"content\":");
-	    buffer_string(&answer->output, text, length);
-	    buffer_text(&answer->output, "}");
-	    chunk_end(answer, NULL);
-    } else if (length != 0) {
-	    chat_buffer_write(answer->is_reasoning ? &answer->reasoning :
-						     &answer->content,
-			      text, length);
-    }
-    return position;
+	if (length != 0 && answer->request->is_messages) {
+		server_messages_text(answer, text, length);
+	} else if (length != 0 && answer->request->is_responses) {
+		server_responses_text(answer, text, length);
+	} else if (length != 0 && answer->request->is_streamed) {
+		chunk_begin(answer);
+		buffer_text(&answer->output, answer->is_reasoning ?
+						     "{\"reasoning_content\":" :
+						     "{\"content\":");
+		buffer_string(&answer->output, text, length);
+		buffer_text(&answer->output, "}");
+		chunk_end(answer, NULL);
+	} else if (length != 0) {
+		chat_buffer_write(answer->is_reasoning ? &answer->reasoning :
+							 &answer->content,
+				  text, length);
+	}
+	return position;
 }
 
 /* Gives out the held bytes nothing can change any more: up to the first whole delimiter (the end of reasoning, or in
@@ -1044,52 +1097,100 @@ static uint32_t text_given_out(struct chat_answer *answer, uint32_t count,
  * one. True when a stop string ends the answer; the beginning of calls moves what follows it into the block. */
 static bool held_released(struct chat_answer *answer, bool is_last)
 {
-    static const char reasoning_end[] = REASONING_END, calls_begin[] = CALLS_BEGIN;
-    const struct chat_request *const request = answer->request;
-    for (;;) {
-        const uint32_t calls_index = answer->is_reasoning ? 1u : request->stop_count;  /* after the part's own */
-        const uint32_t delimiter_count = calls_index + (request->tools_end > request->tools_begin ? 1u : 0u);
-        const char *found = NULL;
-        size_t found_bytes = 0, tail = 0;
-        uint32_t found_index = 0;
-        for (uint32_t index = 0; index < delimiter_count; index++) {
-            const char *const delimiter = index == calls_index ? calls_begin
-                                        : answer->is_reasoning ? reasoning_end : request->stops[index];
-            const size_t bytes = index == calls_index ? sizeof(calls_begin) - 1
-                               : answer->is_reasoning ? sizeof(reasoning_end) - 1 : request->stop_byte_counts[index];
-            const char *const at = memmem(answer->held, answer->held_count, delimiter, bytes);
-            found_index = at != NULL && (found == NULL || at < found) ? index : found_index;
-            found_bytes = at != NULL && (found == NULL || at < found) ? bytes : found_bytes;
-            found = at != NULL && (found == NULL || at < found) ? at : found;
-            for (size_t length = bytes - 1 < answer->held_count ? bytes - 1 : answer->held_count; length > tail;
-                 length--) {
-                tail = memcmp(answer->held + answer->held_count - length, delimiter, length) == 0 ? length : tail;
-            }
-        }
-        const uint32_t until = found != NULL ? (uint32_t)(found - answer->held)
-                                             : answer->held_count - (is_last ? 0 : (uint32_t)tail);
-        const uint32_t given = text_given_out(answer, until, is_last || found != NULL);
-        const uint32_t dropped = found != NULL ? until + (uint32_t)found_bytes : given;
-        if (found != NULL && found_index == calls_index) {
-		chat_buffer_write(&answer->dsml, answer->held + dropped,
-				  answer->held_count - dropped);
-		answer->held_count = 0;
+	static const char reasoning_end[] = REASONING_END,
+			  calls_begin[] = CALLS_BEGIN;
+	const struct chat_request *const request = answer->request;
+	for (;;) {
+		const bool controlled = answer->is_reasoning &&
+					request->thinking_budget != 0;
+		const uint32_t calls_index =
+			answer->is_reasoning ?
+				(controlled ? 0u : 1u) :
+				request->stop_count; /* after the part's own */
+		const uint32_t delimiter_count =
+			calls_index +
+			(request->tools_end > request->tools_begin ? 1u : 0u);
+		const char *found = NULL;
+		size_t found_bytes = 0, tail = 0;
+		uint32_t found_index = 0;
+		for (uint32_t index = 0; index < delimiter_count; index++) {
+			const char *const delimiter =
+				index == calls_index ? calls_begin :
+				answer->is_reasoning ? reasoning_end :
+						       request->stops[index];
+			const size_t bytes =
+				index == calls_index ?
+					sizeof(calls_begin) - 1 :
+				answer->is_reasoning ?
+					sizeof(reasoning_end) - 1 :
+					request->stop_byte_counts[index];
+			const char *const at = memmem(answer->held,
+						      answer->held_count,
+						      delimiter, bytes);
+			found_index =
+				at != NULL && (found == NULL || at < found) ?
+					index :
+					found_index;
+			found_bytes =
+				at != NULL && (found == NULL || at < found) ?
+					bytes :
+					found_bytes;
+			found = at != NULL && (found == NULL || at < found) ?
+					at :
+					found;
+			for (size_t length = bytes - 1 < answer->held_count ?
+						     bytes - 1 :
+						     answer->held_count;
+			     length > tail; length--) {
+				tail = memcmp(answer->held +
+						      answer->held_count -
+						      length,
+					      delimiter, length) == 0 ?
+					       length :
+					       tail;
+			}
+		}
+		if (controlled && found != NULL) {
+			chat_answer_fail(answer);
+			return true;
+		}
+		const uint32_t until =
+			found != NULL ? (uint32_t)(found - answer->held) :
+					answer->held_count -
+						(is_last ? 0 : (uint32_t)tail);
+		const uint32_t given =
+			text_given_out(answer, until, is_last || found != NULL);
+		const uint32_t dropped =
+			found != NULL ? until + (uint32_t)found_bytes : given;
+		if (found != NULL && !answer->is_reasoning &&
+		    found_index < request->stop_count)
+			answer->matched_stop = found_index;
+		if (found != NULL && found_index == calls_index) {
+			chat_buffer_write(&answer->dsml, answer->held + dropped,
+					  answer->held_count - dropped);
+			answer->held_count = 0;
+			answer->is_reasoning = false;
+			answer->is_calling = true;
+			return false;
+		}
+		memmove(answer->held, answer->held + dropped,
+			answer->held_count - dropped);
+		answer->held_count -= dropped;
+		if (found == NULL || !answer->is_reasoning) {
+			return found != NULL;
+		}
 		answer->is_reasoning = false;
-		answer->is_calling = true;
-		return false;
-        }
-        memmove(answer->held, answer->held + dropped, answer->held_count - dropped);
-        answer->held_count -= dropped;
-        if (found == NULL || !answer->is_reasoning) {
-            return found != NULL;
-        }
-        answer->is_reasoning = false;
-    }
+	}
 }
 
 /* ---- calls ------------------------------------------------------------------------------------------------- */
 
-enum call_reading { CALL_UNFINISHED, CALL_WHOLE, CALLS_CLOSED, CALLS_MALFORMED };
+enum call_reading {
+	CALL_UNFINISHED,
+	CALL_WHOLE,
+	CALLS_CLOSED,
+	CALLS_MALFORMED
+};
 
 /* The place of the first of two tokens in the block at or after from, and which is first (0 or 1); the block's count
  * when neither is there yet. */
@@ -1097,53 +1198,71 @@ static size_t first_found(const struct chat_buffer *block, size_t from,
 			  const char *first, const char *second,
 			  uint32_t *which_out)
 {
-    const char *const at_first = block->bytes != NULL ? memmem(block->bytes + from, block->count - from, first,
-                                                               strlen(first)) : NULL;
-    const char *const at_second = block->bytes != NULL ? memmem(block->bytes + from, block->count - from, second,
-                                                                strlen(second)) : NULL;
-    *which_out = at_second != NULL && (at_first == NULL || at_second < at_first) ? 1u : 0u;
-    return at_first == NULL && at_second == NULL ? block->count
-                                                 : (size_t)((*which_out == 1u ? at_second : at_first) - block->bytes);
+	const char *const at_first = block->bytes != NULL ?
+					     memmem(block->bytes + from,
+						    block->count - from, first,
+						    strlen(first)) :
+					     NULL;
+	const char *const at_second = block->bytes != NULL ?
+					      memmem(block->bytes + from,
+						     block->count - from,
+						     second, strlen(second)) :
+					      NULL;
+	*which_out = at_second != NULL && (at_first == NULL ||
+					   at_second < at_first) ?
+			     1u :
+			     0u;
+	return at_first == NULL && at_second == NULL ?
+		       block->count :
+		       (size_t)((*which_out == 1u ? at_second : at_first) -
+				block->bytes);
 }
 
-static bool is_python_space(char byte)                    /* \s of an ASCII text */
+static bool is_python_space(char byte) /* \s of an ASCII text */
 {
-    return byte != '\0' && strchr(PYTHON_ASCII_SPACES, byte) != NULL;
+	return byte != '\0' && strchr(PYTHON_ASCII_SPACES, byte) != NULL;
 }
 
 /* Python's Unicode \s, as UTF-8. In particular the reference also allows it before name=. */
 static size_t spaces_skipped(const char *text, size_t begin, size_t end)
 {
-    static const char *const unicode_spaces[] = {
-        "\xc2\x85", "\xc2\xa0", "\xe1\x9a\x80", "\xe2\x80\x80", "\xe2\x80\x81", "\xe2\x80\x82",
-        "\xe2\x80\x83", "\xe2\x80\x84", "\xe2\x80\x85", "\xe2\x80\x86", "\xe2\x80\x87", "\xe2\x80\x88",
-        "\xe2\x80\x89", "\xe2\x80\x8a", "\xe2\x80\xa8", "\xe2\x80\xa9", "\xe2\x80\xaf", "\xe2\x81\x9f",
-        "\xe3\x80\x80"};
-    while (begin < end) {
-        if (is_python_space(text[begin])) {
-            begin++;
-            continue;
-        }
-        size_t bytes = 0;
-        for (size_t index = 0; index < sizeof(unicode_spaces) / sizeof(unicode_spaces[0]); index++) {
-            const size_t length = strlen(unicode_spaces[index]);
-            if (length <= end - begin && memcmp(text + begin, unicode_spaces[index], length) == 0) {
-                bytes = length;
-                break;
-            }
-        }
-        if (bytes == 0) {
-            break;
-        }
-        begin += bytes;
-    }
-    return begin;
+	static const char *const unicode_spaces[] = {
+		"\xc2\x85",	"\xc2\xa0",	"\xe1\x9a\x80", "\xe2\x80\x80",
+		"\xe2\x80\x81", "\xe2\x80\x82", "\xe2\x80\x83", "\xe2\x80\x84",
+		"\xe2\x80\x85", "\xe2\x80\x86", "\xe2\x80\x87", "\xe2\x80\x88",
+		"\xe2\x80\x89", "\xe2\x80\x8a", "\xe2\x80\xa8", "\xe2\x80\xa9",
+		"\xe2\x80\xaf", "\xe2\x81\x9f", "\xe3\x80\x80"
+	};
+	while (begin < end) {
+		if (is_python_space(text[begin])) {
+			begin++;
+			continue;
+		}
+		size_t bytes = 0;
+		for (size_t index = 0;
+		     index < sizeof(unicode_spaces) / sizeof(unicode_spaces[0]);
+		     index++) {
+			const size_t length = strlen(unicode_spaces[index]);
+			if (length <= end - begin &&
+			    memcmp(text + begin, unicode_spaces[index],
+				   length) == 0) {
+				bytes = length;
+				break;
+			}
+		}
+		if (bytes == 0) {
+			break;
+		}
+		begin += bytes;
+	}
+	return begin;
 }
 
 /* A tag's final > followed by any whitespace, including none. */
 static bool is_call_separator(const char *text, size_t begin, size_t end)
 {
-    return begin < end && text[begin] == '>' && spaces_skipped(text, begin + 1, end) == end;
+	return begin < end && text[begin] == '>' &&
+	       spaces_skipped(text, begin + 1, end) == end;
 }
 
 /* One parameter's content, between its token and "/｜DSML｜ parameter": ' name="K" string="true|false">V<' as the
@@ -1313,6 +1432,11 @@ static uint32_t call_read(struct chat_answer *answer,
 static void call_given_out(struct chat_answer *answer, struct json_bytes name,
 			   const struct chat_buffer *arguments)
 {
+	if (answer->request->is_messages) {
+		server_messages_call(answer, name, arguments);
+		answer->call_count++;
+		return;
+	}
 	if (answer->request->is_responses) {
 		server_responses_call(answer, name, arguments);
 		answer->call_count++;
@@ -1426,6 +1550,7 @@ void chat_answer_begin(struct chat_answer *answer,
     answer->request = request;
     answer->held_count = answer->completion_token_count = answer->call_count = answer->cached_token_count = 0;
     answer->reasoning_token_count = 0;
+    answer->matched_stop = request->stop_count;
     answer->dsml_read = 0;
     answer->prompt_token_count = prompt_token_count;
     answer->is_reasoning = request->reasoning_effort != 0;
@@ -1433,6 +1558,10 @@ void chat_answer_begin(struct chat_answer *answer,
     answer->are_calls_malformed = false;
     answer->defers_stop_finish = answer->stop_matched = answer->has_draft_statistics = false;
     (void)snprintf(answer->identifier, sizeof(answer->identifier), "%s", identifier);
+    if (request->is_messages) {
+	    server_messages_begin(answer);
+	    return;
+    }
     if (request->is_responses) {
 	    server_responses_begin(answer, model_name, created_seconds);
 	    return;
@@ -1458,13 +1587,21 @@ void chat_answer_begin(struct chat_answer *answer,
     }
 }
 
-bool chat_answer_token(struct chat_answer *answer, const char *bytes,
-		       uint32_t byte_count)
+bool chat_answer_token_control(struct chat_answer *answer, const char *bytes,
+			       uint32_t byte_count, bool closes_reasoning)
 {
     if (answer->is_finished || answer->stop_matched) {
         return false;
     }
     answer->completion_token_count++;
+    if (closes_reasoning && answer->request->thinking_budget != 0 &&
+	answer->is_reasoning) {
+	    (void)text_given_out(answer, answer->held_count, true);
+	    answer->held_count = 0;
+	    answer->is_reasoning = false;
+	    return false;
+    }
+
     if (answer->is_calling) {
 	    chat_buffer_write(&answer->dsml, bytes, byte_count);
     } else if (byte_count >
@@ -1485,6 +1622,9 @@ bool chat_answer_token(struct chat_answer *answer, const char *bytes,
         answer->output.is_short = answer->output.is_short || answer->dsml.is_short;
         is_stopped = answer->are_calls_closed;
     }
+    if (answer->request->is_messages && answer->is_finished) {
+	    return true; /* a protocol output failure also cancels the owned command */
+    }
     if (is_stopped) {
         answer->held_count = 0;
         answer->stop_matched = true;
@@ -1493,6 +1633,12 @@ bool chat_answer_token(struct chat_answer *answer, const char *bytes,
 	}
     }
     return is_stopped;
+}
+
+bool chat_answer_token(struct chat_answer *answer, const char *bytes,
+		       uint32_t byte_count)
+{
+	return chat_answer_token_control(answer, bytes, byte_count, false);
 }
 
 void chat_answer_finish(struct chat_answer *answer, const char *finish_reason)
@@ -1507,14 +1653,20 @@ void chat_answer_finish(struct chat_answer *answer, const char *finish_reason)
     if (answer->is_calling) {
         answer->are_calls_malformed = false;                  /* reparse the held suffix at EOS or the token limit */
         calls_given_out(answer, true);
-        if (answer->call_count == 0 || (!answer->are_calls_closed && answer->dsml_read < answer->dsml.count)) {
-            block_given_out_as_text(answer);
-        }
+	if (answer->call_count == 0 ||
+	    (!answer->request->is_messages && !answer->are_calls_closed &&
+	     answer->dsml_read < answer->dsml.count)) {
+		block_given_out_as_text(answer);
+	}
     }
     const char *const stopped_reason = answer->stop_matched ? "stop" : finish_reason;
     const char *const reason = answer->call_count != 0 && strcmp(stopped_reason, "stop") == 0 ? "tool_calls"
                                                                                            : stopped_reason;
     answer->is_finished = true;
+    if (answer->request->is_messages) {
+	    server_messages_finish(answer, reason);
+	    return;
+    }
     if (answer->request->is_responses) {
 	    server_responses_finish(answer, reason);
 	    return;
@@ -1559,6 +1711,11 @@ void chat_answer_finish(struct chat_answer *answer, const char *finish_reason)
 
 void chat_answer_fail(struct chat_answer *answer)
 {
+	if (answer->request->is_messages) {
+		if (!answer->is_finished)
+			server_messages_fail(answer);
+		return;
+	}
 	if (answer->request->is_responses) {
 		server_responses_fail(answer);
 		return;
@@ -1580,6 +1737,7 @@ void chat_answer_fail(struct chat_answer *answer)
 
 void chat_answer_free(struct chat_answer *answer)
 {
+	server_messages_free(answer);
 	server_responses_free(answer);
 	answer->pending_responses_fields = NULL;
 	chat_buffer_free(&answer->output);

@@ -23,6 +23,9 @@
 #define DUMP_SESSIONS 8u
 #define DUMP_PROGRAMS 2u
 #define DUMP_WAIT_NS 1000000000ull
+#define DUMP_BATCH_ROWS 12u
+#define DUMP_LAUNCHES_SHOWN 40u /* the launches shown from a card's last sampler on */
+#define DUMP_GRID_Z 2 /* a launch grid's third dimension */
 
 int main(void)
 {
@@ -74,7 +77,7 @@ int main(void)
 		printf("batch_segments_dump_test: the model did not prepare\n");
 		return 0;
 	}
-	const uint32_t rows[DUMP_PROGRAMS] = { 12u, LINEAR_MAXIMUM_ROWS };
+	const uint32_t rows[DUMP_PROGRAMS] = { DUMP_BATCH_ROWS, LINEAR_MAXIMUM_ROWS };
 	struct execution_program *programs[DUMP_PROGRAMS] = { 0 };
 	for (uint32_t index = 0; index < DUMP_PROGRAMS; index++) {
 		struct step_companion_program companions = { 0 };
@@ -102,7 +105,8 @@ int main(void)
 			}
 			const struct segment_record *const segment =
 				&programs[program]->segments[index];
-			printf(" | card %" PRIu32 " stage %" PRIu32 " layer %10" PRIu32 " pause %" PRIu32 " n %4" PRIu32,
+			printf(" | card %" PRIu32 " stage %" PRIu32 " layer %10" PRIu32
+			       " pause %" PRIu32 " n %4" PRIu32,
 			       segment->card, segment->stage, segment->layer, segment->pause, segment->launch_count);
 		}
 		const bool differs = index >= programs[0]->segment_count || index >= programs[1]->segment_count ||
@@ -134,11 +138,13 @@ int main(void)
 			    strstr(kernel.function_name, "sampler") != NULL)
 				last = index;
 		}
-		printf("card %" PRIu32 ": %" PRIu32 " launches, the last sampler at %" PRIu32 "\n", card, own->launch_count,
+		printf("card %" PRIu32 ": %" PRIu32 " launches, the last sampler at %" PRIu32 "\n",
+		       card, own->launch_count,
 		       last);
-		for (uint32_t index = last; index < own->launch_count && index < last + 40u; index++) {
+		for (uint32_t index = last; index < own->launch_count && index < last + DUMP_LAUNCHES_SHOWN; index++) {
 			struct test_host_memory_backend_kernel kernel;
-			const bool named = test_host_memory_backend_kernel_of(card, own->launches[index].kernel, &kernel);
+			const bool named =
+				test_host_memory_backend_kernel_of(card, own->launches[index].kernel, &kernel);
 			printf("  %5" PRIu32 " %s grid %u,%u,%u\n", index,
 			       own->launches[index].kernel == BACKEND_COPY ?
 				       "(copy)" :
@@ -146,7 +152,7 @@ int main(void)
 				       "?",
 			       own->launches[index].grid[0],
 			       own->launches[index].grid[1],
-			       own->launches[index].grid[2]);
+			       own->launches[index].grid[DUMP_GRID_Z]);
 		}
 	}
 	step_driver_destroy(driver);

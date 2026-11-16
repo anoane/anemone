@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Model data for Anemone v0.0.2-alpha
+# Model data for Anemone v0.0.3-alpha
 
 The release can prepare its model data on a CPU machine from two public,
 revision-pinned Hugging Face snapshots. The converters are separate from the
@@ -124,7 +124,7 @@ export CUDA_VISIBLE_DEVICES= PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 TRANSFOR
 "$PYTHON" tools/convert/make_pack.py convert "$OFFICIAL" "$DATA/original.anemone" --reference "$OFFICIAL" --jobs 2
 "$PYTHON" tools/convert/make_pack.py verify "$DATA/original.anemone" --jobs 2
 "$PYTHON" tools/convert/make_hybrid.py "$OFFICIAL" "$EXL3" "$DATA/hybrid"
-"$PYTHON" tools/convert/make_virtual_pack.py --native "$DATA/original.anemone" --hybrid "$DATA/hybrid" --output "$DATA/model.exl3map"
+"$PYTHON" tools/convert/make_virtual_pack.py --native "$DATA/original.anemone" --hybrid "$DATA/hybrid" --exl3-config "$EXL3/quantization_config.json" --output "$DATA/model.exl3map"
 ```
 
 For these individual commands, set `OFFICIAL`, `EXL3` and `DATA` to your selected
@@ -178,6 +178,31 @@ tensor shapes and finite FP16 Hadamard vectors, then recomputes all expert
 extent digests. It preserves the original pack's 434 non-routed extents,
 including its BF16 head, original draft weights, vision and Engram.
 The virtual pack is 424,522,379,264 bytes with 138,675 mapped segments.
+
+A checkpoint is admitted by validation, not by its index's identity. Every routed
+expert must match the model's `config.json` (the hybrid's own, or `--config`; its
+`text_config` when present):
+- each matrix's (outputs, inputs) against `hidden_size` and `moe_intermediate_size`;
+- `num_hidden_layers` layers of `n_routed_experts` experts, each with the same three
+  matrices, two of them (intermediate, hidden).
+Each matrix must also have its dtypes, a trellis width (K2, K2.5, K3 or K4) equal to
+`quantization_config.json`'s `bits_per_weight`, and the mul1 codebook.
+`--exl3-config` is required. The two hybrid indexes built so far keep their
+provenance as data. Another checkpoint's provenance is given with `--exl3-source
+"repository @ revision"`.
+
+Beside the map, `model.exl3map.descriptor.json` records:
+- the map's sha256, logical size and pack header digests;
+- the `config.json`, index and `quantization_config.json` sha256;
+- the codebook and the expert geometry;
+- the width of every (layer, matrix kind), with a summary by width;
+- `front_end.tables`' sha256, when `--front-end-tables` names it;
+- the quality status, one of three:
+  - `recorded`: `--quality-record` names the NLL/PPL capture that covers the map, and its sha256 is kept;
+  - `established`: `--quality-established` names the qualification that established it, by its records;
+  - `none`: neither was given. Such a map is for explicit opt-in only.
+
+The descriptor leaves the map's bytes unchanged. The engine does not read it yet.
 
 The only external map sources are the original pack and LibertAI shards
 `model-00002-of-00043.safetensors` through `model-00041-of-00043.safetensors`.
@@ -352,9 +377,9 @@ source-file hashes differ from the earlier v2 tag because of the added license c
 | `tools/convert/make_hybrid.py` | 2054 | `ae7d0f6b508a34f5c57bb43739631e86d33f6c531c572082d0d5881109401c28` |
 | `tools/convert/make_pack.py` | 64286 | `3e59e81634bcb45f76c07dac42286cedf13f2059ecd54a80e7c770beb0564831` |
 | `tools/convert/make_pack_copies.sh` | 2616 | `e0c7db7c788a0ee52a0a69d53b5efc7ce3c8202b7cbc633484bbdbfee879f60d` |
-| `tools/convert/make_virtual_pack.py` | 10011 | `9e4772b6f4a8c468e76b8bab962295131dede12cd8f3017323fa4282639eda80` |
+| `tools/convert/make_virtual_pack.py` | 19704 | `c37c413c5d6f7ddb8c9340354b51cd44d86f102db807378c4cf7f71c64899357` |
 | `tools/convert/w4a16_pack_scan.py` | 63882 | `7e6d52cc115bf7525c6cab61f4f7120a12856d3d1eca100cd54ae34836fc7daf` |
-| `tools/model_data.sh` | 1824 | `0b47667db64c247866fd66e53b1674b8dbf9efeaff05d0e53cccdc0efed862ec` |
+| `tools/model_data.sh` | 1871 | `cecfd2496f233694b15fa8edfc20363507be99897cfb4ed001660606f31f2b48` |
 
 ## Complete source-file appendix
 

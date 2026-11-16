@@ -907,7 +907,7 @@ static bool replay_run(struct test_linear_card *card, const struct replay_source
 /* Opens the capture and the pack. */
 static bool sources_open(int argument_count, char **arguments, struct replay_sources *sources)
 {
-	struct storage_description description = { 0, 0, 0 };
+	struct storage_description description = { 0 };
 	const char *const *const copy_paths =
 		(const char *const *)&arguments[ARGUMENTS_BEFORE_THE_COPIES];
 	const uint32_t copy_count =

@@ -222,7 +222,10 @@ static void capture_begin(void)
 static void capture_end(char *text, size_t text_capacity)
 {
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, text_capacity - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    text_capacity) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';
@@ -671,7 +674,8 @@ static void test_launches(void)
 					       record.gate_up_last_offset &&
 				       record.row_count == row_count &&
 				       record.reference_order == order,
-			       "the record names every range, the last offsets of the matrices, the rows and the order");
+			       "the record names every range, the last offsets of the matrices, the rows and the "
+			       "order");
 		}
     }
     context_text = "the table at the ends of the experts' range";

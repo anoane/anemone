@@ -43,6 +43,8 @@
  *       PACK_ELEMENT_UINT8 and exactly the bytes its format's stored_byte_count gives for that shape and
  *       its bits_per_weight; its name is not empty, lies inside the name bytes and sorts after the name before it;
  *       every reserved field is zero.
+ *     A matrix whose bits_per_weight its format defines but this build does not decode (an EXL3 width outside
+ *     EXL3_SUPPORTED_BITS_X2) is refused with STATUS_UNSUPPORTED instead, with one error line naming the tensor.
  *     Any other failure keeps its own status (input or output, memory, an invalid argument): a reader that
  *     reports no copy or more than STORAGE_MAXIMUM_COPIES, or holds less than one block, is an invalid
  *     argument.
@@ -144,7 +146,9 @@ struct pack_tensor {
 	uint32_t dimension_count;
 	uint32_t dimensions[PACK_MAXIMUM_DIMENSIONS];
 	uint32_t weight_format; /* enum weight_format_code; NONE for a plain tensor */
-	uint32_t bits_per_weight; /* of a matrix of a weight format; 0 for a plain tensor */
+	/* of a matrix of a weight format; 0 for a plain tensor. EXL3 stores a width: K for a whole K, 16 K
+	 * (EXL3_HALF_WIDTH_SCALE K, the tile's uint16 count) for a half K; exl3_bits_x2 decodes it (exl3_records.h) */
+	uint32_t bits_per_weight;
 	uint32_t reserved_zero[PACK_TENSOR_RESERVED_WORDS];
 };
 

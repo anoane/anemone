@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "anemone/live_metrics.h"
+#include "stats_tables.h"
 
 #define TEST_SECONDS 80u
 #define GENERATION_PER_SECOND 4u
@@ -109,7 +110,7 @@ same_windows(const struct live_window_record first[LIVE_WINDOW_COUNT],
 				return false;
 			}
 		}
-		for (uint32_t slot = 0; slot < STATS_SLOT_CAPACITY; slot++) {
+		for (uint32_t slot = 0; slot < TEST_STATS_SLOTS; slot++) {
 			if (!equals(first[window].slots[slot].prefill,
 				    second[window].slots[slot].prefill.count,
 				    second[window]
@@ -144,9 +145,15 @@ static void read_windows(const struct live_sampler_record *sampler,
 
 static void test_regular_windows(void)
 {
-	struct live_sampler_record sampler = { 0 };
-	struct engine_stats engine = { 0 };
-	struct live_window_record windows[LIVE_WINDOW_COUNT] = { 0 };
+	static struct test_sampler_tables sampler_tables;
+	struct live_sampler_record sampler = { TEST_SAMPLER_TABLES(
+		sampler_tables) };
+	static struct test_stats_tables engine_tables;
+	memset(&engine_tables, 0, sizeof(engine_tables));
+	struct engine_stats engine = { TEST_STATS_TABLES(engine_tables) };
+	static struct test_window_tables windows_tables;
+	struct live_window_record windows[LIVE_WINDOW_COUNT] =
+		TEST_WINDOW_TABLES(windows_tables);
 	take(&sampler, &engine);
 	read_windows(&sampler, &engine, windows);
 	expect(windows[LIVE_WINDOW_SHORT].decode.elapsed_ns == 0,
@@ -187,7 +194,9 @@ static void test_regular_windows(void)
 	       "prefill work and landed steps use their own cumulative counters");
 	unsigned char before[sizeof(sampler)];
 	memcpy(before, &sampler, sizeof(before));
-	struct live_window_record repeated[LIVE_WINDOW_COUNT] = { 0 };
+	static struct test_window_tables repeated_tables;
+	struct live_window_record repeated[LIVE_WINDOW_COUNT] =
+		TEST_WINDOW_TABLES(repeated_tables);
 	read_windows(&sampler, &engine, repeated);
 	expect(unchanged_bytes(before, &sampler, sizeof(before)) &&
 		       same_windows(windows, repeated),
@@ -196,9 +205,16 @@ static void test_regular_windows(void)
 
 static void test_sparse_and_fractional(void)
 {
-	struct live_sampler_record sampler = { 0 };
-	struct engine_stats engine = { .now_ns = seconds_ns(FIRST_SECONDS) };
-	struct live_window_record windows[LIVE_WINDOW_COUNT] = { 0 };
+	static struct test_sampler_tables sampler_tables;
+	struct live_sampler_record sampler = { TEST_SAMPLER_TABLES(
+		sampler_tables) };
+	static struct test_stats_tables engine_tables;
+	memset(&engine_tables, 0, sizeof(engine_tables));
+	struct engine_stats engine = { .now_ns = seconds_ns(FIRST_SECONDS),
+				       TEST_STATS_TABLES(engine_tables) };
+	static struct test_window_tables windows_tables;
+	struct live_window_record windows[LIVE_WINDOW_COUNT] =
+		TEST_WINDOW_TABLES(windows_tables);
 	take(&sampler, &engine);
 	engine.now_ns = seconds_ns(SECOND_SECONDS);
 	engine.generated_tokens = SPARSE_FIRST_TOKENS;
@@ -231,7 +247,8 @@ static void test_sparse_and_fractional(void)
 	expect(sampler.count == WARMUP_SECONDS + FIRST_SECONDS,
 	       "the next grid boundary admits one sample");
 
-	sampler = (struct live_sampler_record){ 0 };
+	sampler = (struct live_sampler_record){ TEST_SAMPLER_TABLES(
+		sampler_tables) };
 	engine = (struct engine_stats){ .now_ns = LIVE_SAMPLE_PERIOD_NS +
 						  HALF_SECOND_NS };
 	take(&sampler, &engine);
@@ -251,12 +268,19 @@ static void test_sparse_and_fractional(void)
 
 static void test_counter_wrap(void)
 {
-	struct live_sampler_record sampler = { 0 };
+	static struct test_sampler_tables sampler_tables;
+	struct live_sampler_record sampler = { TEST_SAMPLER_TABLES(
+		sampler_tables) };
+	static struct test_stats_tables engine_tables;
+	memset(&engine_tables, 0, sizeof(engine_tables));
 	struct engine_stats engine = { .now_ns = LIVE_SAMPLE_PERIOD_NS,
 				       .generated_tokens = WRAP_BASE,
 				       .prefill_tokens = WRAP_BASE,
-				       .steps_landed = WRAP_BASE };
-	struct live_window_record windows[LIVE_WINDOW_COUNT] = { 0 };
+				       .steps_landed = WRAP_BASE,
+				       TEST_STATS_TABLES(engine_tables) };
+	static struct test_window_tables windows_tables;
+	struct live_window_record windows[LIVE_WINDOW_COUNT] =
+		TEST_WINDOW_TABLES(windows_tables);
 	take(&sampler, &engine);
 	engine.now_ns = seconds_ns(FIRST_SECONDS);
 	engine.generated_tokens = engine.prefill_tokens = engine.steps_landed =
@@ -273,10 +297,17 @@ static void test_counter_wrap(void)
 
 static void test_request_timeline(void)
 {
-	struct live_sampler_record sampler = { 0 };
+	static struct test_sampler_tables sampler_tables;
+	struct live_sampler_record sampler = { TEST_SAMPLER_TABLES(
+		sampler_tables) };
+	static struct test_stats_tables engine_tables;
+	memset(&engine_tables, 0, sizeof(engine_tables));
 	struct engine_stats engine = { .now_ns = LIVE_SAMPLE_PERIOD_NS,
-				       .slots_total = 1 };
-	struct live_window_record windows[LIVE_WINDOW_COUNT] = { 0 };
+				       .slots_total = 1,
+				       TEST_STATS_TABLES(engine_tables) };
+	static struct test_window_tables windows_tables;
+	struct live_window_record windows[LIVE_WINDOW_COUNT] =
+		TEST_WINDOW_TABLES(windows_tables);
 	struct engine_slot_stats *const slot = &engine.slots[0];
 	*slot = (struct engine_slot_stats){ .request_tag = REQUEST_TAG,
 					    .submitted_ns =
@@ -343,10 +374,17 @@ static void test_request_timeline(void)
 
 static void test_cards(void)
 {
-	struct live_sampler_record sampler = { 0 };
+	static struct test_sampler_tables sampler_tables;
+	struct live_sampler_record sampler = { TEST_SAMPLER_TABLES(
+		sampler_tables) };
+	static struct test_stats_tables engine_tables;
+	memset(&engine_tables, 0, sizeof(engine_tables));
 	struct engine_stats engine = { .now_ns = LIVE_SAMPLE_PERIOD_NS,
-				       .card_count = CARD_COUNT };
-	struct live_window_record windows[LIVE_WINDOW_COUNT] = { 0 };
+				       .card_count = CARD_COUNT,
+				       TEST_STATS_TABLES(engine_tables) };
+	static struct test_window_tables windows_tables;
+	struct live_window_record windows[LIVE_WINDOW_COUNT] =
+		TEST_WINDOW_TABLES(windows_tables);
 	for (uint32_t card = 0; card < CARD_COUNT; card++) {
 		engine.cards[card].busy_available = true;
 		engine.cards[card].busy_observed_ns =
@@ -402,7 +440,8 @@ static void test_cards(void)
 		      (double)(LIVE_WINDOW_SHORT_SECONDS * CARD_QUARTER_BUSY_NS),
 		      seconds_ns(LIVE_WINDOW_SHORT_SECONDS)),
 	       "valid observations bracket a missing historical publication without treating it as zero busy time");
-	sampler = (struct live_sampler_record){ 0 };
+	sampler = (struct live_sampler_record){ TEST_SAMPLER_TABLES(
+		sampler_tables) };
 	engine.cards[0].busy_available = false;
 	take(&sampler, &engine);
 	engine.now_ns += LIVE_SAMPLE_PERIOD_NS;
@@ -435,9 +474,14 @@ static void expect_invalid(struct live_sampler_record *sampler,
 
 static void test_invalid_inputs(void)
 {
-	struct live_sampler_record sampler = { 0 };
+	static struct test_sampler_tables sampler_tables;
+	struct live_sampler_record sampler = { TEST_SAMPLER_TABLES(
+		sampler_tables) };
+	static struct test_stats_tables engine_tables;
+	memset(&engine_tables, 0, sizeof(engine_tables));
 	struct engine_stats engine = { .now_ns = seconds_ns(FIRST_SECONDS),
-				       .slots_total = 1 };
+				       .slots_total = 1,
+				       TEST_STATS_TABLES(engine_tables) };
 	struct live_window_record windows[LIVE_WINDOW_COUNT];
 	expect(live_sampler_take(NULL, &engine) == STATUS_INVALID_ARGUMENT &&
 		       live_sampler_read(NULL, &engine, windows) ==
@@ -451,11 +495,12 @@ static void test_invalid_inputs(void)
 	sampler = (struct live_sampler_record){ .count = LIVE_SAMPLE_CAPACITY +
 							 1u };
 	expect_invalid(&sampler, &engine);
-	sampler = (struct live_sampler_record){ 0 };
+	sampler = (struct live_sampler_record){ TEST_SAMPLER_TABLES(
+		sampler_tables) };
 	engine.card_count = BACKEND_MAXIMUM_CARDS + 1u;
 	expect_invalid(&sampler, &engine);
 	engine.card_count = 0;
-	engine.slots_total = STATS_SLOT_CAPACITY + 1u;
+	engine.slots_total = TEST_STATS_SLOTS + 1u;
 	expect_invalid(&sampler, &engine);
 	engine.slots_total = 1;
 	engine.slots[0].token_ring_next = STATS_TOKEN_RING;

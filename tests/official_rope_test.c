@@ -29,8 +29,9 @@ description_of(uint32_t width, uint32_t rows, uint32_t heads)
 		(uint64_t)width * rows * heads * sizeof(uint16_t);
 	return (struct official_rope_description){
 		{ INPUT_OFFSET, bytes },
-		{ ROTATION_OFFSET,
-		  (uint64_t)rows * OFFICIAL_ROPE_WIDTH * sizeof(float) },
+		{ ROTATION_OFFSET, (uint64_t)rows *
+					   (uint64_t)OFFICIAL_ROPE_WIDTH *
+					   sizeof(float) },
 		{ OUTPUT_OFFSET, bytes },
 		width,
 		heads,

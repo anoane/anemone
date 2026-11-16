@@ -32,7 +32,22 @@
 #define STREAM_CHUNK_INPUTS DENSE_CHUNK_INPUTS
 #define STREAM_BFLOAT16_PER_WORD 2u
 #define STREAM_FULL_WARP 0xFFFFFFFFu
+/* the halving exchange's distances, 16 down to 1 */
 #define STREAM_FIRST_DISTANCE 16u
+#define STREAM_SECOND_DISTANCE 8u
+#define STREAM_THIRD_DISTANCE 4u
+#define STREAM_FOURTH_DISTANCE 2u
+#define STREAM_LAST_DISTANCE 1u
+/* a 16-byte part's inputs: x holds 0 and 1, y 2 and 3, z 4 and 5, w 6 and 7 */
+#define STREAM_PART_Y_FIRST 2u
+#define STREAM_PART_Z_FIRST 4u
+#define STREAM_PART_W_FIRST 6u
+/* the forms' template arguments: chunks of inputs a lane holds at most, ring depths, groups a pass */
+#define STREAM_CHUNKS_MOST 3u
+#define STREAM_RING2_DEPTH 2u
+#define STREAM_RING3_DEPTH 3u
+#define STREAM_WIDE_GROUPS_A_PASS 2u
+#define STREAM_RING2_BLOCKS_PER_MULTIPROCESSOR 2
 #define STREAM_BUFFERS 2u
 #define STREAM_BLOCKS_PER_MULTIPROCESSOR 2
 
@@ -42,10 +57,10 @@ static_assert(STREAM_VALUES == THREADS_PER_WARP,
 /* Input `index` of a 16-byte part of bfloat16 values, widened exactly. */
 __device__ static __forceinline__ float stream_value(uint4 part, uint32_t index)
 {
-	const uint32_t word = index < 2u ? part.x :
-			      index < 4u ? part.y :
-			      index < 6u ? part.z :
-					   part.w;
+	const uint32_t word = index < STREAM_PART_Y_FIRST ? part.x :
+			      index < STREAM_PART_Z_FIRST ? part.y :
+			      index < STREAM_PART_W_FIRST ? part.z :
+							    part.w;
 	return __uint_as_float(index % STREAM_BFLOAT16_PER_WORD == 0 ?
 				       word << BITS_PER_HALF :
 				       word & UPPER_HALF_MASK);
@@ -283,11 +298,11 @@ __device__ static void dense_stream(struct dense_linear_arguments arguments,
 			issue(group + ring_depth * gridDim.x, slot);
 			slot = slot + 1u == ring_depth ? 0u : slot + 1u;
 		}
-		stream_halve<16u>(sums, lane);
-		stream_halve<8u>(sums, lane);
-		stream_halve<4u>(sums, lane);
-		stream_halve<2u>(sums, lane);
-		stream_halve<1u>(sums, lane);
+		stream_halve<STREAM_FIRST_DISTANCE>(sums, lane);
+		stream_halve<STREAM_SECOND_DISTANCE>(sums, lane);
+		stream_halve<STREAM_THIRD_DISTANCE>(sums, lane);
+		stream_halve<STREAM_FOURTH_DISTANCE>(sums, lane);
+		stream_halve<STREAM_LAST_DISTANCE>(sums, lane);
 		/* Lane l now holds output l / 8, row l % 8. */
 		warp_sums[buffer][warp][lane] = sums[0];
 		__syncthreads();
@@ -332,22 +347,23 @@ extern "C" __global__ void __launch_bounds__(STREAM_THREADS,
 	dense_stream_bfloat16_8(struct dense_linear_arguments arguments,
 				unsigned char *arena)
 {
-	dense_stream<3u, 0u>(arguments, arena);
+	dense_stream<STREAM_CHUNKS_MOST, 0u>(arguments, arena);
 }
 
 /* Ring forms: dynamic shared memory = depth x 4 x (input_size / 8) x 16 bytes
  * (80 KB for depth 2 at 5,120 inputs: two blocks a multiprocessor). */
-extern "C" __global__ void __launch_bounds__(STREAM_THREADS, 2)
+extern "C" __global__ void
+__launch_bounds__(STREAM_THREADS, STREAM_RING2_BLOCKS_PER_MULTIPROCESSOR)
 	dense_stream_ring2_bfloat16_8(struct dense_linear_arguments arguments,
 				      unsigned char *arena)
 {
-	dense_stream<3u, 2u>(arguments, arena);
+	dense_stream<STREAM_CHUNKS_MOST, STREAM_RING2_DEPTH>(arguments, arena);
 }
 extern "C" __global__ void __launch_bounds__(STREAM_THREADS, 1)
 	dense_stream_ring3_bfloat16_8(struct dense_linear_arguments arguments,
 				      unsigned char *arena)
 {
-	dense_stream<3u, 3u>(arguments, arena);
+	dense_stream<STREAM_CHUNKS_MOST, STREAM_RING3_DEPTH>(arguments, arena);
 }
 
 /* Wide form: the same record with row_count 1 .. STREAM_WIDE_ROWS (a BATCH
@@ -559,11 +575,16 @@ dense_stream_wide(struct dense_linear_arguments arguments, unsigned char *arena)
 				fetch(group + gridDim.x);
 #pragma unroll
 			for (uint32_t part = 0; part < per_pass; part++) {
-				stream_halve<16u>(sums[part], lane);
-				stream_halve<8u>(sums[part], lane);
-				stream_halve<4u>(sums[part], lane);
-				stream_halve<2u>(sums[part], lane);
-				stream_halve<1u>(sums[part], lane);
+				stream_halve<STREAM_FIRST_DISTANCE>(sums[part],
+								    lane);
+				stream_halve<STREAM_SECOND_DISTANCE>(sums[part],
+								     lane);
+				stream_halve<STREAM_THIRD_DISTANCE>(sums[part],
+								    lane);
+				stream_halve<STREAM_FOURTH_DISTANCE>(sums[part],
+								     lane);
+				stream_halve<STREAM_LAST_DISTANCE>(sums[part],
+								   lane);
 				/* Lane l: output l / 8, row l % 8. */
 				warp_sums[buffer][warp][part * STREAM_VALUES +
 							lane] = sums[part][0];
@@ -621,7 +642,7 @@ dense_stream_wide(struct dense_linear_arguments arguments, unsigned char *arena)
 	}
 }
 
-/* (tp4_v3_claude, engine copy) src37's one-group form dense_stream_bfloat16_wide spills 24 bytes at two
+/* (tp4_v3_b, engine copy) src37's one-group form dense_stream_bfloat16_wide spills 24 bytes at two
  * blocks a multiprocessor under the engine's flags (sm_80: no spill allowed): left out; the two-group form below
  * takes its place, the same bits. */
 /* Two 8-row groups a pass (sums of 16 rows in registers, one block a
@@ -630,5 +651,6 @@ extern "C" __global__ void __launch_bounds__(STREAM_THREADS, 1)
 	dense_stream_bfloat16_wide16(struct dense_linear_arguments arguments,
 				     unsigned char *arena)
 {
-	dense_stream_wide<3u, 2u>(arguments, arena);
+	dense_stream_wide<STREAM_CHUNKS_MOST, STREAM_WIDE_GROUPS_A_PASS>(
+		arguments, arena);
 }

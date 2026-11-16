@@ -95,6 +95,24 @@ MUST_CHECK result_status step_driver_create(
 	struct step_driver **driver_out);
 void step_driver_destroy(struct step_driver *driver); /* accepts NULL */
 
+/* Startup-only immutable alternatives, indexed by the actual pipeline ring slot. Bank0 names exactly the
+ * driver's current ordinary/image tables. Every bank preserves their areas, topology, state, views and leases;
+ * launch records may name separately owned transient planes. Programs outlive the driver; caller tables do not.
+ * Attach after image alternatives and before graphs, history or steps. Ordinary PP only; no host expert pauses.
+ * The pipeline depth must not exceed bank_count (1..STEP_PIPELINE_MOST). Eager execution uses bank0.
+ * owner_guard keeps an older flight's last visit ahead of a younger first visit on that card if their rows share
+ * any session, including headless prompt rows. Distinct owners retain ordinary readiness. This supplements all
+ * original visit leases; it does not permit a bank's slot to be reused until every card and finish retire it.
+ * Refusal publishes nothing, queues no work, and leaves the driver unchanged. */
+struct step_flight_programs {
+	const struct execution_program *const *programs;
+	const struct execution_program *const *image_programs;
+};
+MUST_CHECK result_status step_flight_programs_attach(
+	struct step_driver *driver, const struct step_flight_programs *banks,
+	uint32_t bank_count, uint32_t program_count,
+	const struct visit_lease *owner_guard);
+
 /* Optional TP startup schedule; ordinary programs/segment records and their printed bytes are unchanged.
  * Each pair is two adjacent segments of one layer/stage on distinct cards, enqueued before either's outgoing waits.
  * No pair overlaps another, crosses a front/draft boundary, pauses for experts or hands data to its own peer.
@@ -301,9 +319,9 @@ MUST_CHECK result_status step_checkpoint_restore(struct step_driver *driver,
 uint32_t step_cone_rows(const struct step_driver *driver);
 /* The rows of its largest wide program (model_seam.h): a front step of exactly that many runs it; 0: none. */
 uint32_t step_wide_rows(const struct step_driver *driver);
-/* The rows of its largest program of kind (wide, full or explicit batch) of at most most_rows; 0: none. A front step of exactly a wide
- * program's rows runs it; a step of exactly a full program's rows, none a front row and none with logits, runs that and
- * answers no token (a full program has no head, model_v41_program.c). */
+/* The rows of its largest program of kind (wide, full or explicit batch) of at most most_rows; 0: none. A front step of
+ * exactly a wide program's rows runs it; a step of exactly a full program's rows, none a front row and none with
+ * logits, runs that and answers no token (a full program has no head, model_v41_program.c). */
 uint32_t step_chunk_rows(const struct step_driver *driver,
 			 enum program_kind kind, uint32_t most_rows);
 /* The committed token at position of a session, for its submitter's thread (a cone run again, front_end_seam.h);

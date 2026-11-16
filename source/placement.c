@@ -442,6 +442,7 @@ placement_from_layout_text(const struct pack_record *pack, const char *text,
 		status != STATUS_OK ||
 			pack_placement_is_valid(pack, card_of_unit_out,
 						unit_count, card_count),
-		"status != ANEMONE_STATUS_OK || anemone_pack_placement_is_valid(pack, card_of_unit_out, unit_count, card_count)");
+		"status != ANEMONE_STATUS_OK || anemone_pack_placement_is_valid(pack, card_of_unit_out, unit_count,"
+		" card_count)");
 	return status;
 }

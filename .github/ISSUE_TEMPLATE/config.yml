@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+blank_issues_enabled: false
+contact_links:
+  - name: Usage questions
+    url: https://github.com/anoane/anemone/blob/main/docs/USAGE.md
+    about: The user manual covers serving, the HTTP API, profiles and options.

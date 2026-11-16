@@ -3,6 +3,7 @@
 #include "anemone/live_metrics.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define COUNTER_BOUNDARY_POINTS 2u
@@ -35,7 +36,9 @@ static bool valid_inputs(const struct live_sampler_record *sampler,
 	    sampler->count > LIVE_SAMPLE_CAPACITY ||
 	    (sampler->count < LIVE_SAMPLE_CAPACITY &&
 	     sampler->next != sampler->count) ||
-	    engine->slots_total > STATS_SLOT_CAPACITY ||
+	    engine->slots_total > sampler->slot_room ||
+	    (engine->slots_total != 0 &&
+	     (sampler->slots == NULL || engine->slots == NULL)) ||
 	    engine->slots_busy > engine->slots_total ||
 	    engine->card_count > BACKEND_MAXIMUM_CARDS ||
 	    engine->step_ring_next >= STATS_STEP_RING ||
@@ -141,10 +144,12 @@ result_status live_sampler_take(struct live_sampler_record *sampler,
 		.processed = engine->prefill_tokens,
 		.steps = engine->steps_landed
 	};
+	struct live_counter_slot *const slots =
+		sampler->slots + (size_t)sampler->next * sampler->slot_room;
 	for (uint32_t slot = 0; slot < engine->slots_total; slot++) {
 		const struct engine_slot_stats *const current =
 			&engine->slots[slot];
-		sample.slots[slot] = (struct live_counter_slot){
+		slots[slot] = (struct live_counter_slot){
 			.submitted_ns = current->submitted_ns,
 			.request_tag = current->request_tag,
 			.processed = current->prompt_processed >=
@@ -261,10 +266,12 @@ slot_measured(const struct live_sampler_record *sampler,
 		point_added(points, &count, began, 0);
 	}
 	for (uint32_t position = 0; position < sampler->count; position++) {
+		const uint32_t index = sample_index(sampler, position);
 		const struct live_counter_sample *const sample =
-			&sampler->samples[sample_index(sampler, position)];
+			&sampler->samples[index];
 		const struct live_counter_slot *const previous =
-			&sample->slots[slot];
+			&sampler->slots[(size_t)index * sampler->slot_room +
+					slot];
 		if (sample->now_ns >= began &&
 		    previous->request_tag == current->request_tag &&
 		    previous->submitted_ns == current->submitted_ns) {
@@ -319,11 +326,24 @@ live_sampler_read(const struct live_sampler_record *sampler,
 	    !valid_history(sampler, engine)) {
 		return STATUS_INVALID_ARGUMENT;
 	}
+	for (uint32_t window = 0; window < LIVE_WINDOW_COUNT; window++) {
+		if (windows_out[window].slot_room < engine->slots_total ||
+		    (engine->slots_total != 0 &&
+		     windows_out[window].slots == NULL)) {
+			return STATUS_INVALID_ARGUMENT;
+		}
+	}
 	static const uint64_t seconds[LIVE_WINDOW_COUNT] = {
 		LIVE_WINDOW_SHORT_SECONDS, LIVE_WINDOW_LONG_SECONDS
 	};
-	struct live_window_record windows[LIVE_WINDOW_COUNT] = { 0 };
+	/* every input is valid: the windows are written in place, each keeping its own slot table */
+	struct live_window_record *const windows = windows_out;
 	for (uint32_t window = 0; window < LIVE_WINDOW_COUNT; window++) {
+		struct live_slot_window *const slots = windows[window].slots;
+		const uint32_t room = windows[window].slot_room;
+		windows[window] =
+			(struct live_window_record){ .slot_room = room,
+						     .slots = slots };
 		const uint64_t duration =
 			seconds[window] * LIVE_SAMPLE_PERIOD_NS;
 		windows[window].prefill = global_measured(
@@ -343,6 +363,30 @@ live_sampler_read(const struct live_sampler_record *sampler,
 				card_measured(sampler, engine, card, duration);
 		}
 	}
-	memcpy(windows_out, windows, sizeof(windows));
 	return STATUS_OK;
+}
+
+result_status live_sampler_tables(struct live_sampler_record *sampler,
+				  uint32_t slot_count)
+{
+	if (sampler == NULL || slot_count == 0) {
+		return STATUS_INVALID_ARGUMENT;
+	}
+	struct live_counter_slot *const slots = calloc(
+		(size_t)LIVE_SAMPLE_CAPACITY * slot_count, sizeof(*slots));
+	if (slots == NULL) {
+		return STATUS_OUT_OF_MEMORY;
+	}
+	sampler->slots = slots;
+	sampler->slot_room = slot_count;
+	return STATUS_OK;
+}
+
+void live_sampler_tables_free(struct live_sampler_record *sampler)
+{
+	if (sampler != NULL) {
+		free(sampler->slots);
+		sampler->slots = NULL;
+		sampler->slot_room = 0;
+	}
 }

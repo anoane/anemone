@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "source_commit": "6b9e276fe4da6750be46c874e5fb5c0ee2a46871",
-  "release": "v0.0.2-alpha",
-  "binary_sha256": "da39965f79adf7883f92c8941e2b92d928706dc7b3f55671b89dce23b67c413e",
-  "parser_helper_sha256": "64b94814a8d30455dbf5e4f07368f32b726fbb3e6ccec91915d0dd4579bfc10e",
-  "scope": "Real axis resolver/parser checks only at publication. GPU health/request execution is recorded separately in the comparison matrix; no model/server was started by these parser checks.",
+  "source_commit": "f57d81375a8830db16925e42740aae1fe0773e90",
+  "release": "v0.0.3-alpha",
+  "binary_sha256": "2afdfc7138b74baa94f9bfe9f426d188e6af1be8e6729230e6c4f21f070d317b",
+  "parser_helper_sha256": "2afdfc7138b74baa94f9bfe9f426d188e6af1be8e6729230e6c4f21f070d317b",
+  "scope": "Real axis resolver/parser checks only. At source_commit, the release executable itself ran them (binary_sha256; parser_helper_sha256 names the same file, as no separate helper was used): each profile's argv, with its environment, argv[0] replaced and both data paths nonexistent, and the two EXL3 arrays again with a prepared 2.9 bpw map, parsed (parser_exit 0; a refused parse exits 2) and stopped with exit 1 at the first front-end step, \"open the tables and the socket\", before any model, GPU backend, socket or server start. The smoke_requests last ran against servers at source 6b9e276 (SERVER_PROFILES.md); GPU health/request execution is recorded separately in the comparison matrix.",
   "transport_adaptation": "Replace argv[0] and the two trailing data paths for the chosen install; the map's embedded absolute source paths must remain valid. Record transport substitutions, preserve numerical flags, and validate target backend card ordering before launching. No authentication/key-file input is included.",
   "base_url": "http://127.0.0.1:8321",
   "profiles": {
@@ -190,6 +190,14 @@
         "--batch_wide_head=1",
         "--batch_draft_rows=1",
         "--tp_draft_layers=1",
+        "--pipeline_steps=1",
+        "--draft_learned_acceptance=1",
+        "--draft_session_acceptance=0",
+        "--draft_base_us=14300",
+        "--draft_tail_us=0",
+        "--draft_row_us=690",
+        "--exl3_tc_product_blocks=0",
+        "--tp_decode_round_once=0",
         "--reasoning_effort=0",
         "--context_tokens=65536",
         "--generated_tokens=65536",
@@ -282,6 +290,14 @@
         "--batch_wide_head=1",
         "--batch_draft_rows=1",
         "--tp_draft_layers=1",
+        "--pipeline_steps=1",
+        "--draft_learned_acceptance=1",
+        "--draft_session_acceptance=0",
+        "--draft_base_us=14300",
+        "--draft_tail_us=0",
+        "--draft_row_us=690",
+        "--exl3_tc_product_blocks=0",
+        "--tp_decode_round_once=0",
         "--reasoning_effort=0",
         "--context_tokens=65536",
         "--generated_tokens=65536",
@@ -343,5 +359,31 @@
     "temperature": 1,
     "top_p": 1,
     "note": "Explicit startup sampling defaults in all published commands; HTTP requests can override them. T1 stochastic token identity to the pinned source is unqualified."
+  },
+  "axis_selection_contract": {
+    "registry": "tools/cli/axes.json",
+    "generated_table": "tools/cli/AXES.md",
+    "fast_compatibility": "Identical selectable non-lossy balanced plans only; same argv and evidence scope. Held tuples and additional lossy routes remain held.",
+    "retained_routes": "Held metadata only; no executable settings and no implicit fallback.",
+    "precedence": "Explicit balanced/fast low-level options override inserted settings in either order; exact-reference conflicts refuse; ordinary admission applies.",
+    "defaults": "No axes selected by default. Selecting axes changes no profile array, source/binary pin or sampling example. Since the 6b9e276 snapshot, ab815b6 gave the two EXL3 arrays eight explicit knobs, --pipeline_steps=1 among them, and the pins moved to the v0.0.3-alpha release (source_commit).",
+    "single_banked_route": {
+      "tuple": {
+        "category": "balanced",
+        "exactness": [
+          "balanced",
+          "fast"
+        ],
+        "concurrency": "single",
+        "focus": "decode"
+      },
+      "weight_family": "original",
+      "control": "original_head_offload=2",
+      "fallback": "original_head_offload=0",
+      "scope": "Banked PP5/session6 remains a raw alternative. Same-binary C1 TP4_PRO at pipeline depth 2 with 1 serving slot (session0) wins all three decode genres with identical outputs; GPU split TP4_PRO (--placement=tp4_pro) carries that recipe as its concurrency=single set. Banked has lower TTFT, no held TTFT/joint admission. This route changes no profile argv or publication pin; the EXL3 arrays' eight knobs (ab815b6) and the v0.0.3-alpha pins are separate changes.",
+      "selected": false,
+      "selected_route": "original_tp_serial2",
+      "selected_session_acceptance": 0
+    }
   }
 }

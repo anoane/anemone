@@ -149,7 +149,7 @@ struct hand_off_record {
  * a prompt needs (WIDE's), whose state every later row reads. A prompt's last cone_rows rows need every unit; a row
  * before them may be a front row, since nothing the other units compute for it is read again (DeepSeek-V4.1-Flash: the
  * decoder's layers, model_layout.h's cone). The front ends on a run of the step driver: no run crosses it. */
-/*   BATCH (tp4_v3_claude, staged with tp4_v3's host half; TP plans that ask for it): steps of 9 to row_count rows
+/*   BATCH (tp4_v3_b, staged with tp4_v3's host half; TP plans that ask for it): steps of 9 to row_count rows
  *         (at most 64) of several sessions: every unit over every row through slab views, then on the cards that
  *         sample, slab by slab, the head and the sampler over the slab's flagged rows; the result area is one per
  *         slab: slab s's at the card's result_offset plus s (STEP_RESULT_BYTES + 8 STEP_ROW_RESULT_BYTES),
@@ -281,30 +281,30 @@ struct execution_program {
 		*segments; /* segment_count, in the order they run */
 	const struct hand_off_record *
 		hand_offs; /* hand_off_count, in the order of their after_segment */
+	const struct expert_pause *
+		expert_pauses; /* expert_pause_count, in the order of their after_segment */
+	const uint64_t *host_expert_offsets; /* host_expert_count */
+	const struct session_range *
+		session_ranges; /* session_range_count, by identity ascending */
+	const struct window_checkpoint *
+		checkpoints; /* checkpoint_count ranges, identical in every program */
+	const struct visit_lease *
+		leases; /* lease_count; a plan's programs name the same as far as
+                                                         their segments reach: the step driver takes the first's */
 	struct model_limits limits; /* the plan's */
 	uint32_t card_count;
 	uint32_t segment_count;
 	uint32_t hand_off_count;
 	uint32_t row_count; /* the most rows a step of this program carries */
 	uint32_t result_card; /* the card that samples */
-	const struct expert_pause *
-		expert_pauses; /* expert_pause_count, in the order of their after_segment */
-	const uint64_t *host_expert_offsets; /* host_expert_count */
 	uint32_t expert_pause_count;
 	uint32_t host_expert_count;
 	enum program_kind kind;
 	uint32_t lease_count;
-	const struct session_range *
-		session_ranges; /* session_range_count, by identity ascending */
 	uint32_t session_range_count;
 	uint32_t front_segment_count; /* a front step's segments come first; 0: no front steps */
 	uint32_t cone_rows; /* a prompt's last rows, which no front step may carry */
 	uint32_t checkpoint_count;
-	const struct window_checkpoint *
-		checkpoints; /* checkpoint_count ranges, identical in every program */
-	const struct visit_lease *
-		leases; /* lease_count; a plan's programs name the same as far as
-                                                         their segments reach: the step driver takes the first's */
 	uint32_t draft_segment_first; /* DRAFTS-only tail, or segment_count without one */
 };
 

@@ -72,7 +72,9 @@
 #define SHORT_WAIT_LIMIT 1000ull
 #define CLOSE_LIMIT 1000000000ull
 #define TABLES TEST_ENGRAM_PACK_TABLES
-#define CAPTURE_CAPACITY 4096u
+#define CAPTURE_LINES_MOST \
+	64u /* the most error lines a step test captures at once */
+#define CAPTURE_CAPACITY (CAPTURE_LINES_MOST * TEST_LOG_LINE_BYTES_MOST)
 #define MOST_COPIES_SEEN 4096u /* that the wrapping backend holds at once */
 #define MOST_HELD_BYTES 65536u
 #define POISON_BYTE 0xA5u /* where a download's bytes have not arrived */
@@ -246,9 +248,10 @@ static uint32_t capture_end(void)
 			     error_stream_descriptor >= 0 &&
 			     fflush(stderr) == 0;
 	const ssize_t byte_count =
-		is_open ? pread(capture_descriptor, captured_text,
-				sizeof(captured_text) - 1, 0) :
-			  -1;
+		is_open ?
+			test_log_capture_read(capture_descriptor, captured_text,
+					      sizeof(captured_text)) :
+			-1;
 	expect(is_open &&
 		       dup2(error_stream_descriptor, STDERR_FILENO) ==
 			       STDERR_FILENO &&

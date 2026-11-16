@@ -49,6 +49,9 @@
 #define CAPTURE_CAPACITY 4096
 #define UNTOUCHED_BYTE 0xA5
 #define ALIGNMENT 16u /* of every range: LINEAR_OFFSET_ALIGNMENT_BYTES */
+#define NOT_A_FLAG 2 /* heads_compact is 0 or 1 */
+#define COMPACT_RANKS 4u /* heads_compact's case: rank COMPACT_RANK of four */
+#define COMPACT_RANK 2u
 #define RANGES 21u
 #define ROWS_OF_A_FULL_STEP 8u
 #define SESSIONS 3u
@@ -146,7 +149,10 @@ static void capture_begin(void)
 static void capture_end(char *text, size_t text_capacity)
 {
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, text_capacity - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    text_capacity) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';
@@ -799,7 +805,7 @@ static void test_queries(void)
     }
     refused[NO_ROWS].row_count = 0;
     refused[MORE_ROWS].row_count = rows + 1u;
-    refused[COMPACT].heads_compact = 2;
+    refused[COMPACT].heads_compact = NOT_A_FLAG;
     refused[NO_HEADS].head_count = 0;
     refused[MORE_HEADS].head_count = HEADS + 1u;
     refused[PAST_THE_HEADS].first_head = 1;
@@ -830,7 +836,7 @@ static void test_queries(void)
     /* heads_compact: a rank's heads read from rows of its own heads alone (a TP rank's wq_b output where it wrote
      * it), the queries written at the heads' place in the full rows; one byte short refused */
     struct attention_queries_description compact = description;
-    const uint32_t rank_heads = HEADS / 4u, rank_first = 2u * rank_heads;
+    const uint32_t rank_heads = HEADS / COMPACT_RANKS, rank_first = COMPACT_RANK * rank_heads;
     compact.first_head = rank_first;
     compact.head_count = rank_heads;
     compact.heads_compact = 1;

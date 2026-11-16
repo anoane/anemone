@@ -133,7 +133,8 @@ static const struct trunk_shape trunk_shapes[] = {
 	{ "the shared expert's gate with up", { 2304, 2304 }, 5120, false, 1, 8 },
 	{ "the shared expert's down", { 5120, 0 }, 2304, false, 1, 4 },
 	{ "attn.wo_a", { 8192, 0 }, 4096, true, 8, 4 },
-	/* the draft context's (model_v41_program.c draft_context_piece): a BATCH step's 9-64 rows take the wide forms */
+	/* the draft context's (model_v41_program.c draft_context_piece): a BATCH step's 9-64 rows take the wide forms
+	 * */
 	{ "mtp main_proj", { 5120, 0 }, 15360, false, 1, 4 },
 	{ "mtp.0.attn.wkv with mtp.1.attn.wkv", { 512, 512 }, 5120, false, 1, 16 },
 };

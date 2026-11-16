@@ -120,10 +120,29 @@ static const enum check_kind broken_kinds[] = {[BROKEN_NONE] = KIND_OTHER, [BROK
 
 /* The settings of each slot, and the slot and position of each row (slot 0 and position 0 unless named). */
 static const struct step_session slot_sessions[SESSIONS] = {
-	[SLOT_GREEDY] = { 0, 0.0f, 1.0f },
-	[SLOT_CUT] = { SEED_CUT, COOL_TEMPERATURE, TOP_P },
-	[SLOT_ALL] = { SEED_ALL, BELOW_THE_FLOOR, 1.0f },
-	[SLOT_FALLBACK] = { 0, 1.0f, TOP_P }
+	[SLOT_GREEDY] = { { (uint32_t)(0), (uint32_t)((uint64_t)(0) >>
+						      STEP_SESSION_SEED_BITS) },
+			  0.0f,
+			  1.0f,
+			  0 },
+	[SLOT_CUT] = { { (uint32_t)(SEED_CUT),
+			 (uint32_t)((uint64_t)(SEED_CUT) >>
+				    STEP_SESSION_SEED_BITS) },
+		       COOL_TEMPERATURE,
+		       TOP_P,
+		       0 },
+	[SLOT_ALL] = { { (uint32_t)(SEED_ALL),
+			 (uint32_t)((uint64_t)(SEED_ALL) >>
+				    STEP_SESSION_SEED_BITS) },
+		       BELOW_THE_FLOOR,
+		       1.0f,
+		       0 },
+	[SLOT_FALLBACK] = { { (uint32_t)(0),
+			      (uint32_t)((uint64_t)(0) >>
+					 STEP_SESSION_SEED_BITS) },
+			    1.0f,
+			    TOP_P,
+			    0 }
 };
 static const uint32_t row_slots[ROWS] = {[ROW_NOT_NUMBERS] = SLOT_FALLBACK, [ROW_NO_NUMBER] = SLOT_FALLBACK,
                                          [ROW_CUT] = SLOT_CUT, [ROW_ALL] = SLOT_ALL};
@@ -387,9 +406,10 @@ static void check_answer(uint32_t row, const float *logits,
 				      (uint32_t)answer.token_id < VOCABULARY;
 		check(KIND_KEYED,
 		      in_range &&
-			      keyed_token_holds(
-				      weights, kept, kept_count, session.seed,
-				      row_positions[row], answer.token_id) &&
+			      keyed_token_holds(weights, kept, kept_count,
+						step_session_seed(&session),
+						row_positions[row],
+						answer.token_id) &&
 			      bits_of(answer.logit) ==
 				      bits_of(logits[answer.token_id]),
 		      "%s: row %" PRIu32 ": token %" PRId32
@@ -656,7 +676,8 @@ static void test_draws(struct test_linear_card *card,
 		       const float *logits, uint32_t vocabulary_size,
 		       uint64_t draw_count)
 {
-	static const struct step_session session = { SEED_DRAWS, 1.0f, TOP_P };
+	const struct step_session session =
+		step_session_make(SEED_DRAWS, 1.0f, TOP_P, 0);
 	const uint64_t row_bytes = (uint64_t)vocabulary_size * sizeof(float);
 	const uint64_t step_bytes =
 		STEP_BLOCK_BYTES_VALUE + ROWS * STEP_ROW_BYTES_VALUE;
@@ -850,7 +871,7 @@ static void test_replay(struct test_linear_card *card,
 			const struct sampler_kernels_record *kernels,
 			const struct capture_logits *logits)
 {
-	static const struct step_session greedy = { 0, 0.0f, 1.0f };
+	const struct step_session greedy = step_session_make(0, 0.0f, 1.0f, 0);
 	const uint64_t row_bytes = (uint64_t)VOCABULARY * sizeof(float);
 	float *const rows_logits = malloc(ROWS * row_bytes);
 	struct step_row_record rows[ROWS];

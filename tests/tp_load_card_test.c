@@ -28,6 +28,14 @@
 #define DAMAGED_EXTENT 5u
 #define DAMAGED_BYTE 777u
 #define CLOSE_NANOSECONDS 10000000000ull
+#define NANOSECONDS_A_SECOND 1e9
+#define BYTES_A_GB 1e9
+/* the scaled run's arguments: EXTENTS TENSORS BLOCKS after the program */
+#define SCALED_ARGUMENTS 4
+#define ARGUMENT_TENSORS 2
+#define ARGUMENT_BLOCKS 3
+#define STRIPED_RUN 3u /* the last run, its 16 workers over the copies */
+#define STRIPED_READS_MOST 2u /* the striped run's reads in flight a copy */
 #define SEED 0x5EEDu
 #define DECIMAL 10
 
@@ -43,7 +51,7 @@ static double seconds_now(void)
 {
 	struct timespec now = { 0 };
 	(void)clock_gettime(CLOCK_MONOTONIC, &now);
-	return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+	return (double)now.tv_sec + (double)now.tv_nsec / NANOSECONDS_A_SECOND;
 }
 
 static void expect(bool condition, const char *message)
@@ -83,20 +91,22 @@ static bool load_once(struct tp_load_request *request, uint32_t workers,
 int main(int argument_count, char **arguments)
 {
 	const struct backend_operations *const backend = &backend_cuda_value;
-	const bool scaled = argument_count == 4;
+	const bool scaled = argument_count == SCALED_ARGUMENTS;
 	const struct test_pack_unit_plan scaled_unit = {
 		PLACEMENT_UNIT_STAGE, 0,
 		scaled ? (uint32_t)strtoul(arguments[1], NULL, DECIMAL) : 0,
-		scaled ? (uint32_t)strtoul(arguments[3], NULL, DECIMAL) : 0
+		scaled ? (uint32_t)strtoul(arguments[ARGUMENT_BLOCKS], NULL,
+					   DECIMAL) :
+			 0
 	};
 	const struct test_pack_plan plan = {
 		.model_name = "tp-load-card-test",
 		.units = scaled ? &scaled_unit : units,
 		.unit_count = scaled ? 1u : UNITS,
 		.tensors_per_extent =
-			scaled ?
-				(uint32_t)strtoul(arguments[2], NULL, DECIMAL) :
-				TENSORS_PER_EXTENT,
+			scaled ? (uint32_t)strtoul(arguments[ARGUMENT_TENSORS],
+						   NULL, DECIMAL) :
+				 TENSORS_PER_EXTENT,
 		.content_seed = SEED
 	};
 	void *bytes = NULL;
@@ -153,8 +163,12 @@ int main(int argument_count, char **arguments)
 	    backend->staging_allocate(load_plan.output_workspace_byte_count,
 				      &request.output_workspace) != STATUS_OK ||
 	    backend->staging_allocate(arena_bytes, &zeros) != STATUS_OK ||
-	    backend->staging_allocate(arena_bytes, &downloaded) != STATUS_OK ||
-	    (expected = malloc(arena_bytes)) == NULL) {
+	    backend->staging_allocate(arena_bytes, &downloaded) != STATUS_OK) {
+		(void)fprintf(stderr, "FAILED: card, plan or staging\n");
+		return EXIT_FAILURE;
+	}
+	expected = malloc(arena_bytes);
+	if (expected == NULL) {
 		(void)fprintf(stderr, "FAILED: card, plan or staging\n");
 		return EXIT_FAILURE;
 	}
@@ -179,14 +193,17 @@ int main(int argument_count, char **arguments)
 	       "serial load: every job and extent");
 	(void)printf("tp_load_card_test: serial: %" PRIu32
 		     " jobs, %.3f GB in %.3f s (%.2f GB/s)\n",
-		     job_count, (double)serial.uploaded_bytes / 1e9, seconds,
-		     (double)serial.uploaded_bytes / 1e9 / seconds);
+		     job_count, (double)serial.uploaded_bytes / BYTES_A_GB,
+		     seconds,
+		     (double)serial.uploaded_bytes / BYTES_A_GB / seconds);
 	static const uint32_t worker_counts[] = { 1u, 4u, 16u, 16u };
 	for (uint32_t run = 0;
 	     run < sizeof(worker_counts) / sizeof(worker_counts[0]); run++) {
 		struct tp_load_copies copies;
-		const bool striped = run == 3u;
-		expect(tp_load_copies_init(&copies, 2u) == STATUS_OK, "copies");
+		const bool striped = run == STRIPED_RUN;
+		expect(tp_load_copies_init(&copies, STRIPED_READS_MOST) ==
+			       STATUS_OK,
+		       "copies");
 		struct tp_load_result result = { 0 };
 		const bool loaded = load_once(&request, worker_counts[run],
 					      striped ? &copies : NULL, zeros,
@@ -210,7 +227,7 @@ int main(int argument_count, char **arguments)
 			", copies delivered %" PRIu64 " + %" PRIu64
 			" bytes, %" PRIu32 " + %" PRIu32 " failed reads\n",
 			worker_counts[run], striped ? " striped" : "", seconds,
-			(double)result.uploaded_bytes / 1e9 / seconds,
+			(double)result.uploaded_bytes / BYTES_A_GB / seconds,
 			result.card_receipts[0], copies.delivered_bytes[0],
 			copies.delivered_bytes[1], copies.failed_reads[0],
 			copies.failed_reads[1]);

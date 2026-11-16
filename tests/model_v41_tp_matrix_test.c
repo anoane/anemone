@@ -427,6 +427,8 @@ static void check_layout(const struct pack_record *pack,
 #define MATRIX_EXL3_K2_MASK UINT64_C(0x7C0000)
 #define MATRIX_EXL3_K2_BITS 2u
 #define MATRIX_EXL3_K3_BITS 3u
+#define MATRIX_EXL3_UNDECODED_BITS \
+	5u /* K5: a width the format defines, not decoded */
 #define MATRIX_EXL3_SMALL 512u
 #define MATRIX_EXL3_LARGE 640u
 #define MATRIX_EXL3_DOWN 1280u
@@ -598,11 +600,60 @@ static void test_exl3_cold(void)
 			exl3_cold_description();
 		struct v41_tp2_model *model = NULL;
 		expect(v41_tp2_model_create(pack, &description, &model) ==
-				       STATUS_CORRUPT_PACK &&
+				       STATUS_UNSUPPORTED &&
 			       model == NULL,
-		       "per-expert bitrate mismatch refuses before any model publishes");
+		       "a layer of mixed widths refuses, unsupported, before any model publishes");
 	}
 	pack_close(pack);
+	pack = NULL;
+	/* a width the format defines but this build does not decode: the pack's open refuses it */
+	change.name = "layers.7.ffn.experts.0.w1.weight";
+	change.value = MATRIX_EXL3_UNDECODED_BITS;
+	expect(test_model_v41_draft_pack_open(change, &pack) ==
+			       STATUS_UNSUPPORTED &&
+		       pack == NULL,
+	       "an undecoded EXL3 width refuses at the pack's open, unsupported");
+	pack_close(pack);
+}
+
+/* Whole packs of one width on the four CMPs: the tensor-core MoE (--exl3_tc_moe) plans K2.5 as it plans the pinned
+ * K2/K3 pack, and refuses K4 (no entries: EXL3_TC_SUPPORTED_BITS_X2), unsupported, before any model publishes. */
+static void test_exl3_tc_widths(void)
+{
+	result_status pinned_status = STATUS_INVALID_ARGUMENT;
+	static const uint32_t widths[] = { 0u, EXL3_K2_5, EXL3_K4 };
+	for (uint32_t index = 0; index < sizeof(widths) / sizeof(widths[0]);
+	     index++) {
+		struct pack_record *pack = NULL;
+		const struct test_model_v41_change change = {
+			.kind = TEST_MODEL_V41_CHANGE_EXL3,
+			.value = widths[index]
+		};
+		result_status status =
+			test_model_v41_draft_pack_open(change, &pack);
+		expect(status == STATUS_OK, "a one-width EXL3 fixture opens");
+		if (status == STATUS_OK) {
+			struct v41_tp2_model_description description =
+				exl3_cold_description();
+			description.exl3_tc_moe = true;
+			struct v41_tp2_model *model = NULL;
+			status = v41_tp2_model_create(pack, &description,
+						      &model);
+			if (widths[index] == 0u)
+				pinned_status = status;
+			else if (widths[index] == EXL3_K2_5)
+				expect(status == pinned_status,
+				       "a K2.5 pack plans the tensor-core MoE as the K2/K3 pack does");
+			else
+				expect(status == STATUS_UNSUPPORTED &&
+					       model == NULL,
+				       "a K4 pack refuses the tensor-core MoE, unsupported, before a model publishes");
+			v41_tp2_model_destroy(model);
+		}
+		pack_close(pack);
+	}
+	expect(pinned_status == STATUS_OK,
+	       "the pinned K2/K3 pack plans the tensor-core MoE");
 }
 
 int main(void)
@@ -661,5 +712,6 @@ int main(void)
 	}
 	pack_close(pack);
 	test_exl3_cold();
+	test_exl3_tc_widths();
 	return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

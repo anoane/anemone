@@ -14,7 +14,8 @@
  *     last extent zero; where the kernel refuses such pages the load goes on with small ones (one warning). Its
  *     pages come at first touch inside the reads: STATUS_OUT_OF_MEMORY answers for the mapping alone. A
  *     card that is to read an extent of it later gets it through a staging slot.
- *   - Work is cut into pieces of at most LOADER_CHUNK_BYTES. reader_threads_per_copy threads read each
+ *   - Work is cut into pieces of at most piece_bytes (0: LOADER_CHUNK_BYTES), each read by one direct pread and
+ *     carried in one staging slot of that size. reader_threads_per_copy threads read each
  *     copy. A thread takes its next piece for the destination that would finish last (bytes left over the nominal
  *     rate of its link; host memory counts as the fastest), skipping a card whose
  *     LOADER_STAGING_SLOTS_PER_CARD staging slots are all in use: a slow link is kept busy from the first
@@ -37,12 +38,14 @@
  *   - The request is checked first (STATUS_INVALID_ARGUMENT): a NULL member, a layout of another pack or
  *     card count or whose byte counts are not what its extents occupy, a missing card or description where the
  *     layout places bytes, a reader whose copies or block alignment do not fit the pack and the staging memory, a
- *     thread count of 0 or above LOADER_MAXIMUM_READER_THREADS_PER_COPY, a reserved field that is not
- *     zero, a stall limit of zero. A reader that cannot be described fails the load with the reader's status.
+ *     thread count of 0 or above LOADER_MAXIMUM_READER_THREADS_PER_COPY, a piece that is not whole pack blocks or is
+ *     above LOADER_PIECE_BYTES_MOST, a reserved field that is not zero, a stall limit of zero. A reader that cannot
+ *     be described fails the load with the reader's status.
  */
 #ifndef LOADER_H
 #define LOADER_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "anemone/backend_seam.h"
@@ -50,11 +53,16 @@
 #include "anemone/status.h"
 #include "anemone/storage_seam.h"
 
-#define LOADER_CHUNK_BYTES 16777216ull /* 16 MiB: one read and one upload */
+#define LOADER_CHUNK_BYTES \
+	16777216ull /* 16 MiB: one read and one upload, the piece unless a request names another */
+#define LOADER_PIECE_BYTES_MOST \
+	67108864ull /* 64 MiB: the largest piece a request may name (8 slots a card of it are page-locked) */
 #define LOADER_STAGING_SLOTS_PER_CARD \
 	8 /* half of a card's uploads in flight (backend_seam.h) */
-#define LOADER_DEFAULT_READER_THREADS_PER_COPY \
-	2 /* measured: two plain readers reach a drive's rate */
+/* Readers a copy by default: request 30's R24 (15 Nov 2026, real PP5 serve loads of 195.32 GiB from the source and
+ * three replicas, every extent's digest checked, A D D A) took 16.442 and 16.399 s with 4 against 16.854 and 17.207 s
+ * with 2 (+3.58 %, a 2.07 % spread), in the transfer. `--reader_threads_per_copy=2` is the earlier default. */
+#define LOADER_DEFAULT_READER_THREADS_PER_COPY 4
 #define LOADER_MAXIMUM_READER_THREADS_PER_COPY 16
 #define LOADER_DEFAULT_STALL_LIMIT_NANOSECONDS \
 	240000000000ull /* a third above the storage's read bound */
@@ -85,11 +93,17 @@ struct load_request {
 	const struct backend_operations *backend;
 	const struct pack_record *pack;
 	const struct load_layout *layout;
+	const uint8_t *
+		external_host_extents; /* optional extent_count bytes; borrowed immutable tables owned elsewhere */
 	/* layout->card_count entries each. A card that receives bytes is open with an arena of at least its
      * card_byte_count and has its description (the loader reads the link); the others may be NULL. */
 	struct device_card *const *cards;
 	const struct card_description_record *card_descriptions;
 	uint32_t reader_threads_per_copy;
+	/* the piece: 0 is LOADER_CHUNK_BYTES; else whole pack blocks, at most LOADER_PIECE_BYTES_MOST */
+	uint64_t piece_bytes;
+	/* Optional measured aggregate shares, in reader copy order. All zero preserves the original reader route. */
+	uint32_t copy_weights[STORAGE_MAXIMUM_COPIES];
 	uint32_t reserved_zero;
 	uint64_t stall_limit_nanoseconds;
 };
@@ -112,5 +126,18 @@ MUST_CHECK result_status load_run_entry(const struct load_request *request,
 /* Returns the host arena of a result to the system. host_byte_count must be the layout's (it cannot be checked);
  * a failure to unmap is one error line and the arena stays. Accepts NULL. */
 void load_host_arena_release(void *host_arena, uint64_t host_byte_count);
+
+/* A host arena holds every host-only extent, the external (disk) tables' too, whose pages are never touched. With
+ * external tables (below 100 % of the n-gram tables in RAM) both arenas, the PP loader's and the TP one
+ * (tp_host_arena_allocate), are mapped MAP_NORESERVE: Linux's overcommit heuristic refuses one accounted mapping
+ * larger than RAM + swap, which is the host the disk tables are for. Every table in RAM maps as before. Checking builds
+ * record the last arena's request here for the tests: its mmap flags (0: TP's posix_memalign) and its length. */
+#if CHECKING_HOOKS_ENABLED
+struct load_host_arena_record {
+	int flags;
+	size_t byte_count;
+};
+extern struct load_host_arena_record load_host_arena_last;
+#endif
 
 #endif

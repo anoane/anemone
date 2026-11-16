@@ -1139,7 +1139,8 @@ static void test_copies_and_arguments(void)
 				       engram_open(&storage, reader,
 						   opened_pack,
 						   &engram) == INVALID,
-			       "a reader without a copy, and one with more than a storage may have, is an invalid argument");
+			       "a reader without a copy, and one with more than a storage may have, is an invalid "
+			       "argument");
 			changed_describe_status = STATUS_DEVICE_ERROR;
 			expect(engram_open(&storage, reader, opened_pack,
 					   &engram) == STATUS_DEVICE_ERROR,

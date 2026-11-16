@@ -70,7 +70,8 @@ struct v41_tp2_program_description {
 	const struct model_plan_record *views[V41_DATA_TP2_PROGRAM_CARDS];
 	const struct v41_tp2_stage_plan *stages[V41_DATA_TP2_PROGRAM_CARDS];
 	uint32_t slice_count;
-	uint32_t batch_verifiers; /* the next BATCH program's verifiers (draft walks); 0: rows / (draft positions + 1) */
+	uint32_t batch_verifiers; /* the next BATCH program's verifiers (draft walks); 0: rows / (draft positions +
+				     1) */
 };
 
 MUST_CHECK result_status v41_tp2_program_prepare(

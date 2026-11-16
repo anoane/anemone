@@ -39,7 +39,8 @@
  *     reads its weights and rows from memory and finds the L2 full of lines to write back, as behind another launch;
  *     the thin launches are back to back, as in a chunk program's graph, where the rest of a slab's launches run
  *     between them in production. The wait sleeps between its looks at the card, so a graph's time comes in steps
- *     (about 75 us on the build workstation): REPEATS is WIDE_REPEATS for a wide launch, and for the thin launches THIN_TIMED_LAUNCHES
+ *     (about 75 us on the build workstation): REPEATS is WIDE_REPEATS for a wide launch, and for the thin launches
+ * THIN_TIMED_LAUNCHES
  *     launches' worth, at least THIN_REPEATS copies, so that a step is a small part of a run's time.
  * One line per launch and row count says what was compared, and with --time what was measured. It FAILS on any
  * difference.

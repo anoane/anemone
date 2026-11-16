@@ -73,6 +73,7 @@
 #ifndef MODEL_V41_H
 #define MODEL_V41_H
 
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -432,6 +433,30 @@ struct v41_card {
 	uint32_t reserved_zero;
 };
 
+#define V41_HEAD_RANKS 4u
+#define V41_HEAD_CARDS (V41_HEAD_RANKS + 1u)
+#define V41_HEAD_SHARD_ROWS (MODEL_VOCABULARY_VALUE / V41_HEAD_RANKS)
+#define V41_HEAD_CONTROL_ROW_BYTES 16u
+#define V41_HEAD_BANKS 8u
+#define V41_HEAD_MODE_LEASED 1u
+#define V41_HEAD_MODE_BANKED 2u
+
+/* Opt-in original PP5 target head. All ranges append behind ordinary/vision state. A PRO lease spanning
+ * its first target visit through its last sampler/draft visit owns these shared planes across flights. */
+struct v41_original_head_card {
+	struct linear_range weights, hidden, logits;
+	struct linear_range peer_words[V41_HEAD_RANKS];
+	struct linear_range control_source, control_input[V41_HEAD_RANKS];
+	struct linear_range pilot_step, pilot_source, pilot_result;
+	struct linear_range bank_hidden[V41_HEAD_BANKS - 1u],
+		bank_logits[V41_HEAD_BANKS - 1u];
+};
+struct v41_original_head {
+	struct v41_original_head_card cards[V41_HEAD_CARDS];
+	bool enabled, connected, initialised;
+	uint32_t bank_count; /* 0: original leased mode; 1..8: immutable per-flight banks */
+};
+
 /* The walk layers whose state the card holds: its layers, and on the draft's card the draft's stages. */
 static inline uint64_t v41_walk_layers(const struct v41_card *card)
 {
@@ -473,7 +498,67 @@ struct model_plan_record {
 	uint32_t card_count;
 	uint32_t reserved_zero;
 	struct model_vision vision;
+	struct v41_original_head original_head;
 };
+
+/* Plan before card open; initialise after ordinary arena_initialise, which zeros appended ranges too.
+ * No operation occurs with the default-disabled plan. Failure never admits runtime; uncertain copies retain
+ * their staging. Drain returns every open group member as retained if any member's completion is unproven. */
+MUST_CHECK result_status
+v41_original_head_plan(struct model_plan_record *plan,
+		       const struct card_description_record *descriptions);
+MUST_CHECK result_status v41_original_head_banks_plan(
+	struct model_plan_record *plan, uint32_t bank_count);
+enum v41_head_launch_kind {
+	V41_HEAD_BROADCAST,
+	V41_HEAD_DENSE,
+	V41_HEAD_GATHER,
+	V41_HEAD_SAMPLE,
+	V41_HEAD_LAUNCH_KINDS
+};
+MUST_CHECK result_status v41_original_head_launch(
+	const struct model_plan_record *plan,
+	const struct backend_operations *backend,
+	struct device_card *const *cards, enum v41_head_launch_kind kind,
+	uint32_t rank, uint32_t bank, uint32_t rows,
+	struct kernel_launch *launch_out);
+struct v41_head_program_banks;
+struct step_flight_programs;
+MUST_CHECK result_status v41_original_head_banks_create(
+	const struct model_plan_record *plan,
+	const struct backend_operations *backend,
+	struct device_card *const *cards,
+	const struct execution_program *const *programs,
+	const struct execution_program *const *image_programs,
+	uint32_t program_count, struct v41_head_program_banks **banks_out);
+const struct step_flight_programs *
+v41_original_head_bank_tables(const struct v41_head_program_banks *banks);
+const struct visit_lease *
+v41_original_head_owner_guard(const struct v41_head_program_banks *banks);
+struct v41_head_bank_memory {
+	size_t heap_bytes, source_launch_bytes, source_lease_count,
+		program_metadata_bytes;
+	uint32_t thin_programs, program_count, bank_count;
+};
+struct v41_head_bank_memory
+v41_original_head_banks_memory(const struct v41_head_program_banks *banks);
+void v41_original_head_banks_destroy(struct v41_head_program_banks *banks);
+/* Cold address attachment only. An attempted first connection sets connected even when that call fails,
+ * making whole-group retirement mandatory. No caller may retry this plan or start runtime on failure. */
+MUST_CHECK result_status
+v41_original_head_connect(struct model_plan_record *plan,
+			  const struct backend_operations *backend,
+			  struct device_card *const *cards);
+MUST_CHECK result_status v41_original_head_initialise(
+	struct model_plan_record *plan, const struct pack_record *pack,
+	const struct storage_operations_record *storage,
+	const struct storage_reader *reader,
+	const struct backend_operations *backend,
+	struct device_card *const *cards, uint64_t wait_limit_nanoseconds);
+MUST_CHECK result_status v41_original_head_drain(
+	const struct backend_operations *backend,
+	struct device_card *const *cards, uint64_t wait_limit_nanoseconds,
+	uint32_t *retained_out);
 
 MUST_CHECK result_status
 v41_describe(const struct pack_record *pack,

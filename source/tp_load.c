@@ -4,11 +4,14 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/prctl.h>
 #include <time.h>
 
 #include "anemone/hooks.h"
+#include "anemone/loader.h"
 #include "anemone/pack_digest.h"
 
 #define MATRIX_DIMENSIONS 2u
@@ -204,39 +207,90 @@ void tp_load_copies_destroy(struct tp_load_copies *copies)
 	}
 }
 
-/* Under the mutex: whether copy has room for one more read. */
-static bool copy_has_room(const struct tp_load_copies *copies, uint32_t copy)
+const char *const tp_load_split_names[TP_LOAD_SPLITS] = { "soonest", "fixed",
+							  "steal" };
+
+/* Under the mutex: whether copy has room for one more read of role: the cap of both roles, and the host's own. */
+static bool copy_has_room(const struct tp_load_copies *copies, uint32_t copy,
+			  uint32_t role)
 {
-	return copies->reads_most == 0 ||
-	       copies->reads_in_flight[copy] < copies->reads_most;
+	return (copies->reads_most == 0 ||
+		copies->reads_in_flight[copy] < copies->reads_most) &&
+	       (role != TP_LOAD_ROLE_HOST || copies->host_reads_most == 0 ||
+		copies->host_reads_in_flight[copy] < copies->host_reads_most);
 }
 
-/* Under the mutex: a read of bytes from copy is in flight from now. */
+/* The copy a role prefers (tp_load.h, split): the host arena's the first, the cards' the last. */
+static uint32_t role_copy(uint32_t role, uint32_t copy_count)
+{
+	return role == TP_LOAD_ROLE_HOST ? 0 : copy_count - 1u;
+}
+
+/* Under the mutex: whether a read of role may begin on copy. Under STEAL the other role's preferred copy is held
+ * for it while that role has reads left to claim and neither role's preferred copy has failed a read. */
+static bool copy_open_to(const struct tp_load_copies *copies,
+			 uint32_t copy_count, uint32_t copy, uint32_t role)
+{
+	const uint32_t other = TP_LOAD_ROLES - 1u - role;
+	const uint32_t held = role_copy(other, copy_count);
+	return copies->split != TP_LOAD_SPLIT_STEAL || copy_count <= 1u ||
+	       copy != held || copies->role_claimed[other] != 0 ||
+	       copies->failed_reads[held] != 0 ||
+	       copies->failed_reads[role_copy(role, copy_count)] != 0;
+}
+
+/* Under the mutex: whether some copy a read of role may use has room for it. */
+static bool role_has_room(const struct tp_load_copies *copies,
+			  uint32_t copy_count, uint32_t role)
+{
+	for (uint32_t copy = 0; copy < copy_count; copy++) {
+		if (copy_has_room(copies, copy, role) &&
+		    copy_open_to(copies, copy_count, copy, role))
+			return true;
+	}
+	return false;
+}
+
+/* A run of role has claimed its last read: under STEAL its preferred copy serves the other role from now on. */
+static void role_claimed(struct tp_load_copies *copies, uint32_t role)
+{
+	if (copies == NULL)
+		return;
+	(void)pthread_mutex_lock(&copies->mutex);
+	copies->role_claimed[role] = 1;
+	(void)pthread_cond_broadcast(&copies->read_ended);
+	(void)pthread_mutex_unlock(&copies->mutex);
+}
+
+/* Under the mutex: a read of role, of bytes, from copy is in flight from now. */
 static void copy_begin_locked(struct tp_load_copies *copies, uint32_t copy,
-			      uint64_t bytes, uint64_t now)
+			      uint64_t bytes, uint64_t now, uint32_t role)
 {
 	copies->busy_since[copy] = copies->reads_in_flight[copy] == 0 ?
 					   now :
 					   copies->busy_since[copy];
 	copies->reads_in_flight[copy]++;
+	if (role == TP_LOAD_ROLE_HOST)
+		copies->host_reads_in_flight[copy]++;
 	copies->in_flight_bytes[copy] += bytes;
 }
 
-/* The copy a read of bytes begins from (copies NULL: copy 0), now counted in flight. */
+/* The copy a read of role, of bytes, begins from (copies NULL: copy 0), now counted in flight. */
 static uint32_t copy_take(struct tp_load_copies *copies, uint32_t copy_count,
-			  uint64_t bytes, uint32_t preferred)
+			  uint64_t bytes, uint32_t role)
 {
 	if (copies == NULL)
 		return 0;
-	if (copies->split != 0 && copy_count > 1 && preferred < copy_count) {
+	const uint32_t preferred = role_copy(role, copy_count);
+	if (copies->split == TP_LOAD_SPLIT_FIXED && copy_count > 1) {
 		(void)pthread_mutex_lock(&copies->mutex);
 		const bool sound = copies->failed_reads[preferred] == 0;
-		while (sound && !copy_has_room(copies, preferred))
+		while (sound && !copy_has_room(copies, preferred, role))
 			(void)pthread_cond_wait(&copies->read_ended,
 						&copies->mutex);
 		if (sound)
 			copy_begin_locked(copies, preferred, bytes,
-					  monotonic_nanoseconds());
+					  monotonic_nanoseconds(), role);
 		(void)pthread_mutex_unlock(&copies->mutex);
 		if (sound)
 			return preferred;
@@ -245,21 +299,17 @@ static uint32_t copy_take(struct tp_load_copies *copies, uint32_t copy_count,
 	double fastest = 0.0, soonest = 0.0;
 	uint32_t chosen = copy_count;
 	(void)pthread_mutex_lock(&copies->mutex);
-	bool room = false;
-	for (uint32_t copy = 0; copy < copy_count; copy++)
-		room = room || copy_has_room(copies, copy);
-	while (!room) {
+	while (!role_has_room(copies, copy_count, role))
 		(void)pthread_cond_wait(&copies->read_ended, &copies->mutex);
-		for (uint32_t copy = 0; copy < copy_count; copy++)
-			room = room || copy_has_room(copies, copy);
-	}
 	const uint64_t now = monotonic_nanoseconds();
 	for (uint32_t copy = 0; copy < copy_count; copy++) {
 		const uint64_t busy = copies->busy_nanoseconds[copy] +
 				      (copies->reads_in_flight[copy] != 0 ?
 					       now - copies->busy_since[copy] :
 					       0);
-		rates[copy] = busy != 0 ?
+		rates[copy] = copies->tuned_weights[copy] != 0 ?
+				      (double)copies->tuned_weights[copy] :
+			      busy != 0 ?
 				      (double)copies->delivered_bytes[copy] /
 					      (double)busy :
 				      0.0;
@@ -273,40 +323,44 @@ static uint32_t copy_take(struct tp_load_copies *copies, uint32_t copy_count,
 			(double)(copies->in_flight_bytes[copy] + bytes) / rate +
 			(copies->failed_reads[copy] != 0 ? COPY_FAILED_PENALTY :
 							   0.0);
-		if (copy_has_room(copies, copy) &&
+		if (copy_has_room(copies, copy, role) &&
+		    copy_open_to(copies, copy_count, copy, role) &&
 		    (chosen == copy_count || finish < soonest)) {
 			chosen = copy;
 			soonest = finish;
 		}
 	}
-	copy_begin_locked(copies, chosen, bytes, now);
+	copy_begin_locked(copies, chosen, bytes, now, role);
 	(void)pthread_mutex_unlock(&copies->mutex);
 	return chosen;
 }
 
-/* A read of bytes from copy begins (another copy after the chosen one), or has ended: delivered or failed. */
+/* A read of role, of bytes, from copy begins (another copy after the chosen one), or has ended: delivered or failed. */
 static void copy_reading(struct tp_load_copies *copies, uint32_t copy,
-			 uint64_t bytes)
+			 uint64_t bytes, uint32_t role)
 {
 	if (copies == NULL)
 		return;
 	(void)pthread_mutex_lock(&copies->mutex);
-	while (!copy_has_room(copies, copy))
+	while (!copy_has_room(copies, copy, role))
 		(void)pthread_cond_wait(&copies->read_ended, &copies->mutex);
-	copy_begin_locked(copies, copy, bytes, monotonic_nanoseconds());
+	copy_begin_locked(copies, copy, bytes, monotonic_nanoseconds(), role);
 	(void)pthread_mutex_unlock(&copies->mutex);
 }
 
 static void copy_done(struct tp_load_copies *copies, uint32_t copy,
-		      uint64_t bytes, bool delivered)
+		      uint64_t bytes, bool delivered, uint32_t role)
 {
 	if (copies == NULL)
 		return;
 	const uint64_t now = monotonic_nanoseconds();
 	(void)pthread_mutex_lock(&copies->mutex);
 	copies->reads_in_flight[copy]--;
+	if (role == TP_LOAD_ROLE_HOST)
+		copies->host_reads_in_flight[copy]--;
 	copies->in_flight_bytes[copy] -= bytes;
 	copies->delivered_bytes[copy] += delivered ? bytes : 0;
+	copies->role_delivered_bytes[role][copy] += delivered ? bytes : 0;
 	copies->failed_reads[copy] += delivered ? 0u : 1u;
 	copies->busy_nanoseconds[copy] +=
 		copies->reads_in_flight[copy] == 0 ?
@@ -344,18 +398,19 @@ extent_read(const struct tp_load_request *request,
 	bool wrong_digest = false;
 	const uint32_t first = copy_take(copies, storage->copy_count,
 					 extent->byte_count,
-					 storage->copy_count - 1u);
+					 TP_LOAD_ROLE_CARDS);
 	for (uint32_t attempt = 0; attempt < storage->copy_count; attempt++) {
 		const uint32_t copy = copy_of_attempt(attempt, first);
 		if (attempt != 0)
-			copy_reading(copies, copy, extent->byte_count);
+			copy_reading(copies, copy, extent->byte_count,
+				     TP_LOAD_ROLE_CARDS);
 		TIMER_BEGIN(tp_load_extent_read);
 		last_status = request->storage->reader_read(
 			request->reader, copy, extent->byte_offset, workspace,
 			extent->byte_count);
 		TIMER_END(tp_load_extent_read);
 		copy_done(copies, copy, extent->byte_count,
-			  last_status == STATUS_OK);
+			  last_status == STATUS_OK, TP_LOAD_ROLE_CARDS);
 		if (last_status != STATUS_OK) {
 			if (last_status != STATUS_INPUT_OUTPUT_ERROR)
 				return last_status;
@@ -386,6 +441,9 @@ job_stage(const struct tp_load_job *job, const struct pack_tensor *tensor,
 	  const unsigned char *source, unsigned char *output,
 	  uint64_t *padded_out, uint64_t *expected_out)
 {
+	if (source == NULL || output == NULL) {
+		return STATUS_INVALID_ARGUMENT;
+	}
 	uint64_t bytes = 0;
 	result_status status = job_bytes(job, tensor, &bytes);
 	if (status != STATUS_OK)
@@ -487,8 +545,8 @@ struct load_shared {
 	const struct storage_description *storage;
 	uint64_t source_slot_bytes, output_slot_bytes;
 	pthread_mutex_t mutex; /* guards the three below */
-	/* per kind of extent (EXTENT_SLOTTED, EXTENT_LARGE: above a worker's source slot), where the next one may begin;
-	 * one worker walks the large extents from the start, so that the large lane does not trail the others */
+	/* per kind of extent (EXTENT_SLOTTED, EXTENT_LARGE: above a worker's source slot), where the next one may
+	 * begin; one worker walks the large extents from the start, so that the large lane does not trail the others */
 	uint32_t next_job[EXTENT_KINDS];
 	bool large_walker_taken;
 	result_status status; /* the first failure */
@@ -542,7 +600,7 @@ static bool extent_of_kind(struct load_shared *shared, uint32_t kind,
 }
 
 /* Takes the jobs of the next extent in plan order, of the worker's kind first, then of the other; false once every
- * extent is taken or a worker failed. */
+ * extent is taken or a worker failed: the cards' role has then claimed its last read. */
 static bool extent_claim(struct load_shared *shared, uint32_t kind,
 			 uint32_t *first_out, uint32_t *count_out)
 {
@@ -553,6 +611,8 @@ static bool extent_claim(struct load_shared *shared, uint32_t kind,
 			      extent_of_kind(shared, EXTENT_KINDS - 1u - kind,
 					     &first, &end));
 	(void)pthread_mutex_unlock(&shared->mutex);
+	if (!claimed)
+		role_claimed(shared->request->copies, TP_LOAD_ROLE_CARDS);
 	*first_out = first;
 	*count_out = end - first;
 	return claimed;
@@ -716,10 +776,12 @@ static void *load_worker_run(void *context)
 	 * takes them back with copies still in flight after a failure. */
 	const bool slotted =
 		backend->staging_retire != NULL &&
+		backend->staging_allocate != NULL &&
 		backend->staging_allocate(shared->source_slot_bytes, &source) ==
 			STATUS_OK &&
 		backend->staging_allocate(shared->output_slot_bytes, &output) ==
-			STATUS_OK;
+			STATUS_OK &&
+		source != NULL && output != NULL;
 	const struct load_lane own = { source, output,
 				       slotted ? shared->source_slot_bytes : 0,
 				       slotted ? shared->output_slot_bytes :
@@ -1016,6 +1078,13 @@ static bool host_request_apart(const struct tp_host_load_request *request,
 	       host_pack_apart(plan->pack, result, sizeof(*result));
 }
 
+/* The request's chunk: one read of the host arena's load. */
+static uint64_t host_chunk_bytes(const struct tp_host_load_request *request)
+{
+	return request->chunk_bytes != 0 ? request->chunk_bytes :
+					   TP_HOST_LOAD_CHUNK_BYTES;
+}
+
 MUST_CHECK static result_status
 host_extent_read(const struct tp_host_load_request *request,
 		 const struct storage_description *storage,
@@ -1029,9 +1098,8 @@ host_extent_read(const struct tp_host_load_request *request,
 		result->copy_retries += copy != 0 ? 1u : 0u;
 		for (uint64_t done = 0; done < extent->byte_count;) {
 			const uint64_t left = extent->byte_count - done;
-			const uint64_t bytes = left < TP_HOST_LOAD_CHUNK_BYTES ?
-						       left :
-						       TP_HOST_LOAD_CHUNK_BYTES;
+			const uint64_t bytes =
+				smaller_of(left, host_chunk_bytes(request));
 			result->requested_bytes += bytes;
 			result->read_calls++;
 			TIMER_BEGIN(tp_host_read);
@@ -1083,7 +1151,7 @@ static void *host_chunks_read(void *context)
 				   done < extent_bytes;
 		const uint64_t bytes =
 			taken ? smaller_of(extent_bytes - done,
-					   TP_HOST_LOAD_CHUNK_BYTES) :
+					   host_chunk_bytes(shared->request)) :
 				0;
 		shared->next_byte += bytes;
 		shared->counts.requested_bytes += bytes;
@@ -1094,10 +1162,10 @@ static void *host_chunks_read(void *context)
 		struct tp_load_copies *const copies = shared->request->copies;
 		const uint32_t copy =
 			shared->striped ? copy_take(copies, shared->copy_count,
-						    bytes, 0) :
+						    bytes, TP_LOAD_ROLE_HOST) :
 					  shared->copy;
 		if (!shared->striped)
-			copy_reading(copies, copy, bytes);
+			copy_reading(copies, copy, bytes, TP_LOAD_ROLE_HOST);
 		TIMER_BEGIN(tp_host_read);
 		const result_status status =
 			shared->request->storage->reader_read(
@@ -1105,7 +1173,8 @@ static void *host_chunks_read(void *context)
 				shared->extent->byte_offset + done,
 				shared->destination + done, bytes);
 		TIMER_END(tp_host_read);
-		copy_done(copies, copy, bytes, status == STATUS_OK);
+		copy_done(copies, copy, bytes, status == STATUS_OK,
+			  TP_LOAD_ROLE_HOST);
 		uint64_t digest = 0;
 		TIMER_BEGIN(tp_host_digest);
 		if (status == STATUS_OK)
@@ -1175,6 +1244,8 @@ result_status tp_host_load_run(const struct tp_host_load_request *request,
 	    (request->host_arena == NULL &&
 	     request->host_arena_byte_count != 0) ||
 	    request->worker_count > TP_LOAD_MAXIMUM_WORKERS ||
+	    request->chunk_bytes % PACK_BLOCK_BYTES != 0 ||
+	    request->chunk_bytes > TP_HOST_LOAD_CHUNK_BYTES_MOST ||
 	    !host_request_apart(request, result_out))
 		return STATUS_INVALID_ARGUMENT;
 	struct tp_host_load_plan checked;
@@ -1209,6 +1280,13 @@ result_status tp_host_load_run(const struct tp_host_load_request *request,
 	struct tp_host_load_result result = { 0 };
 	for (uint32_t index = 0;
 	     index < checked.extent_count && status == STATUS_OK; index++) {
+		if (request->external_host_extents != NULL &&
+		    request->external_host_extents[index] != 0) {
+			if (checked.extent_offsets[index] ==
+			    TP_HOST_LOAD_NOWHERE)
+				return STATUS_INVALID_ARGUMENT;
+			continue;
+		}
 		if (checked.extent_offsets[index] == TP_HOST_LOAD_NOWHERE)
 			continue;
 		unsigned char *const destination =
@@ -1223,7 +1301,72 @@ result_status tp_host_load_run(const struct tp_host_load_request *request,
 						  &extents[index], destination,
 						  &result);
 	}
+	role_claimed(request->copies, TP_LOAD_ROLE_HOST);
 	if (status == STATUS_OK)
 		*result_out = result;
 	return status;
+}
+
+result_status tp_host_arena_allocate(uint64_t byte_count, bool external_tables,
+				     struct tp_host_arena *arena)
+{
+	if (arena == NULL)
+		return STATUS_INVALID_ARGUMENT;
+	*arena = (struct tp_host_arena){ 0 };
+	const uint64_t pages = (byte_count + TP_HOST_ARENA_PAGE_BYTES - 1u) /
+			       TP_HOST_ARENA_PAGE_BYTES;
+	if (byte_count == 0)
+		return STATUS_OK;
+	if (pages > SIZE_MAX / TP_HOST_ARENA_PAGE_BYTES - 1u)
+		return STATUS_OUT_OF_MEMORY;
+	const size_t whole = (size_t)(pages * TP_HOST_ARENA_PAGE_BYTES);
+	const int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+	const size_t mapping_bytes =
+		external_tables ? whole + TP_HOST_ARENA_PAGE_BYTES : 0;
+#if CHECKING_HOOKS_ENABLED
+	load_host_arena_last = (struct load_host_arena_record){
+		.flags = external_tables ? flags : 0,
+		.byte_count = external_tables ? mapping_bytes : whole
+	};
+#endif
+	void *bytes = NULL;
+	if (!external_tables) {
+		if (FAULT_POINT(tp_host_arena) ||
+		    posix_memalign(&bytes, TP_HOST_ARENA_PAGE_BYTES, whole) !=
+			    0)
+			return STATUS_OUT_OF_MEMORY;
+		*arena = (struct tp_host_arena){ .bytes = bytes,
+						 .byte_count = whole };
+		return STATUS_OK;
+	}
+	void *const mapping = FAULT_POINT(tp_host_arena) ?
+				      MAP_FAILED :
+				      mmap(NULL, mapping_bytes,
+					   PROT_READ | PROT_WRITE, flags, -1,
+					   0);
+	if (mapping == MAP_FAILED)
+		return STATUS_OUT_OF_MEMORY;
+	const uintptr_t aligned =
+		((uintptr_t)mapping + TP_HOST_ARENA_PAGE_BYTES - 1u) /
+		TP_HOST_ARENA_PAGE_BYTES * TP_HOST_ARENA_PAGE_BYTES;
+	*arena =
+		(struct tp_host_arena){ .bytes = (unsigned char *)mapping +
+						 (aligned - (uintptr_t)mapping),
+					.mapping = mapping,
+					.mapping_bytes = mapping_bytes,
+					.byte_count = whole };
+	return STATUS_OK;
+}
+
+void tp_host_arena_release(struct tp_host_arena *arena)
+{
+	if (arena == NULL)
+		return;
+	if (arena->mapping != NULL &&
+	    munmap(arena->mapping, arena->mapping_bytes) != 0)
+		LOG_ERROR(
+			"the TP host arena could not be unmapped: it stays mapped");
+	else if (arena->mapping == NULL)
+		free(arena->bytes);
+	*arena = (struct tp_host_arena){ 0 };
 }

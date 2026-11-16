@@ -2,6 +2,7 @@
 #define TEST_STEP_FIXTURE_IMPLEMENTATION
 #include "step_graph_backend.h"
 #include "step_draft_cases.h"
+#include "step_driver.h"
 
 /* Prepared graph replay uses the same target-result and draft-tail boundary as eager runs. The target draw stays
  * intact after the tail, and an ordinary step neither replays that graph nor downloads a stale round. */
@@ -335,7 +336,8 @@ static void test_graph_sticky(struct step_driver *driver, result_status failure)
 	const struct step_row_record row = { TEST_GRAPH_NEXT_POSITION, 1, 0,
 					     STEP_ROW_LOGITS };
 	struct step_row_result result = { 0 };
-	const struct step_session settings = { 0, 0.0f, 1.0f };
+	const struct step_session settings =
+		step_session_make(0, 0.0f, 1.0f, 0);
 	const uint64_t before = test_host_memory_backend_work_count();
 	expect_status(step_run_entry(driver, &row, 1, &result), failure,
 		      "failed driver refuses further work");
@@ -414,6 +416,69 @@ static void test_graph_failures(void)
 	test_graph_close();
 }
 
+#define TEST_FLIGHT_BANKS 3u
+
+/* The factory shares non-THIN pointers. Distinct THIN pointers still capture separately, while a shared
+ * pointer borrows bank0's handles, including eager zeros after the first BUSY on a card. */
+static void test_shared_flight_graphs(void)
+{
+	static const uint32_t room[] = { BACKEND_MAXIMUM_GRAPHS, 1 };
+	for (size_t pass = 0; pass < sizeof(room) / sizeof(room[0]); pass++) {
+		test_graph_reset(room[pass]);
+		struct fixture fixture;
+		struct step_driver *const driver = test_graph_driver(&fixture);
+		if (driver == NULL)
+			return;
+		struct execution_program distinct[TEST_FLIGHT_BANKS];
+		driver->flight_programs =
+			(const struct execution_program **)calloc(
+				(size_t)(TEST_FLIGHT_BANKS * PROGRAMS),
+				sizeof(*driver->flight_programs));
+		expect(driver->flight_programs != NULL,
+		       "flight graph pointer fixture allocated");
+		if (driver->flight_programs == NULL) {
+			step_driver_destroy(driver);
+			test_graph_close();
+			return;
+		}
+		driver->flight_bank_count = TEST_FLIGHT_BANKS;
+		for (uint32_t bank = 0; bank < TEST_FLIGHT_BANKS; bank++) {
+			distinct[bank] = *driver->programs[0];
+			driver->flight_programs[(size_t)bank * PROGRAMS] =
+				bank == 0 ? driver->programs[0] :
+					    &distinct[bank];
+			driver->flight_programs[(size_t)bank * PROGRAMS + 1u] =
+				driver->programs[1];
+		}
+		expect_status(step_graphs_prepare(driver), STATUS_OK,
+			      "shared flight graphs prepare");
+		if (pass == 0) {
+			uint32_t total = 0;
+			for (uint32_t card = 0; card < CARDS; card++)
+				total += test_graph_counts[card];
+			expect(total == (TEST_FLIGHT_BANKS + 1u) * LAUNCH_RUNS,
+			       "only distinct programs consume new graph handles");
+		}
+		for (uint32_t bank = 1; bank < TEST_FLIGHT_BANKS; bank++) {
+			const size_t offset =
+				fixture.pointers[0]->segment_count;
+			expect(driver->run_graphs != NULL &&
+				       memcmp(driver->run_graphs + offset,
+					      driver->run_graphs +
+						      (size_t)bank *
+							      driver->flight_graph_stride +
+						      offset,
+					      (size_t)fixture.pointers[1]
+							      ->segment_count *
+						      sizeof(*driver->run_graphs)) ==
+					       0,
+			       "shared graph handles and eager fallbacks equal bank0");
+		}
+		step_driver_destroy(driver);
+		test_graph_close();
+	}
+}
+
 #include "step_graph_failure_cases.h"
 
 int main(void)
@@ -445,6 +510,7 @@ int main(void)
 	test_graph_failures();
 	test_graph_api_failure_cases();
 	test_graph_device_round();
+	test_shared_flight_graphs();
 	expect(test_host_memory_backend_open_card_count() == 0 &&
 		       test_host_memory_backend_staging_block_count() == 0,
 	       "all real fake-backend allocations retire after their owning cards close");

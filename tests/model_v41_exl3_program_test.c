@@ -40,6 +40,21 @@
 #define EXL3_SESSIONS 4u
 #define EXL3_C8_SESSIONS 8u
 #define EXL3_FULL_TARGET_GROUPS 2u
+/* the wide exchange's four launches (publish, ready, sum, done): every second one, from the first, is wide */
+#define EXL3_EXCHANGE_STRIDE 2u
+#define EXL3_EXCHANGE_SUM 2
+#define EXL3_EXCHANGE_DONE 3
+#define EXL3_DRAFT_CUTS 2u /* a thin program's target cut and its draft's */
+#define EXL3_NEXT_CALL_BIT 2u /* 2u << positions: the bit above the target's call and the positions' */
+#define EXL3_MASK_BITS 64u
+#define EXL3_BATCH_SMALL_ROWS 12u
+#define EXL3_BATCH_MIDDLE_ROWS 24u
+#define EXL3_BATCH_ROWS 48u
+#define EXL3_SUBLAYERS 2u /* the attention and the FFN */
+#define EXL3_DENSE_GATHERS 2u
+#define EXL3_CHUNKED_PROGRAMS 2u /* WIDE and FULL, a set's last */
+#define EXL3_GRAPH_BRANCHES 2u
+#define EXL3_DRAFT_K6 6u /* K6: 8 x 6 = 48 batched draft rows */
 
 static int failures;
 
@@ -65,7 +80,8 @@ static void program_histogram(const struct execution_program *program,
 		uint32_t counts[KINDS] = { 0 }, kinds = 0;
 		for (uint32_t index = 0; index < program->cards[card].launch_count; index++) {
 			struct test_host_memory_backend_kernel kernel;
-			if (!test_host_memory_backend_kernel_of(card, program->cards[card].launches[index].kernel, &kernel))
+			if (!test_host_memory_backend_kernel_of(card, program->cards[card].launches[index].kernel,
+								&kernel))
 				continue;
 			uint32_t at = 0;
 			while (at < kinds && strncmp(names[at], kernel.function_name, NAME - 1u) != 0)
@@ -94,9 +110,11 @@ static void check_handles(const struct execution_program *program,
 				continue;
 			const bool known = test_host_memory_backend_kernel_of(card, launch->kernel, &kernel);
 			if (!known || kernel.argument_byte_count != launch->argument_byte_count) {
-				(void)fprintf(stderr, "card %u launch %u kernel %u (%s %u bytes, launch %u bytes): %s\n", card,
-					      index, launch->kernel, known ? kernel.function_name : "unknown",
-					      known ? kernel.argument_byte_count : 0u, launch->argument_byte_count, what);
+				(void)fprintf(stderr, "card %u launch %u kernel %u (%s %u bytes, "
+					      "launch %u bytes): %s\n",
+					      card, index, launch->kernel, known ? kernel.function_name : "unknown",
+					      known ? kernel.argument_byte_count : 0u, launch->argument_byte_count,
+					      what);
 				expect(false, "a launch names a kernel of its card with its record's size");
 				return;
 			}
@@ -484,7 +502,8 @@ static void check_load_admission(struct v41_tp2_model *model,
 	if (opened != STATUS_OK)
 		return;
 	load_state = (struct load_failure_state){ 0 };
-	memcpy(load_state.cards, cards, sizeof(load_state.cards));
+	memcpy((void *)load_state.cards, (const void *)cards,
+	       sizeof(load_state.cards));
 	struct backend_operations backend = test_host_memory_backend;
 	backend.staging_allocate = load_allocate_fail;
 	backend.staging_retire = load_retire;
@@ -503,7 +522,7 @@ static void check_load_admission(struct v41_tp2_model *model,
 	for (uint32_t card = 0; card < EXL3_CARDS; card++)
 		request.qualified_writer_masks[card] = (1u << EXL3_CARDS) - 1u;
 	struct device_card *missing[EXL3_CARDS];
-	memcpy(missing, cards, sizeof(missing));
+	memcpy((void *)missing, (const void *)cards, sizeof(missing));
 	missing[EXL3_CARDS - 1u] = NULL;
 	request.cards = missing;
 	expect(v41_tp2_model_load(model, &request) == STATUS_INVALID_ARGUMENT &&
@@ -676,6 +695,89 @@ static void check_case(const struct pack_record *pack, uint32_t capacity,
 	}
 }
 
+/* Offset-only peer backend:32 words (256 bytes) mirror the actual model loader's sampler tables. */
+struct sampler_peer_fixture {
+	const struct v41_tp2_model *model;
+	struct device_card *const *cards;
+	uint64_t words[EXL3_CARDS][SAMPLER_SHARD_PEER_TABLE_WORDS];
+	uint32_t seen[EXL3_CARDS];
+};
+static struct sampler_peer_fixture sampler_peer_fixture;
+
+MUST_CHECK static result_status
+sampler_peer_connect(struct device_card *accessor, struct device_card *owner,
+		     uint64_t owner_offset, uint64_t address_word_offset)
+{
+	const struct v41_tp2_model *const model = sampler_peer_fixture.model;
+	uint32_t card = 0, rank = 0;
+	while (card < EXL3_CARDS &&
+	       sampler_peer_fixture.cards[card] != accessor)
+		card++;
+	while (rank < EXL3_CARDS && sampler_peer_fixture.cards[rank] != owner)
+		rank++;
+	if (card == EXL3_CARDS || rank == EXL3_CARDS)
+		return STATUS_INVALID_ARGUMENT;
+	const struct v41_tp2_stage_plan *const stage = model->stages[card];
+	const uint64_t base = stage->sampler_peers.byte_offset;
+	if (address_word_offset >= base &&
+	    address_word_offset - base < SAMPLER_SHARD_PEER_TABLE_BYTES) {
+		const uint64_t displacement = address_word_offset - base;
+		if (displacement % sizeof(uint64_t) != 0)
+			return STATUS_INVALID_ARGUMENT;
+		const uint32_t word =
+			(uint32_t)(displacement / sizeof(uint64_t));
+		const uint32_t bit = 1u << word;
+		if ((sampler_peer_fixture.seen[card] & bit) != 0 ||
+		    word % EXL3_CARDS != rank)
+			return STATUS_INVALID_ARGUMENT;
+		sampler_peer_fixture.words[card][word] = owner_offset;
+		sampler_peer_fixture.seen[card] |= bit;
+	}
+	return STATUS_OK;
+}
+
+MUST_CHECK static result_status sampler_peer_wait(struct device_card *card,
+						  uint64_t limit)
+{
+	return card != NULL && limit == EXL3_WAIT_NS ? STATUS_OK :
+						       STATUS_INVALID_ARGUMENT;
+}
+
+static void check_sampler_peer_words(const struct v41_tp2_model *model,
+				     struct device_card *const *cards)
+{
+	sampler_peer_fixture =
+		(struct sampler_peer_fixture){ .model = model, .cards = cards };
+	const struct backend_operations backend = {
+		.peer_connect = sampler_peer_connect,
+		.launch_wait = sampler_peer_wait
+	};
+	const struct v41_tp2_model_load_request request = {
+		.backend = &backend,
+		.cards = cards,
+		.wait_limit_nanoseconds = EXL3_WAIT_NS
+	};
+	expect(v41_tp2_model_sampler_peers_attach(model, &request) == STATUS_OK,
+	       "head shards: production loader attaches the split sampler table");
+	for (uint32_t card = 0; card < EXL3_CARDS; card++) {
+		expect(sampler_peer_fixture.seen[card] ==
+			       (1u << SAMPLER_SHARD_PEER_TABLE_WORDS) - 1u,
+		       "head shards: every card receives all eight distinct sampler peers");
+		for (uint32_t rank = 0; rank < EXL3_CARDS; rank++) {
+			expect(sampler_peer_fixture.words[card][rank] ==
+				       model->stages[rank]
+					       ->sampler_exchange.byte_offset,
+			       "head shards: peer words0..3 keep each rank's original exchange offset");
+			expect(sampler_peer_fixture.words[card]
+							 [EXL3_CARDS + rank] ==
+				       model->stages[rank]
+					       ->sampler_entry.byte_offset,
+			       "head shards: peer words4..7 hold each rank's separate entry offset");
+		}
+	}
+	sampler_peer_fixture = (struct sampler_peer_fixture){ 0 };
+}
+
 /* head_shards (model_v41_tp2_stage.h): ranks 1-3 load the norm and a head copy; a thin program ends with each
  * rank's final, head cut (dense_stream's kernel with head_stream) and sampler shard; wide/full programs take none. */
 static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
@@ -729,6 +831,7 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 		       model != NULL,
 	       "head shards: four-card metadata prepares");
 	if (model != NULL) {
+		check_sampler_peer_words(model, cards);
 		uint32_t head_jobs = 0;
 		const uint32_t head_tensor = pack_find_tensor(
 			pack, "head.weight", (uint32_t)strlen("head.weight"));
@@ -762,13 +865,18 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 				       model->stages[card]
 						       ->sampler_exchange
 						       .byte_count ==
-					       SAMPLER_SHARD_EXCHANGE_BYTES,
+					       (uint64_t)SAMPLER_SHARD_DEFAULT_EXCHANGE_BYTES &&
+				       model->stages[card]
+						       ->sampler_entry
+						       .byte_count ==
+					       (uint64_t)SAMPLER_SHARD_ENTRY_BYTES,
 			       "ranks 1-3 hold their own norm, head copy and sampler areas");
 		expect(head_jobs == EXL3_CARDS, "one head job a rank");
 		uint32_t embed_jobs = 0;
 		const uint32_t embed_tensor = pack_find_tensor(
 			pack, "embed.weight", (uint32_t)strlen("embed.weight"));
-		for (uint32_t index = 0; index < model->gpu_load.description.job_count; index++)
+		for (uint32_t index = 0;
+		     index < model->gpu_load.description.job_count; index++)
 			embed_jobs += model->jobs[index].tensor_index == embed_tensor;
 		expect(embed_jobs == (description.replicated_embedding ? EXL3_CARDS : 1u),
 		       "replicated_embedding: every rank loads the embedding, else card 0 alone");
@@ -797,7 +905,8 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 				       program != NULL,
 			       "head shards: every kind prepares");
 			for (uint32_t card = 0; program != NULL && card < EXL3_CARDS; card++) {
-				uint32_t samplers = 0, streams = 0, heads = 0, shares = 0, calls = 0, pushes = 0, fast = 0, grouped = 0;
+				uint32_t samplers = 0, streams = 0, heads = 0, shares = 0, calls = 0, pushes = 0,
+					 fast = 0, grouped = 0;
 				uint32_t
 					exchanges = 0,
 					wide_exchange
@@ -855,7 +964,7 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 						struct test_host_memory_backend_kernel previous;
 						wide_exchange[part]++;
 						expect(launch->grid[0] ==
-								       (part % 2u == 0 ?
+								       (part % EXL3_EXCHANGE_STRIDE == 0 ?
 										TP_EXCHANGE_WIDE_BLOCKS :
 										1u) &&
 							       launch->block[0] ==
@@ -872,7 +981,8 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 										[part -
 										 1u]) ==
 									 0)),
-						       "wide_exchange: publish (64 CTAs), ready, sums (64 CTAs), done, in order");
+						       "wide_exchange: publish (64 CTAs), ready, sums (64 CTAs), "
+						       "done, in order");
 						break;
 					}
 					fast += strncmp(kernel.function_name,
@@ -890,7 +1000,8 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 						memcpy(&push, launch->argument, sizeof(push));
 						pushes += index == 0 &&
 							  push.peer_table_offset ==
-								  model->stages[card]->sampler_settings_peers.byte_offset &&
+								  model->stages[card]
+									  ->sampler_settings_peers.byte_offset &&
 							  push.session_capacity == EXL3_SESSIONS;
 					}
 					const struct v41_tensor *const own_head =
@@ -940,32 +1051,43 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 							       model->stages[card]
 								       ->sampler_settings
 								       .byte_offset,
-					       "a rank's sampler shard names its tokens, its exchange areas and its settings copy");
+					       "a rank's sampler shard names its tokens, its exchange areas and its "
+					       "settings copy");
 				}
 				const bool thin = kinds[kind] == PROGRAM_THIN;
 				const uint32_t positions = description.limits.draft_positions;
-				const uint32_t cuts = thin ? (drafts ? 2u : 1u) : 0u;
-				expect(fast != 0, "exl3_fast_products: the EXL3 layers take kernel_exl3_wide's transforms and products");
+				const uint32_t cuts = thin ? (drafts ? EXL3_DRAFT_CUTS : 1u) : 0u;
+				expect(fast != 0,
+				       "exl3_fast_products: the EXL3 layers take kernel_exl3_wide's transforms and "
+				       "products");
 				expect(card == 0 || (embeds != 0) == description.replicated_embedding,
 				       "replicated_embedding: ranks 1-3 embed their own rows");
-				expect(program->hand_off_count == (description.replicated_embedding ? 0u : EXL3_EMBED_COPIES),
+				expect(program->hand_off_count ==
+					       (description.replicated_embedding ? 0u : EXL3_EMBED_COPIES),
 				       "replicated_embedding: no streams leave card 0 through the host");
-				/* the BF16 recipe's chunked attention: slab rings (with draft shards here) or the wide exchange */
+				/* the BF16 recipe's chunked attention: slab rings (with draft shards here) or the wide
+				 * exchange */
 				const bool wide_pushes = !thin && !exact && !description.bf16_slab_rings;
 				expect(exchanges == 0 && (wide_exchange[0] != 0) == wide_pushes &&
-					       wide_exchange[1] == wide_exchange[0] && wide_exchange[2] == wide_exchange[0] &&
-					       wide_exchange[3] == wide_exchange[0],
-				       "wide_exchange: every piece's FP32 ordered push in its four launches, none in one CTA");
+					       wide_exchange[1] == wide_exchange[0] &&
+					       wide_exchange[EXL3_EXCHANGE_SUM] == wide_exchange[0] &&
+					       wide_exchange[EXL3_EXCHANGE_DONE] == wide_exchange[0],
+				       "wide_exchange: every piece's FP32 ordered push in its four launches, none in "
+				       "one CTA");
 				expect((grouped != 0) == !thin,
 				       "exl3_wide_entry: a chunk's EXL3 experts in one call of the grouped products");
 				expect(pushes == (thin && card == 0 ? 1u : 0u),
-				       "thin programs: the result card's first launch pushes the settings to every rank's copy");
+				       "thin programs: the result card's first launch pushes the settings to every "
+				       "rank's copy");
 				expect(samplers == (!thin ? 0u : drafts ? 1u + positions : 1u) && heads == cuts &&
 					       shares == (thin && drafts ? 1u : 0u) &&
-					       calls == (!thin ? 0u : drafts ? (2u << positions) - 1u : 1u),
-				       "thin programs: the target's cut and sampler shard a rank, with draft shards the draft's cut, "
+					       calls == (!thin ? 0u :
+							 drafts ? (EXL3_NEXT_CALL_BIT << positions) - 1u : 1u),
+				       "thin programs: the target's cut and sampler shard a rank, with draft shards "
+				       "the draft's cut, "
 				       "share and one sampler shard a position; wide/full none");
-				/* with head_stream: every cut, and rank 0's draft's whole head where the draft is not cut */
+				/* with head_stream: every cut, and rank 0's draft's whole head where the draft is not
+				 * cut */
 				expect(streams == (!stream || !thin ? 0u : cuts + (card == 0 && !drafts ? 1u : 0u)),
 				       "head_stream takes dense_stream's kernel for every head product");
 			}
@@ -983,7 +1105,8 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 		for (uint32_t index = 0; index < program_count; index++) {
 			for (uint32_t card = 0; card < programs[index]->card_count; card++) {
 				const uint32_t none = 0;
-				memcpy((void *)(uintptr_t)&programs[index]->cards[card].engram_tables, &none, sizeof(none));
+				memcpy((void *)(uintptr_t)&programs[index]->cards[card].engram_tables, &none,
+				       sizeof(none));
 			}
 		}
 		struct step_driver *driver = NULL;
@@ -1056,7 +1179,8 @@ static void check_batch(const struct pack_record *pack, bool shards,
 	expect(model != NULL && v41_tp2_model_program_description(
 					model, &build) == STATUS_OK,
 	       "batch: program description");
-	const uint32_t rows[] = { 12u, 24u, 48u, PROGRAM_BATCH_MOST_ROWS,
+	const uint32_t rows[] = { EXL3_BATCH_SMALL_ROWS, EXL3_BATCH_MIDDLE_ROWS, EXL3_BATCH_ROWS,
+				  PROGRAM_BATCH_MOST_ROWS,
 				  LINEAR_MAXIMUM_ROWS };
 	for (uint32_t index = 0; model != NULL && index < sizeof(rows) / sizeof(rows[0]); index++) {
 		struct execution_program *program = NULL;
@@ -1072,7 +1196,8 @@ static void check_batch(const struct pack_record *pack, bool shards,
 			(rows[index] + LINEAR_MAXIMUM_ROWS - 1u) /
 			LINEAR_MAXIMUM_ROWS;
 		for (uint32_t card = 0; program != NULL && card < EXL3_CARDS; card++) {
-			uint32_t samplers = 0, results = 0, verifies = 0, confidences = 0, verifiers = 0, shares = 0, wides = 0;
+			uint32_t samplers = 0, results = 0, verifies = 0, confidences = 0, verifiers = 0, shares = 0,
+				 wides = 0;
 			uint32_t draft_wides = 0, draft_rows_seen = 0, batched_markovs = 0, pushes = 0, rings = 0;
 			uint64_t calls = 0;
 			uint64_t draft_steps[LINEAR_MAXIMUM_ROWS] = { 0 };
@@ -1155,7 +1280,8 @@ static void check_batch(const struct pack_record *pack, bool shards,
 					struct sampler_arguments arguments;
 					memcpy(&arguments, own->argument, sizeof(arguments));
 					if (arguments.result_offset >= base &&
-					    arguments.result_offset < base + model->stages[card]->batch_results.byte_count) {
+					    arguments.result_offset <
+						    base + model->stages[card]->batch_results.byte_count) {
 						results +=
 							arguments.result_offset ==
 							base + (uint64_t)samplers *
@@ -1230,15 +1356,17 @@ static void check_batch(const struct pack_record *pack, bool shards,
 			batch_walks = batch_walks == 0 ? 1u : batch_walks;
 			const uint32_t uses = slabs + (drafts ? batch_walks * positions : 0u);
 			expect(samplers == (samples ? slabs : 0u) && results == samplers &&
-				       (!shards || calls == (uses >= 64u ? ~0ull : (1ull << uses) - 1u)) &&
+				       (!shards || calls == (uses >= EXL3_MASK_BITS ? ~0ull : (1ull << uses) - 1u)) &&
 				       shares == (drafts ? batch_walks : 0u) && wides == (wide && samples ? 1u : 0u),
-			       "every sampling card samples each slab into the slab's own result area; with draft shards "
+			       "every sampling card samples each slab into the slab's own result area; with draft "
+			       "shards "
 			       "each verifier's share or wait and sampler uses behind the slabs'");
-			/* the BF16 recipe: the attention and FFN sums of all the step's rows by one BF16 ring a sublayer
+			/* the BF16 recipe: the attention and FFN sums of all the step's rows by one BF16 ring a
+			 * sublayer
 			 * (ef38611), no FP32 push */
 			expect(pushes == 0 &&
 				       rings >=
-					       (exact ? 0u : 2u * MODEL_LAYERS),
+					       (exact ? 0u : EXL3_SUBLAYERS * MODEL_LAYERS),
 			       "a BATCH program sums its rows by one ring a sublayer, the attention as the FFN");
 			expect(batched_markovs == (rows_draft && card == 0 ? positions : 0u),
 			       "the batched draft: one Markov bias a position over every slot");
@@ -1254,7 +1382,8 @@ static void check_batch(const struct pack_record *pack, bool shards,
 			expect(draft_wides == (wide && rows_draft && card == 0 ? 1u : 0u) &&
 				       (draft_wides == 0 ||
 					draft_rows_seen == (own ? own_rows : slot_rows)),
-			       "batch_wide_head with the batched draft: one wide draft head over every position's 8 slots, "
+			       "batch_wide_head with the batched draft: one wide draft head over every position's 8 "
+			       "slots, "
 			       "or one verifier's own rows");
 			verifiers = card != 0 ? 0u : batch_walks;
 			bool distinct = true;
@@ -1267,14 +1396,16 @@ static void check_batch(const struct pack_record *pack, bool shards,
 				     second++)
 					distinct = distinct && draft_steps[first] != draft_steps[second];
 			expect(verifies == verifiers && confidences == verifiers && (distinct || rows_draft),
-			       "one draft walk a verifier, each with its own draft arrays, its confidence the round table's");
+			       "one draft walk a verifier, each with its own draft arrays, its confidence the round "
+			       "table's");
 		}
 		if (program != NULL)
 			check_handles(program, "batch");
 		if (index == 0 && sessions == EXL3_C8_SESSIONS)
 			program_histogram(program, exact ? "BATCH-12 exact" : "BATCH-12 bf16");
-		expect(program == NULL || (program->cards[0].result_offset == model->stages[0]->batch_results.byte_offset &&
-					   program->cards[0].round_offset == model->stages[0]->batch_rounds.byte_offset),
+		expect(program == NULL ||
+			       (program->cards[0].result_offset == model->stages[0]->batch_results.byte_offset &&
+				program->cards[0].round_offset == model->stages[0]->batch_rounds.byte_offset),
 		       "the result card's result area is its first slab's, its round area the round table");
 		free(program);
 	}
@@ -1286,9 +1417,9 @@ static void check_batch(const struct pack_record *pack, bool shards,
 					PROGRAM_BATCH_MOST_ROWS + 1u, &program,
 					&companions) == STATUS_INVALID_ARGUMENT,
 	       "BATCH programs take at most 64 rows");
-	/* the step driver takes a BATCH cohort and the chunked programs (main.c's --batch_rows set): BATCH programs of
-	 * 8 (a thin walk), 12, 24, 48 and 64 rows with the batched draft rows; with draft shards or without the
-	 * batched draft rows one BATCH size (a verifier's walk its own segments: main.c refuses more) */
+	/* the step driver takes a BATCH cohort and the chunked programs (commands.c's --batch_rows set): BATCH programs
+	 * of 8 (a thin walk), 12, 24, 48 and 64 rows with the batched draft rows; with draft shards or without the
+	 * batched draft rows one BATCH size (a verifier's walk its own segments: commands.c refuses more) */
 	if (model != NULL) {
 		enum { SET = 7 };
 		struct execution_program *set[SET] = { 0 };
@@ -1298,14 +1429,14 @@ static void check_batch(const struct pack_record *pack, bool shards,
 			PROGRAM_BATCH, PROGRAM_BATCH, PROGRAM_WIDE,
 			PROGRAM_FULL
 		};
-		const uint32_t rows_of[SET] = { 12u,
+		const uint32_t rows_of[SET] = { EXL3_BATCH_SMALL_ROWS,
 						LINEAR_MAXIMUM_ROWS,
-						24u,
-						48u,
+						EXL3_BATCH_MIDDLE_ROWS,
+						EXL3_BATCH_ROWS,
 						PROGRAM_BATCH_MOST_ROWS,
 						MODEL_WIDE_LEAST_ROWS,
 						MODEL_WIDE_LEAST_ROWS };
-		const uint32_t first_chunked = SET - 2u;
+		const uint32_t first_chunked = SET - EXL3_CHUNKED_PROGRAMS;
 		uint32_t count = 0;
 		bool prepared = true;
 		for (uint32_t index = 0; index < SET; index++) {
@@ -1335,11 +1466,13 @@ static void check_batch(const struct pack_record *pack, bool shards,
 					count, NULL, EXL3_WAIT_NS, &driver) :
 				STATUS_INVALID_ARGUMENT;
 		if (getenv("BATCH_DRIVER_DEBUG") != NULL)
-			(void)fprintf(stderr, "batch driver: prepared %d created %u (shards %d drafts %d wide %d rows_draft %d "
-				      "sessions %u positions %u exact %d)\n", prepared, (uint32_t)created, shards, drafts, wide,
+			(void)fprintf(stderr, "batch driver: prepared %d created %u (shards %d drafts %d wide %d "
+				      "rows_draft %d sessions %u positions %u exact %d)\n", prepared, (uint32_t)created,
+				      shards, drafts, wide,
 				      rows_draft, sessions, positions, exact);
 		expect(prepared && created == STATUS_OK && driver != NULL,
-		       "the step driver takes the BATCH programs (8 rows: a thin walk) with the wide and full programs");
+		       "the step driver takes the BATCH programs (8 rows: a thin walk) with the wide and full "
+		       "programs");
 		step_driver_destroy(driver);
 		for (uint32_t index = 0; index < count; index++)
 			free(set[index]);
@@ -1430,13 +1563,14 @@ static void check_exact_dense(const struct pack_record *pack, uint32_t capacity)
 			uint32_t gathers = 0;
 			for (uint32_t index = 0; index < program->cards[1].launch_count; index++) {
 				struct test_host_memory_backend_kernel kernel;
-				if (test_host_memory_backend_kernel_of(1, program->cards[1].launches[index].kernel, &kernel))
+				if (test_host_memory_backend_kernel_of(1, program->cards[1].launches[index].kernel,
+								       &kernel))
 					gathers += strcmp(kernel.function_name,
 							  KERNEL_EXACT_RING) ==
 						   0;
 			}
 			if (kinds[kind] == PROGRAM_THIN)
-				expect(gathers >= 2u * MODEL_LAYERS,
+				expect(gathers >= EXL3_DENSE_GATHERS * MODEL_LAYERS,
 				       "exact dense: two dense gathers a layer (and the layers' own)");
 			free(program);
 		}
@@ -1473,7 +1607,7 @@ static void check_draft_layers(const struct pack_record *pack,
 		.batch = batch,
 		.batch_wide_head = batch,
 		.batch_draft_rows = batch,
-		.graph_branches = branches ? 2u : 0u,
+		.graph_branches = branches ? EXL3_GRAPH_BRANCHES : 0u,
 		.exl3_tc_moe = branches,
 		.trunk_mma = branches
 	};
@@ -1535,7 +1669,7 @@ static void check_draft_layers(const struct pack_record *pack,
 		const uint32_t rows = kinds[kind] == PROGRAM_THIN ?
 					      EXL3_THIN_SIX :
 				      kinds[kind] == PROGRAM_BATCH ?
-					      48u :
+					      EXL3_BATCH_ROWS :
 					      description.limits.row_capacity;
 		struct execution_program *program = NULL;
 		struct step_companion_program companions = { 0 };
@@ -1543,9 +1677,10 @@ static void check_draft_layers(const struct pack_record *pack,
 			&build, &test_host_memory_backend, cards, reported,
 			kinds[kind], rows, &program, &companions);
 		if (prepared != STATUS_OK)
-			fprintf(stderr, "draft layers: kind %u rows %u: %s\n",
-				(unsigned)kinds[kind], (unsigned)rows,
-				status_text(prepared));
+			(void)fprintf(stderr,
+				      "draft layers: kind %u rows %u: %s\n",
+				      (unsigned)kinds[kind], (unsigned)rows,
+				      status_text(prepared));
 		expect(prepared == STATUS_OK && program != NULL,
 		       "draft layers: every kind prepares");
 		if (program == NULL)
@@ -1583,8 +1718,9 @@ static void check_draft_layers(const struct pack_record *pack,
 			(const struct execution_program *const *)programs,
 			program_count, NULL, EXL3_WAIT_NS, &driver);
 		if (created != STATUS_OK)
-			fprintf(stderr, "draft layers: the step driver: %s\n",
-				status_text(created));
+			(void)fprintf(stderr,
+				      "draft layers: the step driver: %s\n",
+				      status_text(created));
 		expect(created == STATUS_OK && driver != NULL,
 		       "draft layers: the step driver takes the thin, wide and full programs");
 		step_driver_destroy(driver);
@@ -1650,11 +1786,12 @@ int main(void)
 			    MODEL_DRAFT_BLOCK, true);
 		check_batch(pack, false, false, true, true, EXL3_C8_SESSIONS,
 			    MODEL_DRAFT_BLOCK, true);
-		check_batch(pack, true, false, false, true, EXL3_C8_SESSIONS, 6u, true); /* K6: 8 x 6 = 48 batched draft rows */
-		check_batch(pack, false, false, true, true, EXL3_C8_SESSIONS, EXL3_DRAFT, true); /* K7: 8 x 7 = 56, the most */
+		check_batch(pack, true, false, false, true, EXL3_C8_SESSIONS, EXL3_DRAFT_K6, true);
+		/* K7: 8 x 7 = 56, the most */
+		check_batch(pack, false, false, true, true, EXL3_C8_SESSIONS, EXL3_DRAFT, true);
 		check_batch(pack, true, true, false, false, EXL3_C8_SESSIONS,
 			    MODEL_DRAFT_BLOCK, false);
-		check_batch(pack, true, false, true, true, EXL3_C8_SESSIONS, 6u, false);
+		check_batch(pack, true, false, true, true, EXL3_C8_SESSIONS, EXL3_DRAFT_K6, false);
 		check_draft_layers(pack, LINEAR_MAXIMUM_ROWS, false, false);
 		check_draft_layers(pack, MODEL_WIDE_LEAST_ROWS, false, true);
 		check_draft_layers(pack, MODEL_WIDE_LEAST_ROWS, true, false);

@@ -5,8 +5,8 @@
  *
  * Contract:
  *   - HTTP/1.1 (1.0 taken too) on one listening socket of a numeric IPv4 or IPv6 address, one request a connection.
- *     GET /health (503 once the engine failed), GET /v1/models, GET /v1/anemone/stats,
- *     POST /v1/chat/completions; another path is 404,
+ *     GET /health (503 once the engine failed), GET /v1/models, GET /v1/anemone/stats, optional GET /metrics
+ * (docs/METRICS.md),     POST /v1/chat/completions; another path is 404,
  *     another method 405.
  *   - A head is CRLF lines of printable ASCII (a tab inside a value), at most SERVER_MOST_HEAD_BYTES (431) and
  *     SERVER_MOST_HEAD_FIELDS fields; HTTP/1.1 names its Host once; a POST has one Content-Length, at most
@@ -16,12 +16,12 @@
  *     progress for SERVER_WRITE_SECONDS ends the connection, and so does output above
  *     CHAT_MOST_OUTPUT_BYTES. The connection limit is SERVER_CONNECTION_FACTOR times
  *     (engine slots + queue_depth), plus SERVER_CONNECTION_HEADROOM; further connections wait in the
- *     listening queue. SERVER_MOST_CONNECTIONS bounds the fixed storage for all supported configurations.
+ *     listening queue. The connection storage is sized from those counts when a run starts.
  *   - With a key file, every route but /health takes "Authorization: Bearer <key>", compared in constant time, else
  *     401 before any body is read. server_keys.h defines named keys and the single-line legacy fallback;
  *     a file that group or others may access is refused. Keys are never logged and are erased at close/reload;
  *     the credential a request carries is erased once compared, and all a connection received when it closes.
- *   - One or four requests generate independently from position 0, one per engine session slot;
+ *   - As many requests as the engine has session slots generate independently from position 0, one a slot;
  *     up to queue_depth more wait (1..SERVER_MOST_WAITING, default SERVER_DEFAULT_QUEUE_DEPTH),
  *     encoded, FIFO within each authenticated username and round-robin between usernames. A user may hold every
  *     active slot, but at most user_queue_depth waiting requests; 0 selects max(1, queue_depth / 2). Explicit
@@ -58,6 +58,9 @@
  *     Chat renderer and native decoder; store:false is the only storage mode. previous_response_id and
  *     conversation restoration are refused. SSE uses Responses item/text/function events and a terminal
  *     completed, incomplete or failed event. Request identity uses the original body and session headers.
+ *   - anthropic_messages (default false) admits the bounded /v1/messages text/client-tool adapter.
+ *     docs/ANTHROPIC_MESSAGES.md defines versions, thinking refusals, authentication and local token usage.
+ *     It shares Chat rendering/decoding and the same waiting/active ownership; it creates no second engine.
  *   - disable_prefix_reuse forces every request to prefill from zero, including shared BOS/role tokens.
  *     Its zero default retains the existing policy. Combining it with a session directory is refused.
  *   - exact_prefix_reuse: 1 admits only same-length cold-provenance text histories, keeping prompt_count-1 tokens
@@ -90,6 +93,7 @@
 #include "anemone/server_keys.h"
 #include "anemone/tokenizer.h"
 
+#define SERVER_STORAGE_REPLICA_INFO_BYTES (2u << 20u)
 #define SERVER_DEFAULT_ADDRESS "127.0.0.1"
 #define SERVER_DEFAULT_PORT 8321u
 #define SERVER_MOST_PORT 65535u
@@ -98,10 +102,6 @@
 #define SERVER_MOST_WAITING 64u
 #define SERVER_CONNECTION_FACTOR 2u
 #define SERVER_CONNECTION_HEADROOM 8u
-#define SERVER_MOST_CONNECTIONS                                \
-	(SERVER_CONNECTION_FACTOR *                            \
-		 (STATS_SLOT_CAPACITY + SERVER_MOST_WAITING) + \
-	 SERVER_CONNECTION_HEADROOM)
 #define SERVER_MOST_HEAD_BYTES 16384u
 #define SERVER_MOST_HEAD_FIELDS 64u
 #define SERVER_READ_SECONDS \
@@ -136,6 +136,8 @@ struct server_head {
 	uint32_t route; /* enum chat_route, once nothing refuses it */
 	uint32_t refusal; /* 0, or the status that answers the request */
 	bool expects_continue;
+	bool metrics_protocol_error; /* metrics-only field framing failure; false when disabled */
+	bool messages_legacy_sampling;
 };
 
 #define SERVER_PREFIX_LEGACY 0u
@@ -143,11 +145,18 @@ struct server_head {
 #define SERVER_PREFIX_COLD_PLAN 2u
 
 struct server_options {
+	bool anthropic_messages; /* default-off bounded POST /v1/messages adapter */
+	const char *
+		storage_replica_info; /* immutable startup snapshot; NULL/0: none */
+	size_t storage_replica_info_bytes;
 	const char *bind_address;
 	const char *key_file; /* NULL: no key is asked for */
-	const char *stats_users; /* NULL: every valid user; else comma-separated valid usernames, requires key_file */
-	const char *model_alias; /* NULL: none; else a second name requests may give the model */
-	const char *session_directory; /* NULL: no snapshots; else where sessions are kept (server_sessions.c) */
+	const char *
+		stats_users; /* NULL: every valid user; else comma-separated valid usernames, requires key_file */
+	const char *
+		model_alias; /* NULL: none; else a second name requests may give the model */
+	const char *
+		session_directory; /* NULL: no snapshots; else where sessions are kept (server_sessions.c) */
 	uint64_t session_directory_bytes; /* the most its snapshots take */
 	struct chat_request
 		defaults; /* max_tokens, seed and is_seeded, temperature, top_p, effort */
@@ -155,9 +164,11 @@ struct server_options {
 	uint32_t queue_depth; /* 0 selects the default; otherwise 1..SERVER_MOST_WAITING */
 	uint32_t user_queue_depth; /* 0 selects max(1, queue_depth / USER_QUEUE_FRACTION); otherwise 1..queue_depth */
 	uint32_t live_stats_interval_ms; /* 0: printing off; else 100..60000; counters and endpoint always available */
+	bool metrics; /* default off; GET /metrics follows stats auth/ACL, anonymous without key_file */
 	bool live_stats_json;
 	bool live_stats_table;
-	const char *card_order; /* NULL: unspecified; immutable startup metadata */
+	const char
+		*card_order; /* NULL: unspecified; immutable startup metadata */
 	const char *placement; /* NULL: unspecified; immutable startup metadata */
 	bool disable_prefix_reuse; /* zero retains reuse; true forces cold GPU prompts and refuses snapshots */
 	uint32_t exact_prefix_reuse; /* 0 legacy, 1 final-row repeat, 2 compatible cold boundary; no snapshots */
@@ -178,6 +189,9 @@ struct http_server;
  * system refuses STATUS_INPUT_OUTPUT_ERROR (one error line each, never the key). */
 MUST_CHECK result_status server_open(const struct server_options *options,
 				     struct http_server **server_out);
+/* Set only before server_run, from an immutable bounded startup snapshot; no copy or scrape-time allocation. */
+MUST_CHECK result_status server_storage_info(struct http_server *server,
+					     const char *text, size_t bytes);
 void server_close(struct http_server *server); /* accepts NULL */
 /* The engine's description gives the model's name and context. The nonblocking stop descriptor carries signal
  * bytes: SIGHUP reloads keys transactionally; any other byte/EOF stops. Main installs the signal handlers.
@@ -191,11 +205,17 @@ MUST_CHECK result_status server_run(struct http_server *server,
 				    int stop_descriptor);
 
 /* For the tests. head_read: false while the bytes may be the beginning of a head; true once it is whole or can never
- * be, head_out then saying what it is. key_matches: in time that depends on the key's length only. */
+ * be, head_out then saying what it is. */
 bool server_head_read(const char *bytes, size_t byte_count,
 		      struct server_head *head_out);
-bool server_key_matches(const char *key, size_t key_byte_count,
-			const char *given, size_t given_byte_count);
+/* The same parser with optional /metrics recognition; false leaves it an ordinary unknown path. */
+bool server_head_read_options(const char *bytes, size_t byte_count,
+			      bool metrics_enabled, bool messages_enabled,
+			      struct server_head *head_out);
+bool server_head_read_metrics(const char *bytes, size_t byte_count,
+			      bool metrics_enabled,
+			      struct server_head *head_out);
+
 /* Stats client: reads one selected bearer key, with the legacy private regular-file checks and grammar.
  * NULL inputs: INVALID_ARGUMENT; no output changes on failure. For server multi-user files use keys_read. */
 MUST_CHECK result_status server_key_read(const char *path, char *key,

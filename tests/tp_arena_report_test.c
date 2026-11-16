@@ -22,27 +22,33 @@
 #define REPORT_CONFIGURATIONS 7u
 #define REPORT_PARTS 96u
 #define REPORT_MIB (1024.0 * 1024.0)
+#define REPORT_LEAST_PART_BYTES (1u << 20u) /* smaller parts are not compared */
+
+#include "sampler_layout_golden.h"
+_Static_assert(REPORT_CONFIGURATIONS == SAMPLER_LAYOUT_CONFIGURATIONS &&
+		       TP4_RANKS == SAMPLER_LAYOUT_RANKS,
+	       "every default configuration and rank is pinned");
 
 struct part {
 	const char *name;
 	uint64_t bytes;
 };
 
-/* A serving configuration: its programs (BATCH or THIN), wide rows and draft placement (main.c's flags). */
+/* A serving configuration: its programs (BATCH or THIN), wide rows and draft placement (commands.c's flags). */
 struct configuration {
 	const char *title;
-	bool batch;
 	uint32_t wide_rows;
+	bool batch;
 	bool draft_layers, draft_shards, batch_draft_rows;
 };
 static const struct configuration configurations[] = {
-	{ "THIN 1,024 (TP draft layers)", false, 1024u, true, true, false },
-	{ "THIN 2,048 (TP draft layers)", false, 2048u, true, true, false },
-	{ "BATCH 1,024 (gsd03: TP draft layers, batch draft rows)", true, 1024u, true, true, true },
-	{ "BATCH 2,048 (TP draft layers, batch draft rows)", true, 2048u, true, true, true },
-	{ "THIN 2,048 (gsc02: draft shards)", false, 2048u, false, true, false },
-	{ "BATCH 2,048 (draft shards, no batch draft rows)", true, 2048u, false, true, false },
-	{ "BATCH 2,048 (no draft shards, batch draft rows)", true, 2048u, false, false, true },
+	{ "THIN 1,024 (TP draft layers)", 1024u, false, true, true, false },
+	{ "THIN 2,048 (TP draft layers)", 2048u, false, true, true, false },
+	{ "BATCH 1,024 (gsd03: TP draft layers, batch draft rows)", 1024u, true, true, true, true },
+	{ "BATCH 2,048 (TP draft layers, batch draft rows)", 2048u, true, true, true, true },
+	{ "THIN 2,048 (gsc02: draft shards)", 2048u, false, false, true, false },
+	{ "BATCH 2,048 (draft shards, no batch draft rows)", 2048u, true, false, true, false },
+	{ "BATCH 2,048 (no draft shards, batch draft rows)", 2048u, true, false, false, true },
 };
 _Static_assert(sizeof(configurations) / sizeof(configurations[0]) == REPORT_CONFIGURATIONS, "one row a configuration");
 
@@ -75,6 +81,45 @@ static void card_report(uint32_t configuration,
 {
 	const struct v41_card *const planned = &model->views[card]->cards[card];
 	const struct v41_tp2_stage_plan *const stage = model->stages[card];
+	const uint64_t golden_offsets[SAMPLER_LAYOUT_FIELDS] = {
+		stage->sampler_exchange.byte_offset,
+		stage->sampler_peers.byte_offset,
+		stage->sampler_settings.byte_offset,
+		stage->sampler_settings_peers.byte_offset,
+		stage->draft_area.byte_offset,
+		stage->draft_peers.byte_offset,
+		stage->draft_counters.byte_offset,
+		stage->exl3_tc_workspace.byte_offset,
+		stage->exl3_tcp_workspace.byte_offset,
+		stage->batch_results.byte_offset,
+		stage->trunk_mma_partials.byte_offset,
+		stage->router_partials.byte_offset,
+		planned->arena_byte_count - SAMPLER_LAYOUT_ENTRY_BYTES
+	};
+	for (uint32_t field = 0; field < SAMPLER_LAYOUT_FIELDS; field++) {
+		if (golden_offsets[field] !=
+		    sampler_layout_golden[configuration][card][field]) {
+			(void)fprintf(
+				stderr,
+				"default layout changed: configuration %u rank %u field %u: %" PRIu64
+				" != %" PRIu64 "\n",
+				configuration, card, field,
+				golden_offsets[field],
+				sampler_layout_golden[configuration][card]
+						     [field]);
+			failures++;
+		}
+	}
+
+	if (stage->sampler_entry.byte_offset !=
+		    sampler_layout_golden[configuration][card]
+					 [SAMPLER_LAYOUT_FIELDS - 1u] ||
+	    stage->sampler_entry.byte_count != SAMPLER_LAYOUT_ENTRY_BYTES) {
+		(void)fprintf(
+			stderr,
+			"optional entry must be after the complete default arena\n");
+		failures++;
+	}
 	uint64_t held[V41_DATA_ARRAY_COUNT + 1u];
 	uint32_t order[V41_DATA_ARRAY_COUNT], count = 0;
 	for (uint32_t array = 0; array < V41_DATA_ARRAY_COUNT; array++)
@@ -82,9 +127,12 @@ static void card_report(uint32_t configuration,
 			order[count++] = array;
 	uint64_t state_first = UINT64_MAX;
 	for (uint32_t layer = 0; layer < V41_DATA_WALK_LAYERS; layer++) {
-		const uint64_t offsets[] = { planned->selection_offset[layer], planned->ring_offset[layer],
-					     planned->checkpoint_offset[layer], planned->compressor_offset[layer],
-					     planned->pool_offset[layer], planned->key_tiles_offset[layer] };
+		const uint64_t offsets[] = { planned->selection_offset[layer],
+					     planned->ring_offset[layer],
+					     planned->checkpoint_offset[layer],
+					     planned->compressor_offset[layer],
+					     planned->pool_offset[layer],
+					     planned->key_tiles_offset[layer] };
 		for (uint32_t kind = 0; kind < sizeof(offsets) / sizeof(offsets[0]); kind++)
 			state_first = offsets[kind] != PROGRAM_NOWHERE &&
 						      offsets[kind] <
@@ -230,7 +278,7 @@ int main(void)
 			memcpy(sorted, parts[configuration][card], sizeof(sorted));
 			qsort(sorted, part_counts[configuration][card], sizeof(sorted[0]), by_bytes);
 			for (uint32_t index = 0; index < part_counts[configuration][card]; index++) {
-				if (sorted[index].bytes < (1u << 20u))
+				if (sorted[index].bytes < REPORT_LEAST_PART_BYTES)
 					continue;
 				uint64_t thin_1024 = 0; /* the same part in THIN 1,024 */
 				for (uint32_t other = 0; other < part_counts[0][card]; other++)

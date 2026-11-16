@@ -24,6 +24,9 @@
 #define DUMP_THIN_ROWS 6u
 #define DUMP_BATCH_ROWS 12u
 #define DUMP_WAIT_NS 1000000000ull
+#define DUMP_Z 2 /* a grid's or a block's third dimension */
+#define DUMP_BYTES_A_GROUP 8u
+#define DUMP_KINDS 2u /* THIN and BATCH */
 
 static void dump(const struct execution_program *program, const char *name)
 {
@@ -40,10 +43,10 @@ static void dump(const struct execution_program *program, const char *name)
 		struct test_host_memory_backend_kernel kernel;
 		const bool named = test_host_memory_backend_kernel_of(card, launch->kernel, &kernel);
 		printf("%4" PRIu32 " %-44s grid %u,%u,%u block %u,%u,%u shared %u args", index - first,
-		       named ? kernel.function_name : "?", launch->grid[0], launch->grid[1], launch->grid[2],
-		       launch->block[0], launch->block[1], launch->block[2], launch->dynamic_shared_byte_count);
+		       named ? kernel.function_name : "?", launch->grid[0], launch->grid[1], launch->grid[DUMP_Z],
+		       launch->block[0], launch->block[1], launch->block[DUMP_Z], launch->dynamic_shared_byte_count);
 		for (uint32_t byte = 0; byte < launch->argument_byte_count; byte++)
-			printf("%s%02x", byte % 8u == 0 ? " " : "", launch->argument[byte]);
+			printf("%s%02x", byte % DUMP_BYTES_A_GROUP == 0 ? " " : "", launch->argument[byte]);
 		printf("\n");
 	}
 }
@@ -99,7 +102,7 @@ int main(void)
 	const enum program_kind kinds[] = { PROGRAM_THIN, PROGRAM_BATCH };
 	const uint32_t rows[] = { DUMP_THIN_ROWS, DUMP_BATCH_ROWS };
 	const char *const names[] = { "THIN", "BATCH" };
-	for (uint32_t kind = 0; kind < 2u; kind++) {
+	for (uint32_t kind = 0; kind < DUMP_KINDS; kind++) {
 		struct execution_program *program = NULL;
 		struct step_companion_program companions = { 0 };
 		const result_status prepared = v41_tp_program_prepare(

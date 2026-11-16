@@ -21,6 +21,9 @@
 #include "anemone/image.h"
 #include "anemone/hooks.h"
 #include "step_driver.h"
+#include "engram_step.h"
+#include "checked_size.h"
+#include "anemone/sampler_records.h"
 #include "step_runs.h"
 #include "step_validation.h"
 
@@ -288,6 +291,8 @@ next_engram_row_ids(const struct step_driver *driver,
 	const struct step_row_record *const current = rows + row_index;
 	const struct engram_description *const tables =
 		engram_description_of(driver->engram);
+	if (tables == NULL)
+		return STATUS_INVALID_ARGUMENT;
 	const uint64_t context =
 		driver->programs[0]->limits.context_token_limit;
 	const uint32_t position = (uint32_t)current->position;
@@ -349,13 +354,51 @@ result_status step_engram_share(struct step_driver *driver)
 	return OK;
 }
 
+/* Step I/O: where a table's rows go, the staging of the first card that reads it (its card in card_out). */
+static unsigned char *table_destination(const struct step_driver *driver,
+					unsigned char *block, uint32_t table,
+					uint32_t *card_out)
+{
+	const struct execution_program *const first = driver->programs[0];
+	const uint64_t table_bytes =
+		(uint64_t)driver->rows_per_token * ENGRAM_ROW_BYTES;
+	for (uint32_t card = 0; card < first->card_count; card++) {
+		const uint32_t tables = first->cards[card].engram_tables;
+		if ((tables >> table & 1u) == 0)
+			continue;
+		const uint32_t before = (uint32_t)__builtin_popcount(
+			tables & ((1u << table) - 1u));
+		*card_out = card;
+		return block + driver->engram_staging[card] +
+		       (uint64_t)before * driver->largest_row_count *
+			       table_bytes;
+	}
+	return NULL;
+}
+
+result_status step_engram_issue(const struct step_driver *driver,
+				struct engram_step *engram_step,
+				unsigned char *block, const uint64_t *row_ids,
+				uint32_t row_count)
+{
+	if (engram_step == NULL || driver->engram == NULL)
+		return OK;
+	unsigned char *destinations[ENGRAM_MAXIMUM_TABLES] = { NULL };
+	for (uint32_t table = 0; table < driver->table_count; table++) {
+		uint32_t card = 0;
+		destinations[table] =
+			table_destination(driver, block, table, &card);
+	}
+	return engram_step_issue(engram_step, row_ids, row_count, destinations);
+}
+
 /* A card's n-gram rows of every table it reads asked for first (their cache and TLB misses overlap); with gathers,
- * table by table gathered into its staging in block, each table's then going up when goes_up. */
-MUST_CHECK static result_status card_tables(struct step_driver *driver,
-					    unsigned char *block,
-					    const uint64_t *row_ids,
-					    uint32_t row_count, uint32_t card,
-					    bool gathers, bool goes_up)
+ * table by table gathered into its staging in block (with step I/O: waited for, and copied from the staging of the
+ * first card that reads the table when that is another card), each table's then going up when goes_up. */
+MUST_CHECK static result_status
+card_tables(struct step_driver *driver, struct engram_step *engram_step,
+	    unsigned char *block, const uint64_t *row_ids, uint32_t row_count,
+	    uint32_t card, bool gathers, bool goes_up)
 {
 	const struct program_card_record *const area =
 		&driver->programs[0]->cards[card];
@@ -377,7 +420,8 @@ MUST_CHECK static result_status card_tables(struct step_driver *driver,
 	uint64_t staging = driver->engram_staging[source_card],
 		 arena = area->engram_rows_offset;
 	result_status status = OK;
-	for (uint32_t table = 0; gathers && table < driver->table_count;
+	for (uint32_t table = 0;
+	     gathers && engram_step == NULL && table < driver->table_count;
 	     table++) {
 		for (uint32_t row = 0;
 		     ((area->engram_tables >> table) & 1u) != 0 &&
@@ -392,7 +436,18 @@ MUST_CHECK static result_status card_tables(struct step_driver *driver,
 	}
 	for (uint32_t table = 0; table < driver->table_count; table++) {
 		const bool is_read = ((area->engram_tables >> table) & 1u) != 0;
-		for (uint32_t row = 0; is_read && gathers && row < row_count;
+		if (is_read && gathers && engram_step != NULL) {
+			status = THEN(engram_step_wait(engram_step, table));
+			uint32_t destination_card = card;
+			const unsigned char *const source = table_destination(
+				driver, block, table, &destination_card);
+			/* table_destination sets destination_card only with a source */
+			if (status == OK && destination_card != card)
+				memcpy(block + staging, source,
+				       (size_t)(row_count * table_bytes));
+		}
+		for (uint32_t row = 0; is_read && gathers &&
+				       engram_step == NULL && row < row_count;
 		     row++) {
 			status = THEN(engram_gather_entry(
 				driver->engram, table,
@@ -416,17 +471,19 @@ MUST_CHECK static result_status card_tables(struct step_driver *driver,
 	return status;
 }
 
-result_status step_card_gather(struct step_driver *driver, unsigned char *block,
-			       const uint64_t *row_ids, uint32_t row_count,
-			       uint32_t card)
+result_status step_card_gather(struct step_driver *driver,
+			       struct engram_step *engram_step,
+			       unsigned char *block, const uint64_t *row_ids,
+			       uint32_t row_count, uint32_t card)
 {
-	return card_tables(driver, block, row_ids, row_count, card, true,
-			   false);
+	return card_tables(driver, engram_step, block, row_ids, row_count, card,
+			   true, false);
 }
 
-result_status step_card_begin(struct step_driver *driver, unsigned char *block,
-			      const uint64_t *row_ids, uint32_t row_count,
-			      uint32_t card, bool gathers)
+result_status step_card_begin(struct step_driver *driver,
+			      struct engram_step *engram_step,
+			      unsigned char *block, const uint64_t *row_ids,
+			      uint32_t row_count, uint32_t card, bool gathers)
 {
 	const struct program_card_record *const area =
 		&driver->programs[0]->cards[card];
@@ -438,8 +495,8 @@ result_status step_card_begin(struct step_driver *driver, unsigned char *block,
 						(uint64_t)row_count *
 							STEP_ROW_BYTES_VALUE,
 					false);
-	return THEN(card_tables(driver, block, row_ids, row_count, card,
-				gathers, true));
+	return THEN(card_tables(driver, engram_step, block, row_ids, row_count,
+				card, gathers, true));
 }
 
 void step_block_write(unsigned char *block, uint64_t sequence,
@@ -533,6 +590,9 @@ step_begin(struct step_driver *driver, const struct execution_program *program,
 			 rows, row_count);
 	result_status status =
 		step_row_ids(driver, rows, row_count, driver->row_ids);
+	status = THEN(step_engram_issue(driver, driver->engram_step,
+					driver->staging, driver->row_ids,
+					row_count));
 	if (driver->sessions_changed) {
 		status = THEN(step_copy_begin(
 			driver, first->result_card,
@@ -545,9 +605,9 @@ step_begin(struct step_driver *driver, const struct execution_program *program,
 			false; /* a failed step fails the driver: nothing is sent again */
 	}
 	for (uint32_t card = 0; card < first->card_count; card++) {
-		status = THEN(step_card_begin(driver, driver->staging,
-					      driver->row_ids, row_count, card,
-					      true));
+		status = THEN(step_card_begin(driver, driver->engram_step,
+					      driver->staging, driver->row_ids,
+					      row_count, card, true));
 		status = THEN(step_views_begin(driver, program, driver->staging,
 					       card));
 	}
@@ -737,10 +797,12 @@ result_status step_result_take(struct step_driver *driver,
 	return answers ? OK : STATUS_DEVICE_ERROR;
 }
 
+/* The driver's own memory; its engram step record was destroyed first (it writes into the staging). */
 static void driver_free(struct step_driver *driver)
 {
 	free((void *)driver->programs);
 	free((void *)driver->image_programs);
+	free((void *)driver->flight_programs);
 	free(driver->histories);
 	free(driver->run_graphs);
 	free(driver->companion_segments);
@@ -914,6 +976,9 @@ step_driver_create(const struct backend_operations *backend,
 	     index++) { /* the slots of a card: in its first */
 		const struct expert_pause *const pause =
 			&first->expert_pauses[index];
+		if (slot_count > UINT32_MAX) {
+			return STATUS_INVALID_ARGUMENT;
+		}
 		first_slot[pause->card] =
 			(cards_with_slots >> pause->card & 1u) != 0 ?
 				first_slot[pause->card] :
@@ -923,6 +988,22 @@ step_driver_create(const struct backend_operations *backend,
 				      pause->slot_count;
 		cards_with_slots |= 1u << pause->card;
 	}
+	const size_t history_words =
+		size_add(histories, size_multiply(limits->session_capacity,
+						  SESSION_COUNTERS));
+	const size_t row_id_words = size_multiply(largest, token_rows);
+	size_t hand_off_words = size_add(first->hand_off_count, pause_words);
+	hand_off_words = size_add(hand_off_words, row_id_words);
+	hand_off_words = size_add(hand_off_words,
+				  size_multiply(slot_count, STEP_SLOT_FIELDS));
+	hand_off_words = size_add(hand_off_words,
+				  size_add(limits->session_capacity, 1u));
+	if (slot_count > UINT32_MAX ||
+	    history_words > SIZE_MAX / sizeof(uint32_t) ||
+	    hand_off_words > SIZE_MAX / sizeof(uint64_t)) {
+		return STATUS_INVALID_ARGUMENT;
+	}
+
 	struct step_driver *const driver = FAULT_POINT(step_driver_memory) ?
 						   NULL :
 						   calloc(1, sizeof(*driver));
@@ -934,23 +1015,13 @@ step_driver_create(const struct backend_operations *backend,
 		.engram = engram,
 		.programs = (const struct execution_program **)calloc(
 			program_count, sizeof(*driver->programs)),
-		.histories =
-			FAULT_POINT(step_driver_memory) ?
-				NULL /* the fault point's second reach */
-				:
-				calloc(histories +
-					       (uint64_t)limits->session_capacity *
-						       SESSION_COUNTERS,
-				       sizeof(uint32_t)),
-		.hand_off_staging =
-			slot_count > UINT32_MAX ?
-				NULL :
-				calloc(first->hand_off_count + pause_words +
-					       largest * token_rows +
-					       slot_count * STEP_SLOT_FIELDS +
-					       limits->session_capacity + 1u,
-				       sizeof(uint64_t)),
-		.deferred = calloc(first->hand_off_count + 1u, sizeof(uint8_t)),
+		.histories = FAULT_POINT(step_driver_memory) ?
+				     NULL /* the fault point's second reach */
+				     :
+				     calloc(history_words, sizeof(uint32_t)),
+		.hand_off_staging = calloc(hand_off_words, sizeof(uint64_t)),
+		.deferred = calloc((size_t)first->hand_off_count + 1u,
+				   sizeof(uint8_t)),
 		.wait_limit_nanoseconds = wait_limit_nanoseconds,
 		.program_count = program_count,
 		.largest_row_count = largest,
@@ -995,15 +1066,18 @@ step_driver_create(const struct backend_operations *backend,
 				result_card->result_offset :
 			0;
 	driver->view_staging =
-		driver->result_staging +
-		(round_span > result_bytes ? round_span : result_bytes);
-	uint64_t end = driver->view_staging + view_bytes;
+		size_add(driver->result_staging,
+			 round_span > result_bytes ? round_span : result_bytes);
+	uint64_t end = size_add(driver->view_staging, view_bytes);
 	for (uint32_t card = 0; card < first->card_count; card++) {
 		driver->cards[card] = cards[card];
 		driver->engram_staging[card] = end;
-		end += (uint64_t)__builtin_popcount(
-			       first->cards[card].engram_tables) *
-		       largest * driver->rows_per_token * ENGRAM_ROW_BYTES;
+		const size_t engram_rows = size_multiply(
+			(size_t)__builtin_popcount(
+				first->cards[card].engram_tables),
+			size_multiply(largest, driver->rows_per_token));
+		end = size_add(end,
+			       size_multiply(engram_rows, ENGRAM_ROW_BYTES));
 	}
 	for (uint32_t index = 0;
 	     index < first->hand_off_count && driver->hand_off_staging != NULL;
@@ -1016,7 +1090,7 @@ step_driver_create(const struct backend_operations *backend,
 				       rows;
 		}
 		const uint64_t byte_count =
-			(uint64_t)rows * first->hand_offs[index].byte_count;
+			size_multiply(rows, first->hand_offs[index].byte_count);
 		driver->hand_off_staging[index] = end;
 		end = end > UINT64_MAX - byte_count ? UINT64_MAX :
 						      end + byte_count;
@@ -1024,10 +1098,10 @@ step_driver_create(const struct backend_operations *backend,
 	for (uint32_t index = 0; index < first->expert_pause_count &&
 				 driver->hand_off_staging != NULL;
 	     index++) {
-		const uint64_t byte_count =
-			(uint64_t)largest *
-			first->expert_pauses[index].jobs_per_row *
-			EXPERT_JOB_BYTES;
+		const uint64_t byte_count = size_multiply(
+			largest,
+			size_multiply(first->expert_pauses[index].jobs_per_row,
+				      EXPERT_JOB_BYTES));
 		driver->pause_staging[index] = end;
 		end = end > UINT64_MAX - byte_count ? UINT64_MAX :
 						      end + byte_count;
@@ -1050,14 +1124,22 @@ step_driver_create(const struct backend_operations *backend,
 				 STEP_SESSION_STAGING_BYTES,
 				 (void **)&driver->session_block) :
 			 status;
+	/* step I/O: the driver's own record, for steps without a pipeline */
+	status = status == OK && engram_steps_of(engram) != NULL ?
+			 engram_step_create(engram_steps_of(engram),
+					    &driver->engram_step) :
+			 status;
+	/* no step record exists on this path: engram_step_create is the last step */
 	if (status != OK) {
+		if (driver->session_block != NULL)
+			backend->staging_free(driver->session_block);
 		backend->staging_free(driver->staging);
 		driver_free(driver);
 		return status;
 	}
 	driver->staging_bytes = end;
 	for (uint64_t slot = 0; slot < limits->session_capacity; slot++) {
-		const struct step_session settings = { .seed = 0,
+		const struct step_session settings = { .seed = { 0 },
 						       .temperature = 0.0f,
 						       .top_p = 1.0f };
 		memcpy(driver->staging + driver->session_staging +
@@ -1092,17 +1174,27 @@ void step_driver_destroy(struct step_driver *driver)
 		staging_is_read = card_wait(driver, card) != OK ||
 				  staging_is_read;
 	}
+	/* Step I/O's threads write rows into the staging: every record is drained before any staging is freed, and a
+	 * read that did not return keeps the staging allocated (a retire would reclaim it from a CPU writer too). */
+	const bool engram_drained = engram_step_destroy(driver->engram_step);
+	driver->engram_step = NULL;
 	step_pipeline_free(driver, staging_is_read);
 	step_images_free(driver, staging_is_read);
-	if (staging_is_read && driver->backend->staging_retire != NULL) {
+	if (!engram_drained) {
+		LOG_ERROR(
+			"step driver: its staging memory stays allocated: an n-gram read may still write into it");
+	} else if (staging_is_read && driver->backend->staging_retire != NULL) {
 		driver->backend->staging_retire(driver->staging);
+	} else if (!staging_is_read) {
+		driver->backend->staging_free(driver->staging);
+	}
+	if (staging_is_read && driver->backend->staging_retire != NULL) {
 		driver->backend->staging_retire(driver->expert_copies);
 		driver->backend->staging_retire(driver->session_block);
 	} else if (staging_is_read) {
 		LOG_ERROR(
 			"step driver: its staging memory stays allocated: work may still be in flight");
 	} else {
-		driver->backend->staging_free(driver->staging);
 		driver->backend->staging_free(driver->expert_copies);
 		driver->backend->staging_free(driver->session_block);
 	}
@@ -1118,6 +1210,7 @@ result_status step_session_set(struct step_driver *driver,
 	}
 	if (driver == NULL || settings == NULL ||
 	    session_slot >= driver->programs[0]->limits.session_capacity ||
+	    settings->top_k > SAMPLER_MOST_VOCABULARY ||
 	    !isfinite(settings->temperature) || settings->temperature < 0.0f ||
 	    !(settings->top_p > 0.0f && settings->top_p <= 1.0f)) {
 		LOG_ERROR(
@@ -1343,8 +1436,9 @@ result_status step_run_entry(struct step_driver *driver,
 	}
 	result_status status =
 		step_rows_check(driver, rows, row_count, results_out != NULL);
-	if (status != OK) {
-		return status;
+	if (status != OK || results_out == NULL) {
+		/* step_rows_check refuses no results; restated for the analyzer */
+		return status != OK ? status : STATUS_INVALID_ARGUMENT;
 	}
 	TIMER_BEGIN(step_run);
 	const uint32_t *run_graphs = NULL;

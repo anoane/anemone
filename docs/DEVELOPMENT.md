@@ -48,9 +48,16 @@ See [the tools index](../tools/README.md) for source and optional dependencies.
 
 Additional checks are available through `make python_tests`, `make release_audit`,
 `make lint`, `make analysis` and `make self_test`. Some require NumPy, PyTorch,
-clang-tidy or cppcheck. `make check` aggregates these broader checks. Existing
-layout/literal findings mean it is not represented as a fully passing command;
-release builds and native test results have their own measured scope.
+clang-tidy or cppcheck. `make check` aggregates these broader checks and must
+pass clean: the lints and both analysers report nothing, with no suppression and
+no list of accepted findings ([CONTRIBUTING.md](../CONTRIBUTING.md)). Release
+builds and native test results have their own measured scope.
+
+`make -j3 analysis` runs its three hook combinations side by side. In each,
+cppcheck runs `CPPCHECK_JOBS` processes (by default a third of the processors,
+plus one) with its own work folder under `build/`, so that its checks across
+files still run, and clang-tidy runs `CLANG_TIDY_JOBS` processes (as many by
+default), a file each.
 
 Keep generated binaries, object files, models, credentials and local environments
 out of Git. Preserve numerical contracts and qualify changes against the relevant

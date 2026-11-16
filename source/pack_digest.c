@@ -12,6 +12,9 @@
 #endif
 
 #define VECTOR_WORDS 8u                          /* the 64-bit lanes of an AVX-512 register */
+#define LANES_DESCENDING     \
+	7, 6, 5, 4, 3, 2, 1, \
+		0 /* _mm512_set_epi64's arguments, lane 7's first: lane l holds l */
 
 uint64_t pack_digest_of_piece(const void *bytes, uint64_t byte_count,
 			      uint64_t first_word_index)
@@ -23,7 +26,7 @@ uint64_t pack_digest_of_piece(const void *bytes, uint64_t byte_count,
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
     /* lane l holds the position term of word word_index + l: (first_word_index + word_index + l) times the position
      * multiplier, modulo 2^64; a step of eight words adds eight times the multiplier to every lane */
-    const __m512i lanes = _mm512_set_epi64(7, 6, 5, 4, 3, 2, 1, 0);
+    const __m512i lanes = _mm512_set_epi64(LANES_DESCENDING);
     const __m512i position_multiplier =
 	    _mm512_set1_epi64((long long)PACK_DIGEST_POSITION_MULTIPLIER);
     const __m512i position_step = _mm512_set1_epi64(

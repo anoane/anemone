@@ -40,7 +40,10 @@
 
 #define STEP_BLOCK_BYTES_VALUE 16u
 #define STEP_ROW_BYTES_VALUE 16u
-#define STEP_SESSION_BYTES 16u
+#define STEP_SESSION_BYTES 20u
+#define STEP_SESSION_SEED_WORDS 2u
+#define STEP_SESSION_SEED_BITS 32u
+#define STEP_SESSION_SEED_HIGH 1u
 #define STEP_RESULT_BYTES 16u
 #define STEP_ROW_RESULT_BYTES 8u
 #define STEP_ROW_LOGITS \
@@ -93,7 +96,8 @@
 #define STEP_DRAFT_RESULT_BYTES \
 	32u /* a one-row result area, its 16-byte alignment kept */
 #define STEP_BATCH_MAXIMUM_ROWS 64u
-#define STEP_BATCH_MAXIMUM_SESSIONS 8u
+#define STEP_BATCH_MAXIMUM_SESSIONS \
+	8u /* a BATCH step's sessions; its round tables and masks are indexed by session slot */
 #define STEP_BATCH_SLAB_ROWS 8u
 #define STEP_BATCH_SLAB_RESULT_BYTES \
 	(STEP_RESULT_BYTES + STEP_BATCH_SLAB_ROWS * STEP_ROW_RESULT_BYTES)
@@ -118,10 +122,36 @@ struct step_row_record {
 };
 
 struct step_session {
-	uint64_t seed;
+	uint32_t seed[STEP_SESSION_SEED_WORDS]; /* low and high words: no alignment padding in the 20-byte wire
+						   record */
 	float temperature;
 	float top_p;
+	uint32_t top_k; /* 0: no truncation; ties retain lowest token IDs */
 };
+
+#ifdef __CUDACC__
+#define STEP_INLINE static __host__ __device__ __forceinline__
+#else
+#define STEP_INLINE static inline
+#endif
+STEP_INLINE uint64_t step_session_seed(const struct step_session *settings)
+{
+	return (uint64_t)settings->seed[0] |
+	       (uint64_t)settings->seed[STEP_SESSION_SEED_HIGH]
+		       << STEP_SESSION_SEED_BITS;
+}
+STEP_INLINE struct step_session
+step_session_make(uint64_t seed, float temperature, float top_p, uint32_t top_k)
+{
+	const struct step_session settings = {
+		{ (uint32_t)seed, (uint32_t)(seed >> STEP_SESSION_SEED_BITS) },
+		temperature,
+		top_p,
+		top_k
+	};
+	return settings;
+}
+#undef STEP_INLINE
 
 struct step_result {
 	uint64_t sequence;

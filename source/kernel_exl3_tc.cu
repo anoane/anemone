@@ -18,6 +18,7 @@
  * products_t{20,40}_k{3,2}_m for gate/up, products_t20n16 / t40n32 for down: a narrow job's own K steps a slice, the
  * same slice count; activate_s{16,8}_m640), bitwise the base forms' per route.
  */
+#include "anemone/exl3_records.h"
 #include "anemone/exl3_tc_records.h"
 #include "anemone/linear_records.h"
 #include "kernel_exl3_tc.cuh"
@@ -25,6 +26,20 @@
 
 #define JOB_ROWS EXL3_TC_JOB_ROWS
 #define PAIRS_PER_ROW EXL3_TC_PAIRS_PER_ROW
+#define TC_BITS_X2_A_BYTE 16u /* a byte's 8 bits, twice (bits_x2) */
+#define TC_SCAN_GROWTH 2 /* the warp scan's distances 1, 2, 4, ... */
+/* the long operand forms: columns of one 2^e, K slices of one scale group, gate/up slices of a row */
+#define TC_LONG_SCALE_K 1280
+#define TC_LONG_SPLIT 2
+#define TC_LONG_GATE_UP_SLICES 8
+#define TC_DOWN_PROJECTION 2 /* projections: 0 gate, 1 up, 2 down */
+#define TC_SHARED_ALIGNMENT 16
+#define TC_GROUP_HALVES 2 /* a paired item's column group, half by half */
+#define TC_PRODUCT_BLOCKS_PER_MULTIPROCESSOR 2
+#define TC_WIDE_INTERMEDIATE 640 /* a rank's intermediate slice (the 640/640/512/512 split) */
+#define TC_NARROW_INTERMEDIATE 512
+/* the products forms' K steps a slice (the t<N> of their names) */
+enum tc_k_steps { SIXTEEN_K_STEPS = 16, TWENTY_K_STEPS = 20, THIRTY_TWO_K_STEPS = 32, FORTY_K_STEPS = 40 };
 static_assert(JOB_ROWS == LINEAR_MAXIMUM_ROWS && JOB_ROWS == TC_MOE_TILE_ROWS,
 	      "a job is a route tile");
 static_assert(EXL3_TC_HIDDEN == TC_MOE_HIDDEN &&
@@ -79,7 +94,7 @@ tc_workspace_of(const struct exl3_tc_record &record, unsigned char *arena)
 /* An EXL3 matrix at `offset`: its trellis, then FP16 suh[input], svh[output]. */
 __device__ __forceinline__ uint64_t tc_trellis_bytes(uint64_t input, uint64_t output, uint32_t bits_x2)
 {
-	return input * output * bits_x2 / 16u;
+	return input * output * bits_x2 / TC_BITS_X2_A_BYTE;
 }
 __device__ __forceinline__ uint64_t tc_suh_offset(uint64_t matrix, uint64_t input, uint64_t output, uint32_t bits_x2)
 {
@@ -106,7 +121,7 @@ tc_routed_entry(const struct expert_job_record *jobs, uint32_t job_capacity,
 			const uint32_t job = first + lane;
 			const int64_t rows = job < job_capacity ? (int64_t)jobs[job].row_count : 0;
 			int64_t through = rows; /* inclusive scan of the warp's row counts */
-			for (int distance = 1; distance < TC_MOE_WARP; distance *= 2) {
+			for (int distance = 1; distance < TC_MOE_WARP; distance *= TC_SCAN_GROWTH) {
 				const int64_t other = __shfl_up_sync(TC_MOE_FULL_MASK, through, distance);
 				through += lane >= (uint32_t)distance ? other : 0;
 			}
@@ -182,9 +197,9 @@ __device__ __forceinline__ void tc_operands(const struct exl3_tc_record &record,
 			*w.count = first_empty;
 		return;
 	}
-	for (int64_t work = blockIdx.x - 1; work < w.pairs * 2; work += gridDim.x - 1) {
+	for (int64_t work = blockIdx.x - 1; work < w.pairs * TC_MOE_OPERAND_PROJECTIONS; work += gridDim.x - 1) {
 		uint32_t job_index, row;
-		if (!tc_routed_entry(jobs, record.job_capacity, work / 2, &job_index, &row))
+		if (!tc_routed_entry(jobs, record.job_capacity, work / TC_MOE_OPERAND_PROJECTIONS, &job_index, &row))
 			break; /* uniform a block: past the routed pairs */
 		const struct expert_job_record &job = jobs[job_index];
 		const int projection = (int)(work & 1);
@@ -205,10 +220,10 @@ __device__ __forceinline__ void tc_operands(const struct exl3_tc_record &record,
 	{                                                                  \
 		tc_operands<scale_k, split, mixed>(record, arena);         \
 	}
-TC_OPERANDS(5120, 16, false, exl3_tc_operands_short)
-TC_OPERANDS(1280, 2, false, exl3_tc_operands_long)
-TC_OPERANDS(5120, 16, true, exl3_tc_operands_short_m)
-TC_OPERANDS(1280, 2, true, exl3_tc_operands_long_m)
+TC_OPERANDS(TC_MOE_HIDDEN, EXL3_TC_GATE_UP_SLICES, false, exl3_tc_operands_short)
+TC_OPERANDS(TC_LONG_SCALE_K, TC_LONG_SPLIT, false, exl3_tc_operands_long)
+TC_OPERANDS(TC_MOE_HIDDEN, EXL3_TC_GATE_UP_SLICES, true, exl3_tc_operands_short_m)
+TC_OPERANDS(TC_LONG_SCALE_K, TC_LONG_SPLIT, true, exl3_tc_operands_long_m)
 #undef TC_OPERANDS
 
 /* ---- products: warp items (job, projection, K slice, column group), column groups fastest ----
@@ -225,9 +240,11 @@ __device__ __forceinline__ void tc_products(const struct exl3_tc_record &record,
 	constexpr int narrow_tiles =
 		wide_tiles - (int)EXL3_TC_NARROWER / TC_MOE_TILE;
 	static_assert(!mixed || k_steps == narrow_k_steps ||
-			      (wide_tiles / k_steps == narrow_tiles / narrow_k_steps && narrow_tiles % narrow_k_steps == 0),
+			      (wide_tiles / k_steps ==
+				       narrow_tiles / narrow_k_steps &&
+			       narrow_tiles % narrow_k_steps == 0),
 		      "a narrow down job keeps the slice count");
-	extern __shared__ __align__(16) unsigned char products_rings[];
+	extern __shared__ __align__(TC_SHARED_ALIGNMENT) unsigned char products_rings[];
 	constexpr int column_tiles = TC_MOE_COLUMN_TILES;
 	const struct tc_workspace w = tc_workspace_of(record, arena);
 	const struct expert_job_record *jobs =
@@ -236,25 +253,27 @@ __device__ __forceinline__ void tc_products(const struct exl3_tc_record &record,
 	struct tc_moe_products p;
 	p.k_tiles = (int)((down ? record.intermediate : TC_MOE_HIDDEN) / TC_MOE_TILE);
 	p.n_tiles = (int)((down ? TC_MOE_HIDDEN : record.intermediate) / TC_MOE_TILE);
-	p.projections = down ? 1 : 2;
-	p.first_projection = down ? 2 : 0;
+	p.projections = down ? 1 : TC_MOE_OPERAND_PROJECTIONS;
+	p.first_projection = down ? TC_DOWN_PROJECTION : 0;
 	p.output = down ? w.down : w.gate;
 	p.second_output = down ? NULL : w.up;
 	p.slice_stride = w.pairs * (down ? TC_MOE_HIDDEN : (int64_t)record.intermediate);
 	p.halves = down ? w.down_halves : w.gate_up_halves;
 	p.unscale = down ? w.down_unscale : w.gate_up_unscale;
-	const int lane = threadIdx.x & 31;
+	const int lane = threadIdx.x & TC_MOE_LANE_MASK;
 	const tc_moe_window<bits_x2> window(lane);
-	unsigned char *ring = products_rings + (threadIdx.x >> 5) * tc_moe_ring_stages(column_tiles, bits_x2) *
+	unsigned char *ring = products_rings + (threadIdx.x >> TC_MOE_WARP_SHIFT) *
+						       tc_moe_ring_stages(column_tiles, bits_x2) *
 						       tc_moe_step_bytes(column_tiles, bits_x2);
 	float *const stash = (float *)(products_rings + tc_moe_ring_bytes(column_tiles, bits_x2) +
-				       (threadIdx.x >> 5) * tc_moe_stash_bytes<column_tiles>());
+				       (threadIdx.x >> TC_MOE_WARP_SHIFT) * tc_moe_stash_bytes<column_tiles>());
 	const int slices = p.k_tiles / k_steps / item_slices, column_groups = p.n_tiles / column_tiles;
 	const int64_t per_job = (int64_t)p.projections * slices * column_groups;
 	const int64_t items = (int64_t)(*w.count) * per_job;
 	const int64_t warps = (int64_t)gridDim.x * (TC_MOE_LANE_THREADS / TC_MOE_WARP);
 	constexpr int load = tc_moe_uses_ring(column_tiles, bits_x2) ? TC_MOE_LOAD_RING : TC_MOE_LOAD_WORDS;
-	for (int64_t item = (int64_t)blockIdx.x * (TC_MOE_LANE_THREADS / TC_MOE_WARP) + (threadIdx.x >> 5);
+	for (int64_t item = (int64_t)blockIdx.x * (TC_MOE_LANE_THREADS / TC_MOE_WARP) +
+			    (threadIdx.x >> TC_MOE_WARP_SHIFT);
 	     item < items; item += warps) {
 		const struct expert_job_record &job = jobs[item / per_job];
 		int rest = (int)(item % per_job);
@@ -262,7 +281,9 @@ __device__ __forceinline__ void tc_products(const struct exl3_tc_record &record,
 		rest /= column_groups;
 		const int slice = rest % slices * item_slices, projection_index = rest / slices;
 		const int projection = p.first_projection + projection_index;
-		const uint64_t matrix = projection == 0 ? job.gate_offset : projection == 1 ? job.up_offset : job.down_offset;
+		const uint64_t matrix = projection == 0 ? job.gate_offset :
+					projection == 1 ? job.up_offset :
+							  job.down_offset;
 		const uint16_t *trellis = (const uint16_t *)(arena + matrix);
 		const int rows = (int)job.row_count;
 		const int row_of = lane < rows ? (int)job.pair_index[lane] : 0;
@@ -278,74 +299,84 @@ __device__ __forceinline__ void tc_products(const struct exl3_tc_record &record,
 		}
 		if (narrow) {
 			if constexpr (mixed) {
-				if (rows <= 4)
+				if (rows <= TC_MOE_GROUP_ROWS)
 					tc_moe_item<1, column_tiles, narrow_k_steps, bits_x2, load>(
 						p, projection_index, slice, row_of, rows, trellis, tiles_n,
 						column_group * column_tiles, lane, window, ring, output);
 				else
-					tc_moe_item<2, column_tiles, narrow_k_steps, bits_x2, load>(
+					tc_moe_item<TC_MOE_ROUTE_GROUPS, column_tiles, narrow_k_steps, bits_x2, load>(
 						p, projection_index, slice, row_of, rows, trellis, tiles_n,
 						column_group * column_tiles, lane, window, ring, output);
 			}
-		} else if (rows <= 4)
+		} else if (rows <= TC_MOE_GROUP_ROWS)
 			tc_moe_item<1, column_tiles, k_steps, bits_x2, load, item_slices>(
 				p, projection_index, slice, row_of, rows, trellis, tiles_n, column_group * column_tiles,
 				lane, window, ring, output, stash);
-		else if constexpr (item_slices == 2) {
+		else if constexpr (item_slices == TC_MOE_PAIRED_SLICES) {
 			/* two n8 groups: the column group's halves in turn, each paired through the ring (whole tiles
 			 * or the register path of K2's 256-byte half steps would spill) */
-			constexpr int half_tiles = column_tiles / 2;
+			constexpr int half_tiles = column_tiles / TC_GROUP_HALVES;
 #pragma unroll 1
-			for (int half = 0; half < 2; half++)
-				tc_moe_item<2, half_tiles, k_steps, bits_x2, TC_MOE_LOAD_RING, 2>(
+			for (int half = 0; half < TC_GROUP_HALVES; half++)
+				tc_moe_item<TC_MOE_ROUTE_GROUPS, half_tiles, k_steps, bits_x2, TC_MOE_LOAD_RING,
+					    TC_MOE_PAIRED_SLICES>(
 					p, projection_index, slice, row_of, rows, trellis, tiles_n,
 					column_group * column_tiles + half * half_tiles, lane, window, ring, output,
 					stash);
 		} else
-			tc_moe_item<2, column_tiles, k_steps, bits_x2, load>(
+			tc_moe_item<TC_MOE_ROUTE_GROUPS, column_tiles, k_steps, bits_x2, load>(
 				p, projection_index, slice, row_of, rows, trellis, tiles_n, column_group * column_tiles,
 				lane, window, ring, output);
 	}
 }
 
 #define TC_PRODUCTS(k_steps, narrow_k_steps, bits_x2, mixed, name)           \
-	extern "C" __global__ void __launch_bounds__(TC_MOE_LANE_THREADS, 2) \
+	extern "C" __global__ void __launch_bounds__(                        \
+		TC_MOE_LANE_THREADS, TC_PRODUCT_BLOCKS_PER_MULTIPROCESSOR)   \
 		name(struct exl3_tc_record record, unsigned char *arena)     \
 	{                                                                    \
 		tc_products<k_steps, narrow_k_steps, bits_x2, mixed>(record, \
 								     arena); \
 	}
-TC_PRODUCTS(20, 20, 6, false, exl3_tc_products_t20_k3)
-TC_PRODUCTS(40, 40, 6, false, exl3_tc_products_t40_k3)
-TC_PRODUCTS(16, 16, 6, false, exl3_tc_products_t16_k3)
-TC_PRODUCTS(32, 32, 6, false, exl3_tc_products_t32_k3)
-TC_PRODUCTS(20, 20, 4, false, exl3_tc_products_t20_k2)
-TC_PRODUCTS(40, 40, 4, false, exl3_tc_products_t40_k2)
-TC_PRODUCTS(16, 16, 4, false, exl3_tc_products_t16_k2)
-TC_PRODUCTS(32, 32, 4, false, exl3_tc_products_t32_k2)
-/* --exl3_expert_rotation: gate/up (record.pass 0) at 640 with narrow jobs' column groups cut, down (pass 1) at 640
- * with narrow jobs' K steps */
-TC_PRODUCTS(20, 20, 6, true, exl3_tc_products_t20_k3_m)
-TC_PRODUCTS(40, 40, 6, true, exl3_tc_products_t40_k3_m)
-TC_PRODUCTS(20, 16, 6, true, exl3_tc_products_t20n16_k3)
-TC_PRODUCTS(40, 32, 6, true, exl3_tc_products_t40n32_k3)
-TC_PRODUCTS(20, 20, 4, true, exl3_tc_products_t20_k2_m)
-TC_PRODUCTS(40, 40, 4, true, exl3_tc_products_t40_k2_m)
-TC_PRODUCTS(20, 16, 4, true, exl3_tc_products_t20n16_k2)
-TC_PRODUCTS(40, 32, 4, true, exl3_tc_products_t40n32_k2)
+/* a width's forms: gate/up t20/t40, down t16/t32 (512) or t20/t40 (640); --exl3_expert_rotation: gate/up (record.pass
+ * 0) at 640 with narrow jobs' column groups cut, down (pass 1) at 640 with narrow jobs' K steps */
+#define TC_PRODUCTS_WIDTH(width, bits_x2)                                   \
+	TC_PRODUCTS(TWENTY_K_STEPS, TWENTY_K_STEPS, bits_x2, false,         \
+		    exl3_tc_products_t20_##width)                           \
+	TC_PRODUCTS(FORTY_K_STEPS, FORTY_K_STEPS, bits_x2, false,           \
+		    exl3_tc_products_t40_##width)                           \
+	TC_PRODUCTS(SIXTEEN_K_STEPS, SIXTEEN_K_STEPS, bits_x2, false,       \
+		    exl3_tc_products_t16_##width)                           \
+	TC_PRODUCTS(THIRTY_TWO_K_STEPS, THIRTY_TWO_K_STEPS, bits_x2, false, \
+		    exl3_tc_products_t32_##width)                           \
+	TC_PRODUCTS(TWENTY_K_STEPS, TWENTY_K_STEPS, bits_x2, true,          \
+		    exl3_tc_products_t20_##width##_m)                       \
+	TC_PRODUCTS(FORTY_K_STEPS, FORTY_K_STEPS, bits_x2, true,            \
+		    exl3_tc_products_t40_##width##_m)                       \
+	TC_PRODUCTS(TWENTY_K_STEPS, SIXTEEN_K_STEPS, bits_x2, true,         \
+		    exl3_tc_products_t20n16_##width)                        \
+	TC_PRODUCTS(FORTY_K_STEPS, THIRTY_TWO_K_STEPS, bits_x2, true,       \
+		    exl3_tc_products_t40n32_##width)
+TC_PRODUCTS_WIDTH(k2, EXL3_BITS_X2_K2)
+TC_PRODUCTS_WIDTH(k2_5, EXL3_BITS_X2_K2_5)
+TC_PRODUCTS_WIDTH(k3, EXL3_BITS_X2_K3)
+#undef TC_PRODUCTS_WIDTH
 #undef TC_PRODUCTS
 /* two slices an item (exl3_tc_prepare_paired): gate/up t20x2, down t20x2 (640) or t16x2 (512) */
-#define TC_PRODUCTS_PAIRED(k_steps, bits_x2, name)                           \
-	extern "C" __global__ void __launch_bounds__(TC_MOE_LANE_THREADS, 2) \
-		name(struct exl3_tc_record record, unsigned char *arena)     \
-	{                                                                    \
-		tc_products<k_steps, k_steps, bits_x2, false, 2>(record,     \
-								 arena);     \
+#define TC_PRODUCTS_PAIRED(k_steps, bits_x2, name)                         \
+	extern "C" __global__ void __launch_bounds__(                      \
+		TC_MOE_LANE_THREADS, TC_PRODUCT_BLOCKS_PER_MULTIPROCESSOR) \
+		name(struct exl3_tc_record record, unsigned char *arena)   \
+	{                                                                  \
+		tc_products<k_steps, k_steps, bits_x2, false,              \
+			    TC_MOE_PAIRED_SLICES>(record, arena);          \
 	}
-TC_PRODUCTS_PAIRED(20, 6, exl3_tc_products_t20x2_k3)
-TC_PRODUCTS_PAIRED(16, 6, exl3_tc_products_t16x2_k3)
-TC_PRODUCTS_PAIRED(20, 4, exl3_tc_products_t20x2_k2)
-TC_PRODUCTS_PAIRED(16, 4, exl3_tc_products_t16x2_k2)
+TC_PRODUCTS_PAIRED(TWENTY_K_STEPS, EXL3_BITS_X2_K2, exl3_tc_products_t20x2_k2)
+TC_PRODUCTS_PAIRED(SIXTEEN_K_STEPS, EXL3_BITS_X2_K2, exl3_tc_products_t16x2_k2)
+TC_PRODUCTS_PAIRED(TWENTY_K_STEPS, EXL3_BITS_X2_K2_5, exl3_tc_products_t20x2_k2_5)
+TC_PRODUCTS_PAIRED(SIXTEEN_K_STEPS, EXL3_BITS_X2_K2_5, exl3_tc_products_t16x2_k2_5)
+TC_PRODUCTS_PAIRED(TWENTY_K_STEPS, EXL3_BITS_X2_K3, exl3_tc_products_t20x2_k3)
+TC_PRODUCTS_PAIRED(SIXTEEN_K_STEPS, EXL3_BITS_X2_K3, exl3_tc_products_t16x2_k3)
 #undef TC_PRODUCTS_PAIRED
 
 /* ---- activation: a routed pair each, the jobs in table order ---- */
@@ -385,12 +416,12 @@ __device__ __forceinline__ void tc_activate(const struct exl3_tc_record &record,
 		tc_activate<slices, inner / TC_MOE_TRANSFORM, mixed>(record, \
 								     arena); \
 	}
-TC_ACTIVATE(16, 640, false, exl3_tc_activate_s16_i640)
-TC_ACTIVATE(8, 640, false, exl3_tc_activate_s8_i640)
-TC_ACTIVATE(16, 512, false, exl3_tc_activate_s16_i512)
-TC_ACTIVATE(8, 512, false, exl3_tc_activate_s8_i512)
-TC_ACTIVATE(16, 640, true, exl3_tc_activate_s16_m640)
-TC_ACTIVATE(8, 640, true, exl3_tc_activate_s8_m640)
+TC_ACTIVATE(EXL3_TC_GATE_UP_SLICES, TC_WIDE_INTERMEDIATE, false, exl3_tc_activate_s16_i640)
+TC_ACTIVATE(TC_LONG_GATE_UP_SLICES, TC_WIDE_INTERMEDIATE, false, exl3_tc_activate_s8_i640)
+TC_ACTIVATE(EXL3_TC_GATE_UP_SLICES, TC_NARROW_INTERMEDIATE, false, exl3_tc_activate_s16_i512)
+TC_ACTIVATE(TC_LONG_GATE_UP_SLICES, TC_NARROW_INTERMEDIATE, false, exl3_tc_activate_s8_i512)
+TC_ACTIVATE(EXL3_TC_GATE_UP_SLICES, TC_WIDE_INTERMEDIATE, true, exl3_tc_activate_s16_m640)
+TC_ACTIVATE(TC_LONG_GATE_UP_SLICES, TC_WIDE_INTERMEDIATE, true, exl3_tc_activate_s8_m640)
 #undef TC_ACTIVATE
 
 /* ---- combine: one (row, 128 outputs) a block, a warp a route (slot), the routes' FMAs in slot order ---- */
@@ -398,13 +429,13 @@ template <int slices>
 __device__ __forceinline__ void tc_combine(const struct exl3_tc_record &record,
 					   unsigned char *arena)
 {
-	extern __shared__ __align__(16) unsigned char combine_shared[];
+	extern __shared__ __align__(TC_SHARED_ALIGNMENT) unsigned char combine_shared[];
 	const struct tc_workspace w = tc_workspace_of(record, arena);
 	double *values = (double *)combine_shared; /* [routes][128] */
 	float *route_weight = (float *)(values + PAIRS_PER_ROW * TC_MOE_TRANSFORM);
 	int *route_live = (int *)(route_weight + PAIRS_PER_ROW);
 	float *output = (float *)(arena + record.output_offset);
-	const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+	const int lane = threadIdx.x & TC_MOE_LANE_MASK, warp = threadIdx.x >> TC_MOE_WARP_SHIFT;
 	const int64_t blocks = TC_MOE_HIDDEN / TC_MOE_TRANSFORM, tasks = (int64_t)record.row_count * blocks;
 	for (int64_t task = blockIdx.x; task < tasks; task += gridDim.x) {
 		const int64_t row = task / blocks, first_column = (task % blocks) * TC_MOE_TRANSFORM;
@@ -417,16 +448,22 @@ __device__ __forceinline__ void tc_combine(const struct exl3_tc_record &record,
 			}
 			if (entry.is_routed == 0u)
 				continue;
-			tc_moe_route_values<slices>(w.down, w.pairs * TC_MOE_HIDDEN, row * PAIRS_PER_ROW + route, first_column,
-						    (const __half *)(arena + entry.svh_offset), lane,
-						    values + route * TC_MOE_TRANSFORM);
+			tc_moe_route_values<slices>(
+				w.down, w.pairs * TC_MOE_HIDDEN,
+				row * PAIRS_PER_ROW + route, first_column,
+				(const __half *)(arena + entry.svh_offset),
+				lane, values + route * TC_MOE_TRANSFORM);
 		}
 		__syncthreads();
 		if (threadIdx.x < TC_MOE_TRANSFORM) {
 			double sum = 0.0;
 			for (int route = 0; route < (int)PAIRS_PER_ROW; route++)
 				if (route_live[route])
-					sum = __fma_rn(values[route * TC_MOE_TRANSFORM + threadIdx.x], (double)route_weight[route], sum);
+					sum = __fma_rn(
+						values[route * TC_MOE_TRANSFORM +
+						       threadIdx.x],
+						(double)route_weight[route],
+						sum);
 			const float value = __double2float_rn(sum);
 			const int64_t place = row * TC_MOE_HIDDEN + first_column + threadIdx.x;
 			if (record.shared_sum != 0u) { /* the shared expert's row plus the sum, rounded once */
@@ -444,7 +481,7 @@ __device__ __forceinline__ void tc_combine(const struct exl3_tc_record &record,
 extern "C" __global__ void __launch_bounds__(EXL3_TC_COMBINE_THREADS)
 	exl3_tc_combine_s2(struct exl3_tc_record record, unsigned char *arena)
 {
-	tc_combine<2>(record, arena);
+	tc_combine<EXL3_TC_DOWN_SLICES>(record, arena);
 }
 extern "C" __global__ void __launch_bounds__(EXL3_TC_COMBINE_THREADS)
 	exl3_tc_combine_s1(struct exl3_tc_record record, unsigned char *arena)

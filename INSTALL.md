@@ -1,11 +1,20 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Install and serve Anemone v0.0.2-alpha
+# Install and serve Anemone v0.0.3-alpha
+
+The owner recommends running `anemone autotune` once before serving, and again
+after hardware changes. Engine-native preparation copies replicas, tunes load
+and Engram I/O separately and saves a profile that later starts automatically
+reload. See [storage preparation](docs/user/STORAGE_PROFILE.md) for real token-ID inputs, bounded/resumable
+leases and required native qualification before activating a candidate. Startup
+never runs this work implicitly.
 
 Build first using [BUILD.md](BUILD.md). **Every shell command, service command
 and configuration example on this page is not run in the snapshot test.**
 That test compiles and runs host tests only; it does not load model weights,
 start a model-serving endpoint, install a service or run the HTTP examples below.
-Host tests do exercise synthetic HTTP fixtures inside an isolated network namespace.
+In the v0.0.2-alpha snapshot test, host tests exercised synthetic HTTP fixtures
+inside an isolated network namespace; the v0.0.3-alpha reference build runs the
+[BUILD.md](BUILD.md) commands directly on the host, where they use loopback.
 The listed serving recipes were checked through the real axis resolver/parser;
 that check does not start a model, allocate its memory or install a service.
 
@@ -16,9 +25,11 @@ depend on assigned layers. The serve-only prompt-chunk identity result is
 separate from the measured solo golden baseline and has no independent golden
 quality score. The [snapshot record](docs/VALIDATION.md) identifies current packaging
 and the versioned build/source identities; previous measurements retain their dates.
-The current `spdx_04` executable was built from engine/help source
-`1b0731a36b7482477b96d7a28b27c93e4dd49e3f`; [BUILD.md](BUILD.md) records its actual
-expected SHA256. The earlier parser and benchmark receipts retain their own epochs.
+The v0.0.3-alpha release executable is built from source
+`f57d81375a8830db16925e42740aae1fe0773e90`; [BUILD.md](BUILD.md) records its expected
+SHA256. The v0.0.2-alpha `spdx_04` executable (engine/help source
+`1b0731a36b7482477b96d7a28b27c93e4dd49e3f`) and the earlier parser and benchmark
+receipts retain their own epochs.
 
 ## Model data
 
@@ -66,7 +77,13 @@ allocations. Replica files are optional validated copies.
 
 ## Card placement
 
-Use `CUDA_DEVICE_ORDER=PCI_BUS_ID` and verify the engine's reported backend
+**`CUDA_DEVICE_ORDER=PCI_BUS_ID` is required** for every command that uses the cards. Without it, CUDA numbers the
+fastest card first, so the RTX PRO 6000 can become backend card 0. The PP5 card order (0,1,3,4,2, the PRO last) then
+names other cards, and the startup fit refuses with `session slots: max: not even one session of 1048576 tokens fits
+the cards`, which does not name the cause. This release does not order the cards by itself; a later release will, or
+will refuse with a clear message when the variable is missing.
+
+With the variable set, verify the engine's reported backend
 ordinals on the target machine. The measured machine has CMPs at 0,1,3,4 and
 the RTX PRO 6000 at 2. NVML indices or a visibility list need not match backend
 ordering on a different machine.
@@ -89,8 +106,13 @@ Use the canonical [server profile guide](docs/SERVER_PROFILES.md) for the comple
 runnable commands and explanations of every serve option. The commands are also
 provided as exact argument arrays in
 [SERVER_PROFILE_COMMANDS.json](docs/SERVER_PROFILE_COMMANDS.json), with health,
-model-listing and tiny deterministic HTTP smoke requests. They passed the real
-v0.0.2-alpha axis resolver/parser; that CPU check opens no models, GPUs or sockets.
+model-listing and tiny deterministic HTTP smoke requests. The release's CPU dry
+runs, which open no models, GPUs or sockets, run them through the real axis
+resolver/parser. All four arrays pass it and reach the front-end read: the two
+original-weight arrays (`original_exact`, `original_balanced`) and, with a
+prepared EXL3 map, the two EXL3 arrays (`exl3_balanced`, `exl3_guard`), which
+give `--pipeline_steps=1` (BATCH requires it) and the other knobs the TP4_EXL3
+base would otherwise fill, as in [the guide](docs/SERVER_PROFILES.md#exl3-balanced).
 GPU execution and qualification retain separate receipts in the matrix.
 
 | Release recipe | Guide and limits |

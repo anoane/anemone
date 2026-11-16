@@ -202,8 +202,11 @@ static void test_identity(struct http_server *server, struct connection *first,
 static void test_selection(struct http_server *server, struct connection *first,
 			   struct connection *second)
 {
-	uint32_t tokens[TEST_TOKEN_COUNT],
-		histories[TEST_SLOTS * TEST_CONTEXT] = { 0 }, kept = 0;
+	/* static: the server, the connection and the active command point at them until their reset to NULL */
+	static uint32_t tokens[TEST_TOKEN_COUNT],
+		histories[TEST_SLOTS * TEST_CONTEXT];
+	uint32_t kept = 0;
+	memset(histories, 0, sizeof(histories));
 	for (uint32_t index = 0; index < TEST_TOKEN_COUNT; index++) {
 		tokens[index] = index;
 	}
@@ -271,8 +274,11 @@ static void test_exact_selection(struct http_server *server,
 				 struct connection *first,
 				 struct connection *second)
 {
-	uint32_t tokens[EXACT_PROMPT_TOKENS],
-		histories[TEST_SLOTS * TEST_CONTEXT] = { 0 }, kept = 0;
+	/* static: the server and the connection point at them until their reset to NULL before return */
+	static uint32_t tokens[EXACT_PROMPT_TOKENS],
+		histories[TEST_SLOTS * TEST_CONTEXT];
+	uint32_t kept = 0;
+	memset(histories, 0, sizeof(histories));
 	for (uint32_t index = 0; index < EXACT_PROMPT_TOKENS; index++) {
 		tokens[index] = index;
 	}
@@ -284,7 +290,8 @@ static void test_exact_selection(struct http_server *server,
 	server->histories = histories;
 	server->session_grace_seconds = 0;
 	server->exact_prefix_reuse = SERVER_PREFIX_REPEAT;
-	memset(server->slot_histories, 0, sizeof(server->slot_histories));
+	memset(server->slot_histories, 0,
+	       TEST_SLOTS * sizeof(*server->slot_histories));
 	first->token_ids = tokens;
 	first->token_count = EXACT_PROMPT_TOKENS;
 	first->waiting_snapshot_slot = NO_WAITING_SNAPSHOT;
@@ -618,7 +625,10 @@ int main(void)
 	struct http_server *const server = calloc(1, sizeof(*server));
 	struct connection *const first = calloc(1, sizeof(*first)),
 				 *const second = calloc(1, sizeof(*second));
-	if (server == NULL || first == NULL || second == NULL) {
+	if (server != NULL)
+		server->description.session_slot_count = TEST_SLOTS;
+	if (server == NULL || first == NULL || second == NULL ||
+	    server_tables(server) != STATUS_OK) {
 		free(server);
 		free(first);
 		free(second);
@@ -629,6 +639,7 @@ int main(void)
 	test_exact_selection(server, first, second);
 	test_fork_owners(server, first, second);
 	test_fork_hints(server, first, second);
+	server_tables_free(server);
 	free(server);
 	free(first);
 	free(second);

@@ -87,6 +87,8 @@
 #define CARDS TEST_MODEL_V41_CARDS
 #define LAYERS MODEL_LAYERS
 #define LAYERS_PER_CARD TEST_MODEL_V41_LAYERS_PER_CARD
+#define CASE_THIN_ROWS 2u
+#define CASE_WIDE_ROWS 256u
 #define UNIT_COUNT TEST_MODEL_V41_UNIT_COUNT
 #define CONTEXT 16384u
 #define ROWS 8u
@@ -692,7 +694,8 @@ static void expect_record(const struct program_case *made, uint32_t card_index,
 					       ->layer_tensors[layer]
 							      [V41_DATA_SINK]
 					       .stored.byte_offset,
-		       "the core reads its ring, its source's pool, its group's selection, its sinks and its theta's use");
+		       "the core reads its ring, its source's pool, its group's selection, its sinks and its theta's "
+		       "use");
 	} else if (strcmp(name, KERNEL_ROUTER_SELECT) == 0) {
 		static struct router_select_arguments router;
 		memcpy(&router, launch->argument, sizeof(router));
@@ -1325,7 +1328,8 @@ static void expect_program(const struct program_case *made,
 					       next_launch[segment->card] &&
 				       (kind == LAYER_SEGMENT ||
 					segment->launch_count == outside_count),
-			       "the segments are each stage's step segment, the embedding, its layers and the head, in order");
+			       "the segments are each stage's step segment, the embedding, its layers and the head, "
+			       "in order");
 			if (kind == LAYER_SEGMENT && segment->layer == layer) {
 				expect_layer(made, segment, part);
 			} else if (segment->launch_count == outside_count) {
@@ -2253,7 +2257,8 @@ static uint32_t chunk_layer_map(const struct program_case *made, uint32_t card, 
 							chunk_rows *
 								MODEL_EXPERTS_PER_ROW;
 					expect(follows,
-					       "ordered experts read the router's tiles and sorted pairs at full chunk size");
+					       "ordered experts read the router's tiles and sorted pairs at full "
+					       "chunk size");
 					const char *const small_name =
 						taken->step == F_GATE_UP ?
 							KERNEL_EXPERT_ORDERED_WIDE_SMALL_GATE_UP :
@@ -2284,7 +2289,8 @@ static uint32_t chunk_layer_map(const struct program_case *made, uint32_t card, 
 						small->dynamic_shared_byte_count ==
 							EXPERT_RELAXED_WIDE_SMALL_SHARED_BYTES;
 					expect(follows,
-					       "each ordered expert product has its small companion with the same tile record");
+					       "each ordered expert product has its small companion with the same "
+					       "tile record");
 					mapped[count] = mapped[count - 1u];
 					count++;
 					at++;
@@ -3355,7 +3361,8 @@ expect_relaxed_program(const struct execution_program *reference,
 							   new_record.input_size &&
 						   old_record.row_count ==
 							   new_record.row_count,
-					   "relaxed decode reads the original quantizer's operands and writes the same rows");
+					   "relaxed decode reads the original quantizer's operands and writes the "
+					   "same rows");
 			    }
 		    } else {
 			    static struct trunk_linear_bfloat16_arguments
@@ -3462,8 +3469,8 @@ static void test_relaxed_programs(const struct model_operations *model,
 
 /* ---- interleaved layouts ---- */
 
-/* Layouts that visit cards twice a step (tmp/rnd/20261026: codex_parallel_v1/REPORT_P1_pp_placement.md's W11, I12
- * and R11, codex_build_v1/REPORT_B7_dspark_layout.md's recommended layout), and the production layout D, the
+/* Layouts that visit cards twice a step (the 26 Oct 2026 PP placement study's W11, I12
+ * and R11, and the DSpark layout study's recommended layout), and the production layout D, the
  * embedding on card 0: each layer's card, the head's, the pool and key copies of layer 20 behind its front, its leases
  * (of thin and full programs) and the layers of the visit each lease begins at and of the one it last reaches. */
 struct interleaved_layout {
@@ -3972,7 +3979,8 @@ test_draft_full_programs(const struct model_operations *model,
 				    expect(embedding_holds(&made),
 					   "draft-enabled full embedding covers the chunk");
 				    expect(chunk_layers_wrong(&made) == 0,
-					   "all target layers retain wide piece/span/slab launches and byte-range data flow");
+					   "all target layers retain wide piece/span/slab launches and byte-range "
+					   "data flow");
 			    }
 			    model->program_destroy(full);
 		    }
@@ -4136,7 +4144,8 @@ test_official_reference(const struct model_operations *model,
 							       head.output_size &&
 						       sampler.weights_offset !=
 							       sampler.logits_offset,
-					       "ordinary sampler reads exact head F32 logits directly and uses separate weights scratch");
+					       "ordinary sampler reads exact head F32 logits directly and uses "
+					       "separate weights scratch");
 					expect(index + 1u ==
 						       program->cards[card]
 								       .launch_count -
@@ -4176,7 +4185,8 @@ test_official_reference(const struct model_operations *model,
 						"ordinary sampler prepares on the exact F32 head range");
 					expect(memcmp(&expected, sampled,
 						      sizeof(expected)) == 0,
-					       "exact and ordinary sampler launches are byte-identical, including reduction geometry");
+					       "exact and ordinary sampler launches are byte-identical, including "
+					       "reduction geometry");
 				}
 			}
 			expect(strncmp(name, "r_", strlen("r_")) != 0,
@@ -4197,6 +4207,102 @@ test_official_reference(const struct model_operations *model,
 	       "Engram and head use source shapes");
 	model->program_destroy(program);
 	model->plan_destroy(plan);
+}
+
+/* A candidate reader's fixed 16K score extent must fit beside its candidates even when the
+ * model context is shorter. Exercise real kernel-record validation, including complete chunk programs. */
+static void
+test_short_context_programs(const struct model_operations *model,
+			    const struct pack_record *pack,
+			    struct device_card **cards,
+			    struct card_description_record *descriptions)
+{
+	static const uint32_t contexts[] = { 4096u, 8192u };
+	static const uint32_t capacities[] = { 1u, ROWS, WIDE_CAPACITY };
+	static const struct {
+		enum program_kind kind;
+		uint32_t rows;
+	} cases[] = { { PROGRAM_THIN, 1u },
+		      { PROGRAM_THIN, CASE_THIN_ROWS },
+		      { PROGRAM_THIN, ROWS },
+		      { PROGRAM_WIDE, WIDE_CAPACITY },
+		      { PROGRAM_WIDE, CASE_WIDE_ROWS },
+		      { PROGRAM_WIDE, MODEL_WIDE_LEAST_ROWS },
+		      { PROGRAM_FULL, WIDE_CAPACITY },
+		      { PROGRAM_FULL, CASE_WIDE_ROWS },
+		      { PROGRAM_FULL, MODEL_WIDE_LEAST_ROWS } };
+	uint32_t placement[UNIT_COUNT];
+	struct load_layout *layout = NULL;
+	context_text =
+		"short contexts retain non-overlapping candidate-reader score storage";
+	test_model_v41_five_cards(placement, 0, 0);
+	expect_status(load_layout_create(pack, placement, UNIT_COUNT, CARDS,
+					 &layout),
+		      STATUS_OK, "the short-context layout is made");
+	for (uint32_t context = 0;
+	     layout != NULL && context < COUNT_OF(contexts); context++) {
+		for (uint32_t capacity = 0; capacity < COUNT_OF(capacities);
+		     capacity++) {
+			struct model_plan_record *plan = NULL;
+			const struct model_limits limits = {
+				.context_token_limit = contexts[context],
+				.row_capacity = capacities[capacity],
+				.session_capacity = SESSIONS,
+				.state_width = STATE_WIDTH_16,
+				.linear_profile = LINEAR_PROFILE_PRECISION,
+				.linear_order = LINEAR_ORDER_REFERENCE,
+				.cmp_order = CMP_ORDER_REFERENCE
+			};
+			expect_status(model->plan_create(pack, layout, &limits,
+							 &plan),
+				      STATUS_OK,
+				      "the short-context plan is made");
+			for (uint32_t card = 0; plan != NULL && card < CARDS;
+			     card++) {
+				const struct v41_card *const planned =
+					&plan->cards[card];
+				if ((planned->layers &
+				     V41_DATA_CANDIDATE_READERS) == 0)
+					continue;
+				const uint64_t scores =
+					planned->array_offset
+						[V41_DATA_ARRAY_INDEX_SCORES];
+				const uint64_t candidates =
+					planned->array_offset
+						[V41_DATA_ARRAY_CANDIDATES];
+				const uint64_t required =
+					(uint64_t)v41_slab_rows(
+						capacities[capacity]) *
+					MODEL_CONTEXT_WITHOUT_CANDIDATES *
+					sizeof(uint16_t);
+				expect(scores != PROGRAM_NOWHERE &&
+					       candidates != PROGRAM_NOWHERE &&
+					       candidates >= scores &&
+					       candidates - scores >= required,
+				       "every reader's score payload ends before its candidates");
+			}
+			for (uint32_t entry = 0;
+			     plan != NULL && entry < COUNT_OF(cases); entry++) {
+				if (cases[entry].rows > capacities[capacity])
+					continue;
+				cards_open(cards, descriptions);
+				descriptions[PRO_CARD].arithmetic_class =
+					ARITHMETIC_CLASS_SM_120_NATIVE;
+				struct execution_program *program = NULL;
+				expect_status(
+					model->program_prepare(
+						plan, &test_host_memory_backend,
+						cards, descriptions,
+						cases[entry].kind,
+						cases[entry].rows, &program),
+					STATUS_OK,
+					"each short-context thin, wide and full program is admitted");
+				model->program_destroy(program);
+			}
+			model->plan_destroy(plan);
+		}
+	}
+	load_layout_destroy(layout);
 }
 
 int main(void)
@@ -4221,6 +4327,7 @@ int main(void)
 		test_programs(model, pack, cards, descriptions);
 		test_official_hc(model, pack, cards, descriptions);
 		test_official_reference(model, pack, cards, descriptions);
+		test_short_context_programs(model, pack, cards, descriptions);
 		test_wide_programs(model, pack, cards, descriptions);
 		test_full_programs(model, pack, cards, descriptions);
 		test_relaxed_programs(model, pack, cards, descriptions);

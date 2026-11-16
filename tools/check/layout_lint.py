@@ -31,7 +31,8 @@ CHECKED_DIRECTORIES = (("include", ENGINE_FILE, "include/anemone/"), ("source", 
                        ("tests", TEST_FILE, "tests/"))
 DIRECTORIES_THE_BUILD_COMPILES = ("include/anemone", )
 CASES_DIRECTORY = "tests/check_cases"
-KNOWN_TOP_LEVEL_DIRECTORIES = ("include", "source", "tests", "tools", "build", "docs", "generated", ".git")
+KNOWN_TOP_LEVEL_DIRECTORIES = ("include", "source", "tests", "tools", "build", "docs", "generated", "LICENSES", ".git",
+                               ".github")
 
 
 def files_under(root, top, problems):

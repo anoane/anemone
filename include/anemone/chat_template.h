@@ -69,11 +69,15 @@
 #define CHAT_TEMPLATE_LOWEST_EFFORT 1
 #define CHAT_TEMPLATE_HIGHEST_EFFORT 100
 
+#define CHAT_TEMPLATE_SIGNATURE_PREFIX "anemone-v1-effort-"
+#define CHAT_TEMPLATE_DEFAULT_EFFORT 75u
+
 struct chat_template_options {
 	uint32_t reasoning_effort; /* 1 to 100 (the encoder's names: low 50, high 75, max 100) */
 	bool is_thinking; /* false is the encoder's "chat" mode: thinking off */
 	bool drops_thinking; /* the encoder's drop_thinking: earlier reasoning is not kept */
 	bool continues_final_message; /* the last message is the start of the answer to continue */
+	bool stable_turns; /* opt-in per-turn reasoning, independent of the next turn mode */
 };
 
 /* Image source offsets refer to the messages_json given to render_spans, including the URL's JSON quotes.

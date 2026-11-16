@@ -26,9 +26,40 @@ check_generated:
 python_tests:
 	$(PYTHON) tools/cli/axes_registry_test.py
 	$(PYTHON) tools/golden_score_test.py
+	$(PYTHON) tools/convert/make_virtual_pack_test.py
 	$(PYTHON) -m unittest discover -s tools/oracle -p 'test_*.py'
+	$(PYTHON) $(CASES)/quality/structural_test.py
+	$(PYTHON) $(CASES)/quality/slot_width_test.py
 
-host_tests_all: $(BUILD_TYPES) host_test_fixtures
+# Failure-injection fixtures include the implementation under test. Omit that implementation's ordinary object
+# and link every other object with the address/undefined-behaviour sanitizer build, including test support.
+QUALITY_CASE_NAMES := snapshot_size snapshot_paths tp_load_null tp_load_callback exl3_allocation \
+                      engine_descriptor router_failure tune_weighted_copy replica_receipt_binding \
+                      replica_lag_choice
+QUALITY_CASE_PROGRAMS := $(addprefix build/debug/check_cases/quality/,$(QUALITY_CASE_NAMES))
+QUALITY_OMIT_snapshot_size := build/debug/source/server_sessions.o
+QUALITY_OMIT_snapshot_paths := build/debug/source/server_sessions.o
+QUALITY_OMIT_tp_load_null := build/debug/source/tp_load.o
+QUALITY_OMIT_tp_load_callback := build/debug/source/tp_load.o
+QUALITY_OMIT_tune_weighted_copy := build/debug/source/storage_tune.o
+QUALITY_OMIT_replica_receipt_binding := build/debug/source/replica_prepare.o
+QUALITY_OMIT_replica_lag_choice := build/debug/source/replica_prepare.o
+define QUALITY_CASE_RULE
+build/debug/check_cases/quality/$(1): $(CASES)/quality/$(1).c \
+    $$(filter-out $$(QUALITY_OMIT_$(1)),$$(ENGINE_OBJECTS_debug)) $$(TEST_SUPPORT_OBJECTS_debug) \
+    Makefile tools/development.mk
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(COMMON_FLAGS) -Itests $$(COMPILE_debug) $$(DEPENDENCY_FLAGS) \
+	    -MF $$@.d $$< $$(filter %.o,$$^) $$(LIBRARIES) -o $$@
+endef
+$(foreach quality_case,$(QUALITY_CASE_NAMES),$(eval $(call QUALITY_CASE_RULE,$(quality_case))))
+-include $(addsuffix .d,$(QUALITY_CASE_PROGRAMS))
+.PHONY: quality_regressions
+quality_regressions: $(QUALITY_CASE_PROGRAMS)
+	$(PYTHON) $(CASES)/quality/regressions_test.py
+python_tests: quality_regressions
+
+host_tests_all: $(BUILD_TYPES) host_test_fixtures quality_regressions
 	@set -e; for test_program in $(filter-out %_card_test,$(TEST_PROGRAMS)); do \
 	    echo "HOST_TEST $$test_program"; $$test_program; done
 
@@ -43,9 +74,17 @@ RELEASE_KERNELS_HAVE_NO_HOOKS := $(PYTHON) tools/check/release_kernels_have_no_h
 ANALYSED_FILES := $(HEADERS) $(HOST_SOURCES) $(PROGRAM_SOURCE) $(TEST_PROGRAM_SOURCES) $(TEST_SUPPORT_SOURCES)
 HEADER_ALONE := $(CC) $(COMMON_FLAGS) -fsyntax-only -x c
 # cppcheck is not given the CUDA header: it analyses the engine's code, and what it cannot resolve it leaves alone.
+# It analyses every branch (--check-level=exhaustive): at the normal level it limits them and says so in an
+# information note (normalCheckLevelMaxBranches), which --error-exitcode counts as a finding.
+# It runs CPPCHECK_JOBS processes (-j): by default a share of the processors among the hook combinations, which
+# make -j3 analysis runs side by side (exhaustive, one process took 24 min a combination on the reference workstation).
+CPPCHECK_JOBS ?= $(shell expr $$(nproc) / $(words $(SWITCH_COMBINATIONS)) + 1)
 CPPCHECK_C := $(CPPCHECK) --quiet --language=c --std=c11 --enable=warning,performance,portability \
-              --error-exitcode=1 $(SYSTEM_LEVEL) -Iinclude -Isource
+              --check-level=exhaustive --error-exitcode=1 -j $(CPPCHECK_JOBS) $(SYSTEM_LEVEL) -Iinclude -Isource
 CLANG_TIDY_FLAGS := -x c -std=c11 $(SYSTEM_LEVEL) $(INCLUDE_FLAGS)
+# clang-tidy runs CLANG_TIDY_JOBS processes side by side, a file each (by default as many as cppcheck's); their
+# output keeps no order across files, so a finding is judged by its line.
+CLANG_TIDY_JOBS ?= $(CPPCHECK_JOBS)
 
 # lint proves, for the engine and the tests: no line over 120 columns, no file or directory the build would not
 # compile; no bare number, no escape hatch, no side effect in the argument of a hook, no status without
@@ -63,9 +102,15 @@ ANALYSIS_TARGETS := $(addprefix analysis_,$(SWITCH_COMBINATIONS))
 .PHONY: $(ANALYSIS_TARGETS)
 analysis: $(ANALYSIS_TARGETS)
 $(ANALYSIS_TARGETS): $(VISION_GEMM_POLICY_INCLUDE)
+# Under -j cppcheck checks across files (ctunullpointer and the like) only with a work folder: each combination
+# has its own, emptied first, so that no run reuses another's results; a caller that runs one combination several
+# times at once gives each run its own CPPCHECK_WORK_FOLDER.
+CPPCHECK_WORK_FOLDER = build/cppcheck_$*
 $(ANALYSIS_TARGETS): analysis_%:
-	$(CPPCHECK_C) $(HOOKS_$*) $(ANALYSED_FILES)
-	$(CLANG_TIDY) --quiet $(ANALYSED_FILES) -- $(CLANG_TIDY_FLAGS) $(HOOKS_$*)
+	rm -rf -- '$(CPPCHECK_WORK_FOLDER)' && mkdir -p -- '$(CPPCHECK_WORK_FOLDER)'
+	$(CPPCHECK_C) --cppcheck-build-dir='$(CPPCHECK_WORK_FOLDER)' $(HOOKS_$*) $(ANALYSED_FILES)
+	printf '%s\n' $(ANALYSED_FILES) | \
+	    xargs -P $(CLANG_TIDY_JOBS) -I {} $(CLANG_TIDY) --quiet {} -- $(CLANG_TIDY_FLAGS) $(HOOKS_$*)
 
 TRAP_INSTRUCTION := BPT.TRAP
 no_trap_in = { status=0; for module in $(1); do \

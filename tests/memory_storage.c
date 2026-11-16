@@ -43,6 +43,8 @@ static _Atomic uint64_t current_held_byte_count = 0;
 static unsigned char *held_tables = NULL;       /* what hold_tables_of read and owns; NULL for a pack of set_pack */
 static _Atomic uint64_t
 	first_failing_read_numbers[STORAGE_MAXIMUM_COPIES]; /* 0: no read fails */
+static _Atomic uint64_t
+	single_failing_read_numbers[STORAGE_MAXIMUM_COPIES]; /* 0: none */
 static _Atomic bool bit_is_flipped[STORAGE_MAXIMUM_COPIES];
 static _Atomic uint64_t flipped_byte_offsets[STORAGE_MAXIMUM_COPIES];
 static _Atomic uint64_t read_counts[STORAGE_MAXIMUM_COPIES];
@@ -118,7 +120,9 @@ memory_reader_read(const struct storage_reader *reader, uint32_t copy_index,
     }
     read_number = atomic_fetch_add(&read_counts[copy_index], 1) + 1;
     first_failing_read_number = atomic_load(&first_failing_read_numbers[copy_index]);
-    if (first_failing_read_number != 0 && read_number >= first_failing_read_number) {
+    if ((first_failing_read_number != 0 &&
+	 read_number >= first_failing_read_number) ||
+	read_number == atomic_load(&single_failing_read_numbers[copy_index])) {
 	    return STATUS_INPUT_OUTPUT_ERROR;
     }
     if (byte_count > reader->held_byte_count || byte_offset > reader->held_byte_count - byte_count) {
@@ -167,6 +171,7 @@ void test_memory_storage_reset(void)
     for (uint32_t copy_index = 0; copy_index < STORAGE_MAXIMUM_COPIES;
 	 copy_index++) {
 	    atomic_store(&first_failing_read_numbers[copy_index], 0);
+	    atomic_store(&single_failing_read_numbers[copy_index], 0);
 	    atomic_store(&bit_is_flipped[copy_index], false);
 	    atomic_store(&flipped_byte_offsets[copy_index], 0);
 	    atomic_store(&read_counts[copy_index], 0);
@@ -268,6 +273,15 @@ void test_memory_storage_fail_reads(uint32_t copy_index, uint64_t first_failing_
     if (copy_exists(copy_index)) {
         atomic_store(&first_failing_read_numbers[copy_index], first_failing_read_number);
     }
+}
+
+void test_memory_storage_fail_one_read(uint32_t copy_index,
+				       uint64_t failing_read_number)
+{
+	if (copy_exists(copy_index)) {
+		atomic_store(&single_failing_read_numbers[copy_index],
+			     failing_read_number);
+	}
 }
 
 void test_memory_storage_flip_bit(uint32_t copy_index, uint64_t byte_offset)

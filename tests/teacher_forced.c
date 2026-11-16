@@ -651,7 +651,8 @@ routing_write(struct harness *harness, uint32_t layer_index, uint32_t position,
 	    previous = expert;
 	    picks[slot] = expert;
 	    weights[slot] = job.route_weight[0];
-	    /* the gate's order: biased descending; the jobs come in ascending experts, so among equals the lower first */
+	    /* the gate's order: biased descending; the jobs come in ascending experts, so among equals the lower first
+	     * */
 	    for (uint32_t place = slot;
 		 decoded && place > 0 &&
 		 biased[picks[place]] > biased[picks[place - 1u]];
@@ -1210,7 +1211,8 @@ MUST_CHECK static result_status layers_prepare(struct harness *harness)
 	const struct execution_program *const program = harness->program;
 	const struct program_card_record *const result =
 		&program->cards[program->result_card];
-	const struct step_session greedy = { 0, 0.0f, TOP_P_OF_GREEDY };
+	const struct step_session greedy =
+		step_session_make(0, 0.0f, TOP_P_OF_GREEDY, 0);
 	result_status status = STATUS_OK;
 	harness->layers =
 		calloc(harness->run->layer_count, sizeof(struct layer_state));

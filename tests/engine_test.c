@@ -34,6 +34,7 @@
 #include "engine_internal.h"                            /* the scripted drafter goes in the lookup drafter's place */
 #include "host_memory_backend.h"
 #include "serving_fixture.h"
+#include "stats_tables.h"
 #include "step_driver.h"
 
 #define END TEST_SERVING_END_TOKEN
@@ -589,7 +590,8 @@ static void test_busy_and_cancel(struct inference_engine *engine)
 	const uint64_t steps_waiting = test_serving_step_count() - steps_queued;
 	expect(steps_waiting <= ENGINE_EVENT_CAPACITY + PROMPT_STEPS + 1u,
 	       "the engine waits for room");
-	struct engine_stats snapshot = { 0 };
+	static struct test_stats_tables snapshot_tables;
+	struct engine_stats snapshot = { TEST_STATS_TABLES(snapshot_tables) };
 	for (uint32_t look = 0; look < MOST_LOOKS; look++) {
 		expect(engine_stats_snapshot(engine, &snapshot) == STATUS_OK,
 		       "event pressure snapshot succeeds");
@@ -663,6 +665,81 @@ session_done(struct inference_engine *engine,
     return count != 0 ? events[count - 1u] : (struct generation_event){ 0 };
 }
 
+#define METRICS_DRAIN_DEPTH 4u
+#define METRICS_DRAIN_DELAY_NS 20000000ull
+#define METRICS_DRAIN_FINALS 2u
+
+/* Queue an idle slot's snapshot while another slot has several real steps in flight.
+ * Each landing in the session-priority branch must retain its own observation. */
+static void test_iteration_session_drain(void)
+{
+	context_text = "metrics session drain";
+	struct inference_engine *engine = NULL;
+	static struct generation_event events[MOST_EVENTS];
+	char path[] = "/tmp/anemone_metrics_drain_XXXXXX";
+	const int descriptor = mkstemp(path);
+	expect(descriptor >= 0 && unlink(path) == 0, "drain snapshot file");
+	if (descriptor < 0)
+		return;
+	test_serving_set_engine(METRICS_DRAIN_FINALS, METRICS_DRAIN_DEPTH, 1,
+				0);
+	expect(test_serving_open(CONTEXT, scripts,
+				 sizeof(scripts) / sizeof(scripts[0]),
+				 &engine) == STATUS_OK,
+	       "drain engine opens");
+	if (engine != NULL) {
+		struct generation_command_record command =
+			command_of(PROMPT_TOKENS, 1, 0);
+		expect(engine_submit(engine, &command) == STATUS_OK &&
+			       events_until_final(engine, events) != 0,
+		       "idle snapshot donor exists");
+		command = command_of(PREFILL_PROMPT, 1, SCRIPT_ENDLESS);
+		command.session_slot = 1;
+		test_serving_set_step_delay(METRICS_DRAIN_DELAY_NS);
+		expect(engine_submit(engine, &command) == STATUS_OK,
+		       "other slot prefill admitted");
+		static struct test_stats_tables snapshot_tables;
+		struct engine_stats snapshot = { TEST_STATS_TABLES(
+			snapshot_tables) };
+		for (uint32_t look = 0; look < MOST_LOOKS; look++) {
+			expect(engine_stats_counters(engine, &snapshot) ==
+				       STATUS_OK,
+			       "drain snapshot");
+			if (snapshot.flights >= METRICS_DRAIN_FINALS)
+				break;
+			pause_for(STEP_DELAY_NANOSECONDS);
+		}
+		expect(snapshot.flights >= METRICS_DRAIN_FINALS,
+		       "several steps are in flight before snapshot admission");
+		const struct session_command save = { .operation = SESSION_SAVE,
+						      .session_slot = 0,
+						      .token_count = 1,
+						      .descriptor = descriptor,
+						      .request_tag =
+							      SESSION_TAG };
+		expect(engine_session(engine, &save) == STATUS_OK,
+		       "snapshot priority command admitted during flights");
+		test_serving_set_step_delay(0);
+		uint32_t finals = 0;
+		for (uint32_t count = 0;
+		     count < MOST_EVENTS && finals < METRICS_DRAIN_FINALS;
+		     count++) {
+			const uint32_t taken =
+				events_until_final(engine, events);
+			if (taken == 0)
+				break;
+			finals++;
+		}
+		expect(finals == METRICS_DRAIN_FINALS,
+		       "snapshot and generation drained");
+		expect(test_serving_metrics_valid(),
+		       "review 5: each session-priority landing has its own token observation");
+	}
+	test_serving_close();
+	expect(close(descriptor) == 0, "drain snapshot closes");
+	test_serving_set_engine(1, 1, TEST_SERVING_ROWS, 0);
+}
+
 /* Session commands: a session saved after its command; the engine of a restart, its state empty, loads it, holds its
  * tokens and its state, and goes on behind them; the refusals; a file cut short fails the load and empties the
  * session. */
@@ -700,7 +777,8 @@ static void test_sessions(void)
 		       final.session_token_count == PROMPT_TOKENS + TWO &&
 		       lseek(descriptor, 0, SEEK_CUR) == SAVED_TOKENS,
 	       "the save writes a byte a token of the state and keeps the session");
-	struct engine_stats snapshot = { 0 };
+	static struct test_stats_tables snapshot_tables;
+	struct engine_stats snapshot = { TEST_STATS_TABLES(snapshot_tables) };
 	expect(engine_stats_snapshot(engine, &snapshot) == STATUS_OK &&
 		       snapshot.snapshots_saved == 1u &&
 		       snapshot.snapshot_save_bytes == SAVED_TOKENS &&
@@ -828,6 +906,9 @@ static void test_cone(void)
 					 &engine) == STATUS_OK,
 	       "the engine opens with a cone");
 	if (engine == NULL) {
+		if (descriptor >= 0) {
+			(void)close(descriptor);
+		}
 		test_serving_set_cone(0);
 		return;
 	}
@@ -1136,7 +1217,8 @@ static void test_speculative_rounds(void)
 							       1u &&
 					       steps + drafted.accepted ==
 						       reference_steps,
-				       "the first round at the prompt's last row, and a step fewer for each proposal accepted");
+				       "the first round at the prompt's last row, and a step fewer for each proposal "
+				       "accepted");
 			}
 		}
     }
@@ -2645,7 +2727,11 @@ static void test_policy_statistics(void)
 						       engine, 0, &statistics,
 						       &total) == STATUS_OK,
 					       "release statistics available after final");
-					struct engine_stats live = { 0 };
+					static struct test_stats_tables
+						live_tables;
+					struct engine_stats live = {
+						TEST_STATS_TABLES(live_tables)
+					};
 					expect(engine_stats_snapshot(engine,
 								     &live) ==
 							       STATUS_OK &&
@@ -2668,7 +2754,8 @@ static void test_policy_statistics(void)
 							       0 &&
 						       live.slots[0]
 							       .has_confidence,
-					       "live speculation counters exactly equal all inherited source/position/bin counters");
+					       "live speculation counters exactly equal all inherited "
+					       "source/position/bin counters");
 					if (repeat == 0) {
 						expect(memcmp(&statistics,
 							      &total,
@@ -2733,7 +2820,8 @@ static void test_policy_statistics(void)
 							.rounds != 0) ==
 						       (hybrid != 0 &&
 							low_estimate),
-					       "lookup wins only against low DSpark estimates; structured DSpark keeps its rounds");
+					       "lookup wins only against low DSpark estimates; structured DSpark "
+					       "keeps its rounds");
 					if (hybrid != 0 && low_estimate) {
 						expect(statistics.source[DRAFT_DSPARK]
 									       .rounds >
@@ -2762,7 +2850,8 @@ static void test_policy_statistics(void)
 								       .drawing_rounds &&
 						       depth_proposals ==
 							       proposed,
-					       "chosen-depth histogram counts each drawing round and verified proposal once");
+					       "chosen-depth histogram counts each drawing round and verified "
+					       "proposal once");
 					const uint32_t sampling_mode =
 						seed_case != 0 ? 1u : 0u;
 					for (uint32_t position = 0;
@@ -2852,6 +2941,7 @@ static uint32_t observed_draft(struct inference_engine *engine,
     return observed_device_draft(engine, cursor, anchor, most, proposals);
 }
 
+#define PRIOR_WEIGHT 16u
 /* draft_learned_acceptance: after a command whose device drafts miss at DEVICE_CONFIDENCE_POSITION (confidence 1.0 at
  * every position), each table cell of the engine with reached drafts equals (matched x 1,000 + its prior x 16) /
  * (reached + 16), rounded (engine.c's ACCEPTANCE_PRIOR_REACHED), the others their prior; without it, every cell the
@@ -2859,7 +2949,7 @@ static uint32_t observed_draft(struct inference_engine *engine,
 static void test_learned_acceptance(void)
 {
 	static struct generation_event events[MOST_EVENTS];
-	const uint64_t prior_weight = 16u;
+	const uint64_t prior_weight = PRIOR_WEIGHT;
 	struct draft_policy_record prior;
 	draft_policy_default(&prior);
 	test_serving_set_function_model(true, COPY_PERIOD);
@@ -3237,7 +3327,8 @@ static void test_dspark_probe_intervals(void)
 				expect(observed_dspark_rounds > 1u &&
 					       longest_dspark_gap <=
 						       policy.probe_rounds,
-				       "no eligible gap exceeds N, including when a skipped tail must be refreshed first");
+				       "no eligible gap exceeds N, including when a skipped tail must be refreshed "
+				       "first");
 				expect(statistics.source[DRAFT_DSPARK]
 						       .proposed[1] == 0,
 				       "unprofitable DSpark is refreshed and verified only at depth one");
@@ -3467,7 +3558,7 @@ static void test_live_busy_wait(void)
            "the next coherent refresh recovers without resetting the cumulative counter");
 }
 
-static void test_live_statistics(uint32_t depth)
+static void test_live_statistics(uint32_t depth, bool metrics_enabled)
 {
 	static struct generation_event events[SESSIONS][MOST_EVENTS];
 	uint32_t counts[SESSIONS] = { 0 };
@@ -3484,7 +3575,9 @@ static void test_live_statistics(uint32_t depth)
 		return;
 	}
     test_serving_set_step_delay(STEP_DELAY_NANOSECONDS);
-    struct engine_stats snapshot = { 0 }, refused = { 0 };
+    static struct test_stats_tables snapshot_tables, refused_tables;
+    struct engine_stats snapshot = { TEST_STATS_TABLES(snapshot_tables) },
+			refused = { TEST_STATS_TABLES(refused_tables) };
     struct engine_slot_stats slot_record = { 0 };
     struct engine_card_stats card = { .arena_bytes = LIVE_ARENA_BYTES,
 				      .layer_mask = 1 };
@@ -3639,13 +3732,29 @@ static void test_live_statistics(uint32_t depth)
 				   LIVE_GENERATED_TOKENS,
 		   "final-event retention needs no device query");
     }
+	expect(test_serving_metrics_valid(),
+	       "iteration publication is complete before checking the mode");
+	expect(engine_stats_counters(engine, &snapshot) == STATUS_OK,
+	       "final iteration mode snapshot");
+	uint64_t iteration_samples = 0;
+	for (uint32_t bucket = 0; bucket <= STATS_ITERATION_BUCKETS; bucket++)
+		iteration_samples += snapshot.iteration_tokens[bucket];
+	expect(iteration_samples ==
+			       (metrics_enabled ? snapshot.steps_landed : 0) &&
+		       snapshot.iteration_token_sum ==
+			       (metrics_enabled ?
+					snapshot.prefill_tokens +
+						snapshot.generated_tokens :
+					0),
+	       "iteration accounting follows the selected metrics mode");
     test_serving_close();
     test_serving_set_step_delay(0);
     test_serving_set_engine(1, 1, TEST_SERVING_ROWS, 0);
 }
 
-int main(void)
+static void run_engine_cases(bool metrics_enabled)
 {
+    test_serving_set_metrics(metrics_enabled);
 	struct inference_engine *engine = NULL;
 	for (uint32_t index = 0; index < ENDLESS_TOKENS; index++) {
 		endless[index] = FIRST_TOKEN + index % TWO;
@@ -3673,8 +3782,8 @@ int main(void)
     if (test_serving_open(CONTEXT, scripts,
 			  sizeof(scripts) / sizeof(scripts[0]),
 			  &engine) != STATUS_OK) {
-	    (void)printf("FAILED: the engine of the fixture does not open\n");
-	    return 1;
+	    expect(false, "the engine of the fixture opens");
+	    return;
     }
     test_commands(engine);
     test_refusals(engine);
@@ -3684,6 +3793,7 @@ int main(void)
     test_context_end();
     test_long_session();
     test_destroy_and_faults();
+    test_iteration_session_drain();
     test_sessions();
     test_cone();
     test_lookup_drafter();
@@ -3734,9 +3844,16 @@ int main(void)
     test_serving_set_engine(1, 1, TEST_SERVING_ROWS, 0);
     test_serving_set_function_model(false, 0);
     test_interleaved();
-    test_live_statistics(1);
-    test_live_statistics(PIPELINE_DEPTH);
+    test_live_statistics(1, metrics_enabled);
+    test_live_statistics(PIPELINE_DEPTH, metrics_enabled);
     test_live_busy_wait();
-    (void)printf("engine_test: %d failures\n", failures);
-    return failures == 0 ? 0 : 1;
+    (void)printf("engine_test: metrics=%u cases complete\n", metrics_enabled ? 1u : 0u);
+}
+
+int main(void)
+{
+	run_engine_cases(false);
+	run_engine_cases(true);
+	(void)printf("engine_test: %d failures\n", failures);
+	return failures == 0 ? 0 : 1;
 }

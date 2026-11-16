@@ -34,7 +34,6 @@
 #define NAME_CAPACITY 64                      /* "layers.<l>.ffn.experts.<e>.w1.weight" and the longest, with NUL */
 #define LAYER_PREFIX_CAPACITY 20              /* "layers.<l>." of any 32-bit l, with NUL */
 #define MATRIX_DIMENSIONS 2u
-#define EXL3_K2_LAYERS UINT64_C(0x7C0000)
 #define E2M1_VALUES_PER_BYTE 2u
 #define EVERY 0xFFFFFFFFFFull                 /* bit l for each of the 40 layers */
 #define WALKED (EVERY | V41_DATA_DRAFT_LAYERS) /* and the draft's stages */
@@ -497,7 +496,7 @@ static uint64_t take(uint64_t *next, uint64_t byte_count)
  * one slab runs no wide select and needs no views: their arrays take none. */
 static uint64_t array_bytes_of(const struct model_limits *limits,
 			       uint32_t array, uint64_t index_entries,
-			       uint64_t engram_tables, uint32_t holders)
+			       uint64_t engram_tables, uint32_t holders, bool reads_candidates)
 {
     const struct array_rule *const rule = &array_rules[array];
     const uint64_t rows = limits->row_capacity,
@@ -520,8 +519,8 @@ static uint64_t array_bytes_of(const struct model_limits *limits,
     case V41_DATA_ARRAY_SESSIONS:
 	    return product(limits->session_capacity, STEP_SESSION_BYTES);
     case V41_DATA_ARRAY_INDEX_SCORES:
-	    /* Candidate readers retain their fixed scan extent even in a short serial reference context. */
-	    if (limits->official_reference != 0 &&
+	    /* Candidate readers scan a fixed score extent even when their source keys have a shorter context. */
+	    if ((limits->official_reference != 0 || reads_candidates) &&
 		index_entries < MODEL_CONTEXT_WITHOUT_CANDIDATES)
 		    index_entries = MODEL_CONTEXT_WITHOUT_CANDIDATES;
 	    /* Each prepared index description names its score payload. Split selection uses the annex immediately
@@ -548,8 +547,8 @@ static uint64_t array_bytes_of(const struct model_limits *limits,
     case V41_DATA_ARRAY_VIEWS: /* the slabs' views, then split_overlap's two halves' (model_v41_tp2_stage.h) */
 	    return is_wide ? slabs * (STEP_BLOCK_BYTES_VALUE +
 				      slab_rows * STEP_ROW_BYTES_VALUE) +
-				     V41_DATA_HALF_VIEWS *
-					     STEP_BLOCK_BYTES_VALUE +
+				     (uint64_t)(V41_DATA_HALF_VIEWS *
+						STEP_BLOCK_BYTES_VALUE) +
 				     rows * STEP_ROW_BYTES_VALUE :
 			     0;
     case V41_DATA_ARRAY_ROUTER_PICKS:
@@ -603,7 +602,8 @@ static bool card_lay_out_attention(struct model_plan_record *plan,
     for (uint32_t array = 0; array < V41_DATA_ARRAY_COUNT; array++) {
 	    const uint64_t bytes = array_bytes_of(&plan->limits, array,
 						  index_entries, engram_tables,
-						  card->holders);
+						  card->holders,
+						  (card->layers & V41_DATA_CANDIDATE_READERS) != 0);
 	    card->array_offset[array] =
 		    take(&next,
 			 (card->holders & BIT(array_rules[array].holder)) != 0 ?
@@ -2079,6 +2079,8 @@ static int tp2_stage_pending_compare(const void *first, const void *second)
 
 #define TP2_STAGE_MARKOV_TABLES 2u /* draft_shards' ranks 1-3: the Markov head's embedding and head */
 #define TP2_STAGE_RANK_DRAFT_GLOBALS 3u /* draft_layers' ranks 1-3: main_proj, main_norm and the draft's norm */
+/* the stage's TC MoE workspaces: of the widest records (exl3_tc_records.h: rotated records keep the 640 layout) */
+#define TC_WIDEST_INTERMEDIATE 640u
 
 /* head_shards' ranks 1-3: the final norm and their rows of the head (model_v41_tp2_stage.h). */
 static bool
@@ -2377,8 +2379,8 @@ tp2_stage_channels(struct v41_tp2_stage_plan *stage)
 					    EXACT_RING_PACK_BYTES :
 				    payload_bytes / ranks /
 					    EXACT_RING_PACK_BYTES;
-		    /* a bank a row count: one size, the gathers' slots of the most packs (the thin banks: room for the BF16
-             * sum's of 8 rows too); batch_rings: the BF16 sum's slots of its own rows (12 a pack: 64 rows in a
+		    /* a bank a row count: one size, the gathers' slots of the most packs (the thin banks: room for the
+             * BF16 sum's of 8 rows too); batch_rings: the BF16 sum's slots of its own rows (12 a pack: 64 rows in a
              * gather-sized bank overran it into the next channel's peer table, pf17) */
 		    const uint64_t row_packs = (uint64_t)MODEL_HIDDEN *
 					       sizeof(uint16_t) / ranks /
@@ -2449,30 +2451,50 @@ tp2_stage_channels(struct v41_tp2_stage_plan *stage)
     return STATUS_OK;
 }
 
-/* The pinned hybrid has five K2 target layers; every selected matrix is checked against this layer rule. */
+/* The layer's routed-expert width, from the pack: every expert matrix EXL3 of one width (one width a layer:
+ * plan->exl3_bits; the pack's open refused a width this build does not decode), or none EXL3. A refusal names the
+ * first matrix that breaks it, before anything loads. */
 MUST_CHECK static result_status
 tp2_stage_exl3_discover(const struct pack_record *pack, uint32_t layer,
 			uint32_t *bits_out)
 {
-    char name[NAME_CAPACITY];
-    const int length = snprintf(name, sizeof(name), "layers.%u.ffn.experts.0.w1.weight", layer);
-    if (length <= 0 || length >= NAME_CAPACITY)
-	    return STATUS_INVALID_ARGUMENT;
-    const uint32_t found = pack_find_tensor(pack, name, (uint32_t)length);
-    if (found == PACK_NOT_FOUND)
-	    return STATUS_CORRUPT_PACK;
-    const struct pack_tensor *const tensor = &pack_tensors_of(pack)[found];
-    if (tensor->weight_format != WEIGHT_FORMAT_EXL3) {
-	    *bits_out = 0;
-	    return STATUS_OK;
-    }
-    const uint32_t bits = (EXL3_K2_LAYERS & BIT(layer)) != 0 ?
-				  EXL3_MINIMUM_BITS :
-				  EXL3_MAXIMUM_BITS;
-    if (tensor->bits_per_weight != bits)
-	    return STATUS_CORRUPT_PACK;
-    *bits_out = bits;
-    return STATUS_OK;
+	uint32_t layer_width = 0;
+	for (uint32_t expert = 0; expert < MODEL_EXPERTS; expert++) {
+		for (uint32_t matrix = 0; matrix < MODEL_EXPERT_MATRICES;
+		     matrix++) {
+			char name[NAME_CAPACITY];
+			const int length =
+				snprintf(name, sizeof(name),
+					 "layers.%u.ffn.experts.%u.%s", layer,
+					 expert, expert_rules[matrix].name);
+			if (length <= 0 || length >= NAME_CAPACITY)
+				return STATUS_INVALID_ARGUMENT;
+			const uint32_t found =
+				pack_find_tensor(pack, name, (uint32_t)length);
+			if (found == PACK_NOT_FOUND)
+				return STATUS_CORRUPT_PACK;
+			const struct pack_tensor *const tensor =
+				&pack_tensors_of(pack)[found];
+			const uint32_t width =
+				tensor->weight_format == WEIGHT_FORMAT_EXL3 ?
+					tensor->bits_per_weight :
+					0u;
+			if (expert == 0 && matrix == 0)
+				layer_width = width;
+			else if (width != layer_width) {
+				LOG_ERROR(
+					"%s: stored EXL3 width %" PRIu32
+					" differs from layer %" PRIu32
+					"'s first expert matrix (%" PRIu32
+					"; 0: not EXL3): widths within a "
+					"layer are not supported by this build",
+					name, width, layer, layer_width);
+				return STATUS_UNSUPPORTED;
+			}
+		}
+	}
+	*bits_out = layer_width;
+	return STATUS_OK;
 }
 
 /* head_shards: the sampler's exchange area, peer table and settings copy (the result card: also the table of every
@@ -2487,11 +2509,13 @@ tp2_stage_sampler_areas(struct v41_tp2_stage_plan *stage)
 	uint64_t next = card->arena_byte_count;
 	const uint64_t peers = (uint64_t)SAMPLER_SHARD_RANKS * sizeof(uint64_t);
 	stage->sampler_exchange = (struct linear_range){
-		take(&next, SAMPLER_SHARD_EXCHANGE_BYTES),
-		SAMPLER_SHARD_EXCHANGE_BYTES
+		take(&next, (uint64_t)SAMPLER_SHARD_DEFAULT_EXCHANGE_BYTES),
+		(uint64_t)SAMPLER_SHARD_DEFAULT_EXCHANGE_BYTES
 	};
-	stage->sampler_peers =
-		(struct linear_range){ take(&next, peers), peers };
+	stage->sampler_peers = (struct linear_range){
+		take(&next, SAMPLER_SHARD_PEER_TABLE_BYTES),
+		SAMPLER_SHARD_PEER_TABLE_BYTES
+	};
 	const uint64_t settings =
 		SAMPLER_SETTINGS_SLOTS_OFFSET +
 		(uint64_t)description->limits.session_capacity *
@@ -2521,13 +2545,35 @@ tp2_stage_sampler_areas(struct v41_tp2_stage_plan *stage)
 			(struct linear_range){ take(&next, draft_bytes),
 					       draft_bytes };
 	}
-    if (next == UINT64_MAX)
-	    return STATUS_INVALID_ARGUMENT;
-    stage->communication_byte_count = sum(stage->communication_byte_count, next - card->arena_byte_count);
-    card->arena_byte_count = next;
-    for (uint32_t index = 0; index < stage->channel_count; index++)
-        stage->channels[index].collective.arena_byte_count = next;
-    return STATUS_OK;
+	if (next == UINT64_MAX)
+		return STATUS_INVALID_ARGUMENT;
+	stage->communication_byte_count = sum(stage->communication_byte_count,
+					      next - card->arena_byte_count);
+	card->arena_byte_count = next;
+	for (uint32_t index = 0; index < stage->channel_count; index++)
+		stage->channels[index].collective.arena_byte_count = next;
+	return STATUS_OK;
+}
+
+/* Optional barrier storage is last, so all inherited offsets stay fixed. */
+MUST_CHECK static result_status
+tp2_stage_sampler_entry(struct v41_tp2_stage_plan *stage)
+{
+	struct v41_card *const card =
+		&stage->model->cards[stage->description.card];
+	uint64_t next = card->arena_byte_count;
+	stage->sampler_entry = (struct linear_range){
+		take(&next, (uint64_t)SAMPLER_SHARD_ENTRY_BYTES),
+		(uint64_t)SAMPLER_SHARD_ENTRY_BYTES
+	};
+	if (next == UINT64_MAX)
+		return STATUS_INVALID_ARGUMENT;
+	stage->communication_byte_count = sum(stage->communication_byte_count,
+					      next - card->arena_byte_count);
+	card->arena_byte_count = next;
+	for (uint32_t index = 0; index < stage->channel_count; index++)
+		stage->channels[index].collective.arena_byte_count = next;
+	return STATUS_OK;
 }
 
 /* exl3_tc_moe: the tensor-core MoE workspace (exl3_tc_records.h) of the calls it takes (at most 64 rows, a tail
@@ -2552,17 +2598,18 @@ tp2_stage_exl3_tc_workspace(struct v41_tp2_stage_plan *stage)
 				       tail_rows :
 				       EXL3_TC_MOST_ROWS;
 	const uint64_t rows = capacity < calls ? capacity : calls;
-	const uint64_t bytes =
-		exl3_tc_workspace_bytes(rows * EXL3_TC_PAIRS_PER_ROW, 640u);
+	const uint64_t bytes = exl3_tc_workspace_bytes(
+		rows * EXL3_TC_PAIRS_PER_ROW, TC_WIDEST_INTERMEDIATE);
 	stage->exl3_tc_workspace =
 		(struct linear_range){ take(&next, bytes), bytes };
 	const uint64_t tail_bytes =
-		overlay ? exl3_tc_workspace_bytes(
-				  tail_rows * EXL3_TC_PAIRS_PER_ROW, 640u) :
+		overlay ? exl3_tc_workspace_bytes(tail_rows *
+							  EXL3_TC_PAIRS_PER_ROW,
+						  TC_WIDEST_INTERMEDIATE) :
 			  0u;
 	if (prefill_rows > EXL3_TC_MOST_ROWS) {
-		const uint64_t prefill_bytes =
-			exl3_tcp_workspace_bytes(prefill_rows, 640u);
+		const uint64_t prefill_bytes = exl3_tcp_workspace_bytes(
+			prefill_rows, TC_WIDEST_INTERMEDIATE);
 		const uint64_t behind =
 			tail_bytes > bytes ?
 				tail_bytes - bytes :
@@ -2911,6 +2958,18 @@ v41_tp2_stage_plan_create(const struct pack_record *pack,
 			((model->exl3_bits[layer] != 0) !=
 			 description->exl3_all_targets))
 			    status = STATUS_UNSUPPORTED;
+		    /* --exl3_tc_moe: the tensor-core families decode EXL3_TC_SUPPORTED_BITS_X2 only (no K4) */
+		    if (status == STATUS_OK && description->exl3_tc_moe &&
+			model->exl3_bits[layer] != 0 &&
+			!exl3_tc_width_supported(
+				exl3_bits_x2(model->exl3_bits[layer]))) {
+			    LOG_ERROR(
+				    "layers.%u.ffn.experts.0.w1.weight: EXL3 stored width %" PRIu32
+				    " has no tensor-core MoE entries in this build"
+				    " (--exl3_tc_moe takes K2, K2.5 and K3)",
+				    layer, model->exl3_bits[layer]);
+			    status = STATUS_UNSUPPORTED;
+		    }
 		    if (status == STATUS_OK && model->exl3_bits[layer] != 0 &&
 			description->exact_output_shards)
 			    status = bb_exl3_output_shard_prepare(
@@ -2934,7 +2993,8 @@ v41_tp2_stage_plan_create(const struct pack_record *pack,
 			    status = STATUS_INVALID_ARGUMENT;
 			    break;
 		    }
-		    /* exact_dense: wq_b by heads, wo_a by groups, wo_b by output channels, each output's full-K chain */
+		    /* exact_dense: wq_b by heads, wo_a by groups, wo_b by output channels, each output's full-K
+		     * chain */
 		    const bool dense_tensor = tensor == V41_DATA_QUERY_UP ||
 					      tensor ==
 						      V41_DATA_OUTPUT_GROUPS ||
@@ -3130,8 +3190,8 @@ v41_tp2_stage_plan_create(const struct pack_record *pack,
 			 (description->router_mma_wide &&
 			  description->limits.row_capacity >
 				  PROGRAM_BATCH_MOST_ROWS))) {
-			    /* router_mma: [splits][64 rows (router_mma_wide: a wide launch's 1,024)][the larger router's 384
-                 * outputs] float32 */
+			    /* router_mma: [splits][64 rows (router_mma_wide: a wide launch's 1,024)][the larger
+                 * router's 384 outputs] float32 */
 			    uint64_t router_next = card->arena_byte_count;
 			    const uint64_t rows =
 				    description->router_mma_wide &&
@@ -3157,6 +3217,8 @@ v41_tp2_stage_plan_create(const struct pack_record *pack,
 					     status;
 		    }
 	    }
+	    if (status == STATUS_OK && description->head_shards)
+		    status = tp2_stage_sampler_entry(stage);
 	    if (status == STATUS_OK) {
 		    struct tp_load_description load = {
 			    .pack = pack,

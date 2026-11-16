@@ -181,8 +181,8 @@ static uint32_t draw_reference(const float *row,
 		kept[token] = token;
 	}
 	struct test_sampler_race race;
-	test_sampler_race(weights, kept, VOCABULARY, session->seed, position,
-			  &race);
+	test_sampler_race(weights, kept, VOCABULARY, step_session_seed(session),
+			  position, &race);
 	return race.winner;
 }
 
@@ -333,9 +333,8 @@ static void round_run(struct test_linear_card *card,
 		      uint64_t sequence, uint64_t seed, bool broken)
 {
 	const struct step_block block = { sequence, TARGET_ROWS, 0 };
-	const struct step_session session = { seed,
-					      seed == 0 ? 0.0f : TEMPERATURE,
-					      1.0f };
+	const struct step_session session = step_session_make(
+		seed, seed == 0 ? 0.0f : TEMPERATURE, 1.0f, 0);
 	struct step_row_record rows[TARGET_ROWS];
 	struct step_row_result results[TARGET_ROWS];
 	for (uint32_t row = 0; row < TARGET_ROWS; row++) {

@@ -7,8 +7,10 @@
  * the phase start, excludes reused prompt tokens and the first generated token from timed decode intervals.
  * Unavailable/zero-duration measurements have elapsed_ns=0; zero work in an observed interval has count=0.
  * Card windows use their own coherent busy observation timestamps; unavailable current observations stay unknown.
- * Zero-initialize a sampler before its first use. Null inputs, invalid ring/count/card/slot bounds or a backwards
- * clock are INVALID_ARGUMENT and leave outputs/history untouched. Counters may wrap modulo 2^64.
+ * Zero-initialize a sampler and give it slot tables (live_sampler_tables, at create) before its first use; window
+ * records name their own slot tables (slot_room entries). Null inputs, invalid ring/count/card/slot bounds, tables
+ * shorter than the engine's slots or a backwards clock are INVALID_ARGUMENT and leave outputs/history untouched.
+ * Counters may wrap modulo 2^64.
  */
 #ifndef LIVE_METRICS_H
 #define LIVE_METRICS_H
@@ -36,7 +38,9 @@ struct live_slot_window {
 struct live_window_record {
 	struct live_measurement prefill, decode, steps;
 	struct live_measurement cards[BACKEND_MAXIMUM_CARDS];
-	struct live_slot_window slots[STATS_SLOT_CAPACITY];
+	uint32_t slot_room;
+	struct live_slot_window *
+		slots; /* by session slot, slot_room entries: the record's own */
 };
 
 struct live_counter_slot {
@@ -52,14 +56,22 @@ struct live_counter_card {
 struct live_counter_sample {
 	uint64_t now_ns, generated, processed, steps;
 	struct live_counter_card cards[BACKEND_MAXIMUM_CARDS];
-	struct live_counter_slot slots[STATS_SLOT_CAPACITY];
 };
 
 struct live_sampler_record {
 	uint32_t next, count;
 	uint64_t next_sample_ns;
 	struct live_counter_sample samples[LIVE_SAMPLE_CAPACITY];
+	uint32_t slot_room;
+	struct live_counter_slot
+		*slots; /* [sample][slot_room]: each sample's slots */
 };
+
+/* Zeroed slot tables of slot_count slots for every sample (at create); live_sampler_tables_free releases them
+ * (NULL-safe). */
+MUST_CHECK result_status
+live_sampler_tables(struct live_sampler_record *sampler, uint32_t slot_count);
+void live_sampler_tables_free(struct live_sampler_record *sampler);
 
 MUST_CHECK result_status live_sampler_take(struct live_sampler_record *sampler,
 					   const struct engine_stats *engine);

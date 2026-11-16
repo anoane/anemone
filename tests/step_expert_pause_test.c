@@ -153,7 +153,10 @@ static void capture_end_expecting(const char *words)
 {
     char text[CAPTURE_CAPACITY];
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, sizeof(text) - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    sizeof(text)) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';

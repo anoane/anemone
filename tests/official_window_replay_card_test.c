@@ -177,8 +177,8 @@ int main(int count, char **arguments)
 	struct official_rope_description rope = {
 		.input = norm.output,
 		.rotation = test_linear_card_work(
-			&card,
-			(uint64_t)rows * OFFICIAL_ROPE_WIDTH * sizeof(float)),
+			&card, (uint64_t)rows * (uint64_t)OFFICIAL_ROPE_WIDTH *
+				       sizeof(float)),
 		.output = test_linear_card_work(&card, rows * row_bytes),
 		.width = WIDTH,
 		.heads = 1,
@@ -212,7 +212,7 @@ int main(int count, char **arguments)
 					      row_bytes) &&
 			 name_part(name, row, "rotation") &&
 			 read_part(reference, name, TEST_CAPTURE_FLOAT32,
-				   OFFICIAL_ROPE_WIDTH, frequency) &&
+				   (uint64_t)OFFICIAL_ROPE_WIDTH, frequency) &&
 			 test_linear_card_put(&card, rope.rotation,
 					      row * sizeof(frequency),
 					      frequency, sizeof(frequency));

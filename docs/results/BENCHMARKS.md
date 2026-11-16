@@ -120,7 +120,7 @@ The standard Fraser prompt/cap is outside exact C1/capacity512 admission.
 Job 57 observes native 1M capacity and one-slot readiness, but fails the required
 server actual-shell-wait/owned-retirement gate. Both its guard and controller
 parent waits return 1. It is **not a qualified capacity pass**; all rates/startup
-timing are withheld. Jobs 58 and 60 did not start. Main subsequently observed
+timing are withheld. Jobs 58 and 60 did not start. The maintainer subsequently observed
 all captured roles absent and all five standing caps restored/free cards, but
 that cleanup observation does not repair the missing original wait. The raw
 failed completion, native client verdict and retirement error remain separate.
@@ -147,7 +147,8 @@ Existing historical scores remain dated; the guard has no independent golden sco
 ## Implementation review notes
 
 The following 297 notes explain bounded source findings behind matrix citations. A source review is not
-a GPU, numerical or quality pass. Statements refer to their recorded implementation review; current
+a GPU, numerical or quality pass. Statements refer to their recorded implementation review, the 6 November 2026
+audit of v0.0.2-alpha: "current" in a note means that audit's tree and build, not a later release's. Current
 runtime qualification and remaining gates are stated in the matrix. Historical claims marked corrected
 were corrected in the published matrix. No archived operator instructions are required to read these notes.
 
@@ -157,9 +158,9 @@ were corrected in the published matrix. No archived operator instructions are re
 
 **Review disposition:** Historical claim corrected.
 
-The runtime notice and actual clean-build/opening identities contradict a4d19/tcb80 as the current identity.
+At the 6 Nov audit, the runtime notice and actual clean-build/opening identities contradicted a4d19/tcb80 as the current identity.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-a2"></a>
 
@@ -167,9 +168,9 @@ Implementation: [source/main.c](../../source/main.c).
 
 **Review disposition:** Bounded source finding.
 
-v0.0.2-alpha is the current program version. Historical tcb build timestamps do not define a public release cadence.
+v0.0.2-alpha was the program version at the 6 Nov audit. Historical tcb build timestamps do not define a public release cadence.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-a3"></a>
 
@@ -189,7 +190,7 @@ Implementation: [Makefile](../../Makefile), [source/backend_cuda_launch.c](../..
 
 Prepared THIN/WIDE/CONE/FULL/BATCH programs use the shared step driver; step_graphs chooses graph replay and raw default is 0. Published recipes explicitly choose 1.
 
-Implementation: [include/anemone/model_seam.h](../../include/anemone/model_seam.h), [source/backend_cuda_launch.c](../../source/backend_cuda_launch.c), [source/main.c](../../source/main.c).
+Implementation: [include/anemone/model_seam.h](../../include/anemone/model_seam.h), [source/backend_cuda_launch.c](../../source/backend_cuda_launch.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-a5"></a>
 
@@ -209,7 +210,7 @@ Implementation: [Makefile](../../Makefile).
 
 Existing project license is AGPL-3.0-or-later, with SPDX metadata and version/startup attribution. The current project is not accurately described as private-license code.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-a7"></a>
 
@@ -229,7 +230,7 @@ Implementation: [source/backend_cuda_launch.c](../../source/backend_cuda_launch.
 
 Current opening canonical checks cover both widths2048/1024 and complete 8/256 controls; the current TP4 donor suite matched 423 same-job C1 text/count/finish signatures. No official/full-state or stochastic equivalence follows.
 
-Implementation: [source/main.c](../../source/main.c), [include/anemone/pack_digest.h](../../include/anemone/pack_digest.h).
+Implementation: [source/commands.c](../../source/commands.c), [include/anemone/pack_digest.h](../../include/anemone/pack_digest.h).
 
 <a id="source-audit-a-a9"></a>
 
@@ -239,7 +240,7 @@ Implementation: [source/main.c](../../source/main.c), [include/anemone/pack_dige
 
 Current workflow uses immutable absolute guarded scripts with recorded argv. Public setup has explicit recipes/four axes; no named --profile switch is admitted.
 
-Implementation: [source/startup_axes.c](../../source/startup_axes.c), [source/main.c](../../source/main.c).
+Implementation: [source/startup_axes.c](../../source/startup_axes.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-a10"></a>
 
@@ -259,7 +260,7 @@ Implementation: [source/model_v41_tp2_peer.h](../../source/model_v41_tp2_peer.h)
 
 Current admitted TP4 default boot-to-ready is 30.130703687667847s. Fresh process; OS/storage caches were not cleared; loader-only time is not isolated.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-a12"></a>
 
@@ -269,7 +270,7 @@ Implementation: [source/main.c](../../source/main.c).
 
 Loader workers, replica discovery and automatic direct/dropped reads exist; no process-surviving persistent host-arena cache is exposed. Warm-restart gain is not isolated.
 
-Implementation: [source/model_v41_tp2_model.c](../../source/model_v41_tp2_model.c), [source/main.c](../../source/main.c), [source/storage_exl3_linux.c](../../source/storage_exl3_linux.c).
+Implementation: [source/model_v41_tp2_model.c](../../source/model_v41_tp2_model.c), [source/commands.c](../../source/commands.c), [source/storage_exl3_linux.c](../../source/storage_exl3_linux.c).
 
 <a id="source-audit-a-a13"></a>
 
@@ -289,7 +290,7 @@ Implementation: [source/chat_completions.c](../../source/chat_completions.c), [s
 
 Omitted axes select no implicit tuple. The literal all-balanced tuple refuses; explicit EXL3 balanced recipe remains separate from axis admission and default mixed identity failure.
 
-Implementation: [source/startup_axes.c](../../source/startup_axes.c), [source/main.c](../../source/main.c).
+Implementation: [source/startup_axes.c](../../source/startup_axes.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-a15"></a>
 
@@ -299,7 +300,7 @@ Implementation: [source/startup_axes.c](../../source/startup_axes.c), [source/ma
 
 Current serve guide enumerates 169 accepted spellings:149 numeric/array and 20 special. Catalog has 196 records/180 CLI names; branch-only catalog entries are not parser options.
 
-Implementation: [source/main.c](../../source/main.c), [source/startup_axes.c](../../source/startup_axes.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/startup_axes.c](../../source/startup_axes.c).
 
 <a id="source-audit-a-a16"></a>
 
@@ -319,7 +320,7 @@ Implementation: [source/server_head.c](../../source/server_head.c), [source/serv
 
 External Nsight tracing can observe release execution, but optional timing/checking hooks compile out of release. draft_trace=1 refuses in release; no current ANEMONE_DIAG API is established by the old claim.
 
-Implementation: [include/anemone/hooks.h](../../include/anemone/hooks.h), [source/main.c](../../source/main.c), [source/engine.c](../../source/engine.c).
+Implementation: [include/anemone/hooks.h](../../include/anemone/hooks.h), [source/commands.c](../../source/commands.c), [source/engine.c](../../source/engine.c).
 
 <a id="source-audit-a-a18"></a>
 
@@ -329,7 +330,7 @@ Implementation: [include/anemone/hooks.h](../../include/anemone/hooks.h), [sourc
 
 Raw CLI temperature0/top_p=1 defaults remain and HTTP can override them. Public operating recipes explicitly set startup T1/top_p=1; deterministic fixture requests explicitly use T0.
 
-Implementation: [source/main.c](../../source/main.c), [source/chat_completions.c](../../source/chat_completions.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/chat_completions.c](../../source/chat_completions.c).
 
 <a id="source-audit-a-a19"></a>
 
@@ -359,7 +360,7 @@ Implementation: [source/backend_cuda_launch.c](../../source/backend_cuda_launch.
 
 TP4 EXL3 chooses four CMP cards; current opening receipt leaves physical PRO 2 idle.
 
-Implementation: [source/main.c](../../source/main.c), [source/model_v41_tp2_peer.h](../../source/model_v41_tp2_peer.h).
+Implementation: [source/commands.c](../../source/commands.c), [source/model_v41_tp2_peer.h](../../source/model_v41_tp2_peer.h).
 
 <a id="source-audit-a-b2"></a>
 
@@ -449,7 +450,7 @@ Implementation: [Makefile](../../Makefile).
 
 Current opening window records CMP 180 W and restores saved caps; PRO is idle400 W under TP4, not retuned.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-b11"></a>
 
@@ -459,7 +460,7 @@ Implementation: [source/main.c](../../source/main.c).
 
 Existing guard locks the CMP clock policy; current opening readiness records CMP 1455–1485 MHz, rather than assuming the requested 1695 MHz is achieved.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-b12"></a>
 
@@ -659,7 +660,7 @@ Implementation: [include/anemone/exl3_layout.h](../../include/anemone/exl3_layou
 
 Current TP4 process-start to readiness30.130703687667847s is a complete boot measurement, not isolated conversion/read/upload time. Pack/digest checks are separate source gates.
 
-Implementation: [source/main.c](../../source/main.c), [include/anemone/pack_digest.h](../../include/anemone/pack_digest.h).
+Implementation: [source/commands.c](../../source/commands.c), [include/anemone/pack_digest.h](../../include/anemone/pack_digest.h).
 
 <a id="source-audit-a-c18"></a>
 
@@ -689,7 +690,7 @@ Implementation: [include/anemone/vision.h](../../include/anemone/vision.h), [sou
 
 One engine process drives four qualified CMP ranks under tp4_exl3; optional parallel host launches do not create four model-server processes.
 
-Implementation: [source/model_v41_tp2_stage.h](../../source/model_v41_tp2_stage.h), [source/main.c](../../source/main.c).
+Implementation: [source/model_v41_tp2_stage.h](../../source/model_v41_tp2_stage.h), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-d2"></a>
 
@@ -819,7 +820,7 @@ Implementation: [include/anemone/exact_ring_records.h](../../include/anemone/exa
 
 tp_wide_exchange=5 uses CE owner sums at attention and CE owner-ring sums at FFN where dispatch conditions fit. It is not FP32 round-once arithmetic at both sites; mode 7 is the current raw split policy.
 
-Implementation: [source/model_v41_tp2_stage.h](../../source/model_v41_tp2_stage.h), [source/model_v41_program.c](../../source/model_v41_program.c), [source/main.c](../../source/main.c).
+Implementation: [source/model_v41_tp2_stage.h](../../source/model_v41_tp2_stage.h), [source/model_v41_program.c](../../source/model_v41_program.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-e3"></a>
 
@@ -979,7 +980,7 @@ Implementation: [include/anemone/ordered_push.h](../../include/anemone/ordered_p
 
 No general compressed-wire optimization is admitted by the balanced recipe. tp_code_wire is a separate original code/scale path; exact_ring lossless sentinel encoding/gather is not a compression-performance claim.
 
-Implementation: [include/anemone/exact_ring_records.h](../../include/anemone/exact_ring_records.h), [source/main.c](../../source/main.c), [source/model_v41_tp2_stage.h](../../source/model_v41_tp2_stage.h).
+Implementation: [include/anemone/exact_ring_records.h](../../include/anemone/exact_ring_records.h), [source/commands.c](../../source/commands.c), [source/model_v41_tp2_stage.h](../../source/model_v41_tp2_stage.h).
 
 <a id="source-audit-a-e19"></a>
 
@@ -1279,7 +1280,7 @@ Implementation: [include/anemone/model_seam.h](../../include/anemone/model_seam.
 
 Prefix reuse and on-disk snapshots are implemented and ordinary serve prefix_reuse defaults 1. Current TP4 warm-cache probe failed identity; do not refresh blanket same-bits or99.1%hit claims.
 
-Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../source/engine.c), [source/server_sessions.c](../../source/server_sessions.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/engine.c](../../source/engine.c), [source/server_sessions.c](../../source/server_sessions.c).
 
 <a id="source-audit-a-h6"></a>
 
@@ -1289,7 +1290,7 @@ Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../so
 
 Raw model context limit 1048576 and source admission are distinct from actual fit. TP4 current opening used 65536×8; its prior one 1M boot remains dated until the prepared current job executes.
 
-Implementation: [include/anemone/model_layout.h](../../include/anemone/model_layout.h), [source/model_v41.c](../../source/model_v41.c), [source/main.c](../../source/main.c).
+Implementation: [include/anemone/model_layout.h](../../include/anemone/model_layout.h), [source/model_v41.c](../../source/model_v41.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-a-h7"></a>
 
@@ -1679,7 +1680,7 @@ Implementation: [source/linear.c](../../source/linear.c), [source/kernel_trunk_m
 
 Chunk programs are selected from prepared row inventories. Eligible THIN wide>=2048 may add the fine ladder; published EXL3 BATCH uses wide 1024, tail 128 and fine 0. A 1024 decoder cap is conditional on prefill_first and the compatible bounded recipe; published prefill_first 0 resolves prefill_decode_rows 0, so the old blanket BATCH default cap is stale. Old planning OOM/headroom observations stay historical.
 
-Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../source/engine.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/engine.c](../../source/engine.c).
 
 <a id="source-audit-b-k2"></a>
 
@@ -1689,7 +1690,7 @@ Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../so
 
 chunks_in_flight 1 retains the exact chunk planner and its reference-form tail. Tail auto resolution is eligibility-dependent: THIN wide>=2048 gets448; eligible BATCH gets128; incompatible plans get0. Tail sets/overlay/staged dense controls remain selectable. Source arithmetic/planner contracts do not refresh the old first-token timings or establish arbitrary cached seams.
 
-Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../source/engine.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/engine.c](../../source/engine.c).
 
 <a id="source-audit-b-k3"></a>
 
@@ -1699,7 +1700,7 @@ Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../so
 
 Cone/dead-half skipping is implemented, with exact-plan/margin prerequisites. The builder computes whether a decoder half is wholly dead and trims only live rows for dead-halves2; stable-prefix mode disables that bound. The cone is a dependency optimization, not a license to discard needed target rows.
 
-Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../source/main.c), [source/model_v41_program.c](../../source/model_v41_program.c).
+Implementation: [source/engine.c](../../source/engine.c), [source/commands.c](../../source/commands.c), [source/model_v41_program.c](../../source/model_v41_program.c).
 
 <a id="source-audit-b-k4"></a>
 
@@ -1709,7 +1710,7 @@ Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../
 
 The current EXL3 builder can prepare pool entries/window writes per chunk, compute queries per piece, scan index spans, and write compact half outputs. These controls are wired from the CLI and guarded by applicable chunk/tensor layouts. They are not a single all-40-layer integer-preparation kernel. Historical launch-count/speed savings require their old or fresh traces.
 
-Implementation: [source/main.c](../../source/main.c), [source/model_v41_program.c](../../source/model_v41_program.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/model_v41_program.c](../../source/model_v41_program.c).
 
 <a id="source-audit-b-k5"></a>
 
@@ -1719,7 +1720,7 @@ Implementation: [source/main.c](../../source/main.c), [source/model_v41_program.
 
 EXL3 split_overlap defaults to V41_DATA_SPLIT_JOINT_DOWN (mode 7). The builder selects a joint-down phase schedule with SIDE/RESUME/JOIN dependencies and skips dead sums where permitted. Explicit other modes remain parser controls. The timing delta quoted in the old row is historical.
 
-Implementation: [source/main.c](../../source/main.c), [source/model_v41_tp2_stage.h](../../source/model_v41_tp2_stage.h), [source/model_v41_program.c](../../source/model_v41_program.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/model_v41_tp2_stage.h](../../source/model_v41_tp2_stage.h), [source/model_v41_program.c](../../source/model_v41_program.c).
 
 <a id="source-audit-b-k6"></a>
 
@@ -1729,7 +1730,7 @@ Implementation: [source/main.c](../../source/main.c), [source/model_v41_tp2_stag
 
 Chunk/decode scheduling exists, but the old qualified-recipe default description is not the published current EXL3 default: its prefill_first 0 resolves caps/order 0. The default mixed workload has recorded identity failures; rates must stay withheld. The separate prompt_chunks 1 guard prevents runnable prompt chunks donating rows into ordinary BATCH; its functional/identity scope must not be transferred to the default. Original PP5 and exact C1 have separate qualification.
 
-Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../source/engine.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/engine.c](../../source/engine.c).
 
 <a id="source-audit-b-k7"></a>
 
@@ -1739,7 +1740,7 @@ Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../so
 
 step_graphs controls startup graph preparation over the prepared programs, including wide/full programs. Raw CLI omission is0; all three published measured launch commands explicitly use1. Graph capture can fall back eagerly at a BUSY graph-capacity boundary, so a parsed1 alone does not prove every program was captured.
 
-Implementation: [source/step_graphs.c](../../source/step_graphs.c), [source/main.c](../../source/main.c).
+Implementation: [source/step_graphs.c](../../source/step_graphs.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-k8"></a>
 
@@ -1819,7 +1820,7 @@ Implementation: [source/step_pipeline.c](../../source/step_pipeline.c).
 
 prefill_margin participates in the exact cone bound; default127 is below the reference cone margin and keeps dependency closure. engine_full_cone_behind returns0 for incompatible/disabled plans. Kept-prefix behavior depends on the restart/cache provenance; old timing and exact-hash evidence stay scoped.
 
-Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../source/main.c).
+Implementation: [source/engine.c](../../source/engine.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-l1"></a>
 
@@ -1829,7 +1830,7 @@ Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../
 
 The engine supports THIN and BATCH owners with a prepared row/verifier menu. Current defaults are profile-dependent: published EXL3 uses BATCH, core_once 3, draft_wide 3, pipeline 1 and order 0; original balanced is PP5 THIN with pipeline 5; exact is serial C1 without speculation. The old universal core_once 2/order 2 scheduler text is stale.
 
-Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../source/engine.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/engine.c](../../source/engine.c).
 
 <a id="source-audit-b-l2"></a>
 
@@ -1839,7 +1840,7 @@ Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../so
 
 Current BATCH menu capacity is eight, and the published EXL3 parser snapshot resolves rows8,8,12,12,16,24,32,48 with verifiers1,2,2,4,4,4,8,8. The engine chooses the first menu entry that can hold both live rows and drafting owners. Exact/original published profiles do not enable this EXL3 menu.
 
-Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../source/main.c).
+Implementation: [source/engine.c](../../source/engine.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-l3"></a>
 
@@ -1849,7 +1850,7 @@ Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../
 
 Graphs are created from explicit prepared launches and branch dependencies, with SIDE/RESUME/JOIN converted into CUDA graph edges. Native counts depend on the prepared program/shape; source confirms launch trims and graph mechanisms, not the historical 1302→1093 or 2238→1860 runtime counts.
 
-Implementation: [source/backend_cuda_launch.c](../../source/backend_cuda_launch.c), [source/main.c](../../source/main.c).
+Implementation: [source/backend_cuda_launch.c](../../source/backend_cuda_launch.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-l4"></a>
 
@@ -1869,7 +1870,7 @@ Implementation: [source/backend_cuda_launch.c](../../source/backend_cuda_launch.
 
 Steps in flight are profile-dependent: original balanced serving automatically selects five PP flights when multi-slot THIN DSpark is used and no explicit depth is given; published EXL3 BATCH retains 1; strict exact requires 1. The blanket THIN2/BATCH1 statement omits the current PP5 gate. TP whole flights remain serialized by the group coordinator.
 
-Implementation: [source/main.c](../../source/main.c), [source/step_pipeline.c](../../source/step_pipeline.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/step_pipeline.c](../../source/step_pipeline.c).
 
 <a id="source-audit-b-l6"></a>
 
@@ -1899,7 +1900,7 @@ Implementation: [source/engine.c](../../source/engine.c), [source/step.c](../../
 
 Global waiting queue defaults 16 and omitted user queue derives half that (8). Ordering modes/cadence are selectable; current published EXL3 resolves order 0 rather than the conditional bounded order 2. session_grace_seconds and namespace-aware cache/session paths are merged, not branch-only. Scheduler mechanics do not erase current default mixed identity failures or establish universal fairness.
 
-Implementation: [source/server.c](../../source/server.c), [source/engine.c](../../source/engine.c), [source/main.c](../../source/main.c).
+Implementation: [source/server.c](../../source/server.c), [source/engine.c](../../source/engine.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-l9"></a>
 
@@ -1909,7 +1910,7 @@ Implementation: [source/server.c](../../source/server.c), [source/engine.c](../.
 
 session_slots is a startup allocation, not a universal hardcoded8. Published balanced recipes allocate8 × 65536; strict exact allocates C1/512. Separate PP5 two/four × 1M readiness receipts prove allocation only and do not expand full-context inference qualification.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-l10"></a>
 
@@ -1929,7 +1930,7 @@ Implementation: [source/kernel_sampler.cu](../../source/kernel_sampler.cu), [sou
 
 The C tokenizer consumes generated binary tables. C HTTP/SSE formatting decodes content, reasoning and tool deltas, buffers stop prefixes and emits completion/usage termination. Four current published-command functional smokes passed; tool/stream edge cases have separate host witnesses.
 
-Implementation: [source/main.c](../../source/main.c), [source/chat_completions.c](../../source/chat_completions.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/chat_completions.c](../../source/chat_completions.c).
 
 <a id="source-audit-b-l12"></a>
 
@@ -1949,7 +1950,7 @@ Implementation: [source/chat_completions.c](../../source/chat_completions.c), [s
 
 BATCH per-owner depth can be selected from confidence/costs and menu constraints; depth is not unconditionally five. Current EXL3 core_once default is3, with draft_wide 3; original profile restores core_once 2. Session modes6–11 are current code and optional, not unmerged experiments. The published command resolves session mode 0 and ties 0.
 
-Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../source/main.c).
+Implementation: [source/engine.c](../../source/engine.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-l14"></a>
 
@@ -1959,7 +1960,7 @@ Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../
 
 BATCH costs start from supplied/qualified menu prices and move one eighth toward each landed step. Mode11 additionally records executed (rows,verifiers) shape costs for decode-only observations. Modes10/11 are implemented and parser-selectable on current source, not branch-only; neither is the published default or a general speed winner.
 
-Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../source/main.c), [tests/draft_session_test.c](../../tests/draft_session_test.c), [tests/engine_batch_test.c](../../tests/engine_batch_test.c).
+Implementation: [source/engine.c](../../source/engine.c), [source/commands.c](../../source/commands.c), [tests/draft_session_test.c](../../tests/draft_session_test.c), [tests/engine_batch_test.c](../../tests/engine_batch_test.c).
 
 <a id="source-audit-b-m1"></a>
 
@@ -1979,7 +1980,7 @@ Implementation: [include/anemone/model_layout.h](../../include/anemone/model_lay
 
 There is no one global fixed-K5 default: non-EXL3 restores draft_policy_default cost 1; EXL3 omitted policy is rate 2 when BATCH or multi-session and fixed 0 otherwise. The three tested published profiles resolve original policy 1, EXL3 policy 2, exact speculation-off; draft_wide 3 and session_acceptance 0 are independent fields.
 
-Implementation: [source/draft_policy.c](../../source/draft_policy.c), [source/main.c](../../source/main.c).
+Implementation: [source/draft_policy.c](../../source/draft_policy.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-m3"></a>
 
@@ -1999,7 +2000,7 @@ Implementation: [include/anemone/model_layout.h](../../include/anemone/model_lay
 
 Fixed/cost/rate/adaptive policies are implemented, with target-keyed verification and optional per-session modes through 11. Actual omitted policy depends on placement/workload; fixed-five is selectable, not a universal serving default. All modes remain subject to startup and target numerical qualification.
 
-Implementation: [source/draft_policy.c](../../source/draft_policy.c), [source/engine.c](../../source/engine.c), [source/main.c](../../source/main.c).
+Implementation: [source/draft_policy.c](../../source/draft_policy.c), [source/engine.c](../../source/engine.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-m5"></a>
 
@@ -2059,7 +2060,7 @@ Implementation: [source/model_v41_program.c](../../source/model_v41_program.c).
 
 EXL3 draft shards/layers are conditional startup controls: draft_shards requires head_shards, and draft_layers requires EXL3 BF16 wire, shards and compatible BATCH draft/head rows. Published EXL3 enables them; original PP5 uses its native draft placement; strict exact speculation is off.
 
-Implementation: [source/main.c](../../source/main.c), [source/model_v41_program.c](../../source/model_v41_program.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/model_v41_program.c](../../source/model_v41_program.c).
 
 <a id="source-audit-b-m11"></a>
 
@@ -2119,7 +2120,7 @@ Implementation: [source/model_v41_program.c](../../source/model_v41_program.c).
 
 HTTP requests accept temperature0..2, top_p>0..1 and uint64 seed; GPU positive-temperature scaling floors at 1e-5. CLI temperature has its separately documented wider parser range. Top-k/penalty execution is absent. Unknown truthy members and named unsupported controls refuse, but generic null/false/zero compatibility members may be accepted; the blanket nothing-silently-ignored claim is too broad.
 
-Implementation: [source/chat_completions.c](../../source/chat_completions.c), [source/main.c](../../source/main.c), [include/anemone/sampler_records.h](../../include/anemone/sampler_records.h), [tests/chat_completions_test.c](../../tests/chat_completions_test.c).
+Implementation: [source/chat_completions.c](../../source/chat_completions.c), [source/commands.c](../../source/commands.c), [include/anemone/sampler_records.h](../../include/anemone/sampler_records.h), [tests/chat_completions_test.c](../../tests/chat_completions_test.c).
 
 <a id="source-audit-b-n2"></a>
 
@@ -2159,7 +2160,7 @@ Implementation: [include/anemone/sampler_records.h](../../include/anemone/sample
 
 The exact chunk planner retains reference-form tails and chooses whole256-row granules from prepared programs. Fresh canonical 2048/1024 checks support the retained selected-record scope; arbitrary cached seams, owner order, forms or full-state equality are separate gates. Strict exact profile itself disables wide chunks.
 
-Implementation: [source/engine.c](../../source/engine.c), [source/main.c](../../source/main.c).
+Implementation: [source/engine.c](../../source/engine.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-n6"></a>
 
@@ -2189,7 +2190,7 @@ Implementation: [source/chat_completions.c](../../source/chat_completions.c), [t
 
 Reference definitions are profile-specific: strict original exact is serial PP5 C1, context<=512, no speculation, official_reference1 and strict controls; original balanced may use numerics exact without exactness exact; EXL3 balanced is relaxed/native reference arithmetic. Native PRO placement changes arithmetic by assigned layer. Existing selected/control evidence is not full official-model equality.
 
-Implementation: [source/main.c](../../source/main.c), [include/anemone/attention_core_records.h](../../include/anemone/attention_core_records.h).
+Implementation: [source/commands.c](../../source/commands.c), [include/anemone/attention_core_records.h](../../include/anemone/attention_core_records.h).
 
 <a id="source-audit-b-o2"></a>
 
@@ -2199,7 +2200,7 @@ Implementation: [source/main.c](../../source/main.c), [include/anemone/attention
 
 Bit-identity proof must name its actual scope: selected records, full conditional heads, persisted-state bytes, or text/count/finish are different witnesses. State diagnostic code uses DIAG_STATE_DIGESTS (without ANEMONE_ prefix), emits session 0 ring/compressor/pool/key blocks of 64 KiB, and does not alone prove every state or official equality. Fresh opening own-family identities remain separately scoped.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-o3"></a>
 
@@ -2209,7 +2210,7 @@ Implementation: [source/main.c](../../source/main.c).
 
 Arithmetic/order defaults depend on placement and explicit profile controls; EXL3 BF16 wire, relaxed products and TC paths are not universal bit-exact defaults. tp_decode_round_once exists on current main with restrictive admission, so branch-only language is stale. Published recipes/real-parser snapshots define active values; optional availability does not promote experiments.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-o4"></a>
 
@@ -2219,7 +2220,7 @@ Implementation: [source/main.c](../../source/main.c).
 
 Zero difference of selected logits does not bound max deviation over all 129280 logits. The shipped scorer validates complete F32 conditional captures and reports full-vocabulary delta metrics; numerical values require executed aligned captures, not source inspection or selected records.
 
-Implementation: [tools/golden_score](../../tools/golden_score.py), [source/main.c](../../source/main.c).
+Implementation: [tools/golden_score](../../tools/golden_score.py), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-o5"></a>
 
@@ -2259,7 +2260,7 @@ Implementation: [tools/golden_score](../../tools/golden_score.py), [tests/teache
 
 Long-context quality is distinct from parser admission, allocation/readiness, short donor identity and strict exact C1/512. The current source allocates context capacities but cannot establish needle/task quality at 128K/512K/1M. These long-term alpha goals remain honestly deferred unless separately run.
 
-Implementation: [source/main.c](../../source/main.c), [include/anemone/attention_core_records.h](../../include/anemone/attention_core_records.h).
+Implementation: [source/commands.c](../../source/commands.c), [include/anemone/attention_core_records.h](../../include/anemone/attention_core_records.h).
 
 <a id="source-audit-b-o9"></a>
 
@@ -2299,7 +2300,7 @@ Implementation: [tools/golden_score](../../tools/golden_score.py).
 
 No universal sensitivity conclusion follows from exactness labels or selected-token identity. Sensitivity must be stated for an explicit precision/order change and aligned fixture with numerical/task outcomes; existing native PRO and EXL3 distinctions remain material.
 
-Implementation: [source/main.c](../../source/main.c), [include/anemone/attention_core_records.h](../../include/anemone/attention_core_records.h).
+Implementation: [source/commands.c](../../source/commands.c), [include/anemone/attention_core_records.h](../../include/anemone/attention_core_records.h).
 
 <a id="source-audit-b-p1"></a>
 
@@ -2339,7 +2340,7 @@ Implementation: [source/step_graphs.c](../../source/step_graphs.c), [source/serv
 
 Free headroom is an actual hardware allocation/readiness measurement for an exact profile. Fresh PP5 two/four × 1M readiness is allocation-only; it neither refreshes all old per-card free-MiB cells nor proves full-context numerical/task quality. Strict exact remains C1/512.
 
-Implementation: [source/main.c](../../source/main.c), [source/model_v41_tp2_model.c](../../source/model_v41_tp2_model.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/model_v41_tp2_model.c](../../source/model_v41_tp2_model.c).
 
 <a id="source-audit-b-p5"></a>
 
@@ -2389,7 +2390,7 @@ Implementation: [include/anemone/sampler_records.h](../../include/anemone/sample
 
 Current builder fuses eligible site fronts, pool/window work, query/index spans and joint-down schedules; trims and switches are explicit. Fusion applies by format/shape/profile and cannot be stated as one global program shared by exact, original and EXL3. Historical savings remain separately dated.
 
-Implementation: [source/model_v41_program.c](../../source/model_v41_program.c), [source/main.c](../../source/main.c).
+Implementation: [source/model_v41_program.c](../../source/model_v41_program.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-q5"></a>
 
@@ -2409,7 +2410,7 @@ Implementation: [source/kernel_trunk_mma.cu](../../source/kernel_trunk_mma.cu), 
 
 Pack digest kernels validate load-time data. State diagnostics are enabled by DIAG_STATE_DIGESTS, not ANEMONE_DIAG_STATE_DIGESTS, and emit 64 KiB blocks of session 0 ring/compressor/pool/key ranges after generation. Historical counts 115 and diagnostic overhead require the actual program/run, not source inference.
 
-Implementation: [source/backend_cuda.c](../../source/backend_cuda.c), [source/main.c](../../source/main.c).
+Implementation: [source/backend_cuda.c](../../source/backend_cuda.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-q7"></a>
 
@@ -2449,7 +2450,7 @@ Implementation: [source/engine.c](../../source/engine.c), [source/step_pipeline.
 
 CPU threads depend on mode: loader reader threads transfer/check pieces; engine owns its stepping thread; pipeline may create one TP group worker or one worker per PP card. tp_parallel_launch is an optional control. There is no single fixed thread count for all profiles.
 
-Implementation: [source/loader.c](../../source/loader.c), [source/engine.c](../../source/engine.c), [source/step_pipeline.c](../../source/step_pipeline.c), [source/main.c](../../source/main.c).
+Implementation: [source/loader.c](../../source/loader.c), [source/engine.c](../../source/engine.c), [source/step_pipeline.c](../../source/step_pipeline.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-r3"></a>
 
@@ -2459,7 +2460,7 @@ Implementation: [source/loader.c](../../source/loader.c), [source/engine.c](../.
 
 Runtime uses the project C tokenizer over converted tokenizer.bin/front_end.tables with validated binary header/magic/version/counts. Official tokenizer.json is the producer input, not the file consumed directly by the inference tokenizer. The bounded producer regenerated the actual binary byte-identically.
 
-Implementation: [source/main.c](../../source/main.c), [source/tokenizer.c](../../source/tokenizer.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/tokenizer.c](../../source/tokenizer.c).
 
 <a id="source-audit-b-r4"></a>
 
@@ -2479,7 +2480,7 @@ Implementation: [source/server.c](../../source/server.c), [source/chat_completio
 
 Release hooks0/0 compile out LOG_ERROR and warning macros as well as diagnostic logs. Explicit product fprintf/fputs startup/version/errors and live stats remain separate code paths; errors never dropped applies only when logging is compiled. Per-program BATCH cost/stat reporting does not change that distinction.
 
-Implementation: [include/anemone/hooks.h](../../include/anemone/hooks.h), [Makefile](../../Makefile), [source/main.c](../../source/main.c), [tests/hooks_test.c](../../tests/hooks_test.c).
+Implementation: [include/anemone/hooks.h](../../include/anemone/hooks.h), [Makefile](../../Makefile), [source/commands.c](../../source/commands.c), [tests/hooks_test.c](../../tests/hooks_test.c).
 
 <a id="source-audit-b-r6"></a>
 
@@ -2499,7 +2500,7 @@ Implementation: [source/chat_completions.c](../../source/chat_completions.c), [s
 
 Defaults are selected by placement, axes, compatible recipe and explicit controls; current EXL3 balanced uses relaxed arithmetic. Fastest bit-identical path default is not a universal promise, especially with default mixed identity failure and placement-dependent native PRO arithmetic. Real parser snapshots and strict exact refusals define the contract.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-s1"></a>
 
@@ -2509,7 +2510,7 @@ Implementation: [source/main.c](../../source/main.c).
 
 Context/session capacities are startup allocations. Published balanced commands use8 × 65536, strict exact C1/512; current original PP5 two/four × 1048576 readiness receipts expand allocation evidence only. Full-context inference, all-slot quality and arbitrary EXL3 multi-1M capacity remain separate gates.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-s2"></a>
 
@@ -2519,7 +2520,7 @@ Implementation: [source/main.c](../../source/main.c).
 
 Exact-prefix modes, stable-prefix controls, namespace scope and session forks are merged current code, not branch-only. Admission restricts stable/exact/fork reuse to compatible EXL3 plans; published balanced uses legacy reuse 1/exact 0/stable 0/fork 0, strict exact disables reuse. Default mixed and arbitrary warm/cold invariance remain unqualified/failing as separately recorded.
 
-Implementation: [source/main.c](../../source/main.c), [source/server_cache.c](../../source/server_cache.c), [source/server_forks.c](../../source/server_forks.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/server_cache.c](../../source/server_cache.c), [source/server_forks.c](../../source/server_forks.c).
 
 <a id="source-audit-b-s3"></a>
 
@@ -2529,7 +2530,7 @@ Implementation: [source/main.c](../../source/main.c), [source/server_cache.c](..
 
 Namespace-aware session reuse/snapshot v4, grace controls and save/load thresholds are merged. Snapshots bind model/tokenizer identity, namespace, lengths and payload; old-version files are isolated. Defaults include save 1024/load 256/idle 120. Exact profile remains restricted and measured old transfer latencies remain historical page-cache observations.
 
-Implementation: [source/main.c](../../source/main.c), [source/server_sessions.c](../../source/server_sessions.c), [source/server_cache.c](../../source/server_cache.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/server_sessions.c](../../source/server_sessions.c), [source/server_cache.c](../../source/server_cache.c).
 
 <a id="source-audit-b-s4"></a>
 
@@ -2689,7 +2690,7 @@ Implementation: [source/backend_cuda.c](../../source/backend_cuda.c).
 
 Known limitations must be current and profile-scoped: default EXL3 mixed identity failures remain rates-withheld, while guard and original PP5 results are separate. Cache/namespace/Responses/profile code is now merged, and original PP5 two/four × 1M allocation has new readiness receipts. Historical OOM/headroom and branch-only cells are not a current universal failure list.
 
-Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../source/engine.c), [source/server_responses_request.c](../../source/server_responses_request.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/engine.c](../../source/engine.c), [source/server_responses_request.c](../../source/server_responses_request.c).
 
 <a id="source-audit-b-u2"></a>
 
@@ -2719,7 +2720,7 @@ Implementation: [source/server.c](../../source/server.c), [source/chat_completio
 
 Fresh6 November own-family canonical two-boot selected records and846 donor comparisons retain scoped T0 restart/concurrency evidence. Exact-prefix/stable/namespace controls are merged, so old branch-only phrasing is stale, but arbitrary warm/cold restart invariance and official full-state equality remain unqualified.
 
-Implementation: [source/main.c](../../source/main.c), [source/server_sessions.c](../../source/server_sessions.c), [source/engine.c](../../source/engine.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/server_sessions.c](../../source/server_sessions.c), [source/engine.c](../../source/engine.c).
 
 <a id="source-audit-b-u5"></a>
 
@@ -2959,7 +2960,7 @@ Implementation: [source/model_v41_program.c](../../source/model_v41_program.c).
 
 Current Anemone release packaging is one native executable plus source/docs and separately prepared model/tokenizer/map inputs. A Python-free/Git-free isolated source-export build actually passed; the competitor22GBimage/private-stage cell remains historical external evidence, not re-audited here.
 
-Implementation: [Makefile](../../Makefile), [source/main.c](../../source/main.c).
+Implementation: [Makefile](../../Makefile), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-ac2"></a>
 
@@ -2969,7 +2970,7 @@ Implementation: [Makefile](../../Makefile), [source/main.c](../../source/main.c)
 
 Anemone now implements four orthogonal axis controls and explicit original-exact/original-balanced/EXL3-balanced measured recipes; presets planned is stale. Original balanced numerics exact is not strict exactness exact. Strict exact is serial C1/512; native PRO layer placement remains arithmetic-dependent. Historical Curtis lanes are unchanged.
 
-Implementation: [source/main.c](../../source/main.c).
+Implementation: [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-ac3"></a>
 
@@ -2999,7 +3000,7 @@ Implementation: [source/kernel_trunk_mma.cu](../../source/kernel_trunk_mma.cu), 
 
 EXL3 BF16/TC dispatch uses small-row routed TC kernels and separate prefill-sized TC programs when admitted. Anemone does not use TC MoE for every <=64 row call across original/exact profiles; main masks EXL3-only controls and the strict original path uses its own arithmetic. Historical Curtis path table remains unchanged.
 
-Implementation: [source/main.c](../../source/main.c), [source/model_v41_program.c](../../source/model_v41_program.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/model_v41_program.c](../../source/model_v41_program.c).
 
 <a id="source-audit-b-ac6"></a>
 
@@ -3019,7 +3020,7 @@ Implementation: [include/anemone/attention_core_records.h](../../include/anemone
 
 Anemone TP uses its own peer exchanges/owner sums/ring variants; reusable ordered collectives separately support explicit direct/host routes. Current EXL3 load still requires qualified peer masks, so a generic no-P2P host fallback cannot be inferred. Historical Curtis transport/NUMA/NCCL description is not requalified.
 
-Implementation: [source/main.c](../../source/main.c), [source/model_v41_tp2_model.c](../../source/model_v41_tp2_model.c), [source/ordered_collective.c](../../source/ordered_collective.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/model_v41_tp2_model.c](../../source/model_v41_tp2_model.c), [source/ordered_collective.c](../../source/ordered_collective.c).
 
 <a id="source-audit-b-ac8"></a>
 
@@ -3029,7 +3030,7 @@ Implementation: [source/main.c](../../source/main.c), [source/model_v41_tp2_mode
 
 Current EXL3 exact-plan mechanics include cone/margin127, chunks_in_flight 1, pool/query/index chunk work and split mode 7, not the stale mode 6 current-default text. Published measured BATCH uses wide 1024/tail 128/fine 0; THIN2048 is a separate recipe. Strict original exact disables wide/full prefill. Historical Curtis MOE_RAGGED cell is retained.
 
-Implementation: [source/main.c](../../source/main.c), [source/model_v41_program.c](../../source/model_v41_program.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/model_v41_program.c](../../source/model_v41_program.c).
 
 <a id="source-audit-b-ac9"></a>
 
@@ -3049,7 +3050,7 @@ Implementation: [source/model_v41_program.c](../../source/model_v41_program.c).
 
 Anemone fixed policy 0 is selectable but omitted policy depends on placement/workload: original restores cost 1, EXL3 BATCH/multi-session rate 2, EXL3 single-session/noBATCH fixed 0. Published commands and parser snapshots define actual controls. Historical Curtis fixed 5/controller conclusions remain external historical evidence.
 
-Implementation: [source/draft_policy.c](../../source/draft_policy.c), [source/main.c](../../source/main.c).
+Implementation: [source/draft_policy.c](../../source/draft_policy.c), [source/commands.c](../../source/commands.c).
 
 <a id="source-audit-b-ac11"></a>
 
@@ -3099,7 +3100,7 @@ Implementation: [tests/model_v41_draft_program_test.c](../../tests/model_v41_dra
 
 Bitwise identity to the original without scope is too strong. Strict original exact is admitted C1/512/T0 source-fixture scope; original balanced and EXL3 balanced have distinct arithmetic/placement. Selected own-family records, donor text identity and full conditional-head metrics are different witnesses and none creates universal official equality. Historical Curtis precision evaluation is retained unchanged.
 
-Implementation: [source/main.c](../../source/main.c), [tools/golden_score](../../tools/golden_score.py).
+Implementation: [source/commands.c](../../source/commands.c), [tools/golden_score](../../tools/golden_score.py).
 
 <a id="source-audit-b-ac16"></a>
 
@@ -3119,5 +3120,5 @@ Implementation: [source/engram.c](../../source/engram.c), [source/step_pipeline.
 
 This historical competitor weak-spots row has no Anemone comparison text to validate. Current Anemone caveats remain explicit elsewhere: default mixed identity rates withheld, strict exact C1/512 only, and1M allocation/readiness not full-context quality. No claim is made about current competitor rates, topology, private controls or regressions.
 
-Implementation: [source/main.c](../../source/main.c), [source/engine.c](../../source/engine.c).
+Implementation: [source/commands.c](../../source/commands.c), [source/engine.c](../../source/engine.c).
 

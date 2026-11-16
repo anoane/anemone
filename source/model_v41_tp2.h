@@ -60,9 +60,11 @@ struct v41_tp2_layer_plan {
 		router_partials; /* model_v41_tp2_stage.h: router_mma's partials, or none */
 	bool ordered_wide; /* model_v41_tp2_stage.h: wide BF16-row attention trunk products by the ordered wide form */
 	uint32_t graph_branches; /* model_v41_tp2_stage.h: the TC-MoE FFN's shared expert a graph branch */
-	bool bf16_slab_rings; /* model_v41_tp2_stage.h: a piece's attention completed a slab at a time by the BF16 ring */
+	bool bf16_slab_rings; /* model_v41_tp2_stage.h: a piece's attention completed a slab at a time by the BF16
+				 ring */
 	uint32_t wide_exchange; /* model_v41_tp2_stage.h: a piece's ordered push by tp_exchange.h's wide form */
-	uint32_t split_overlap; /* model_v41_tp2_stage.h: a chunked layer in two halves, the sums beside the other half */
+	uint32_t split_overlap; /* model_v41_tp2_stage.h: a chunked layer in two halves, the sums beside the other
+				   half */
 	uint32_t split_least_rows; /* model_v41_tp2_stage.h: split_overlap's least chunk rows */
 	bool launches_untrimmed; /* model_v41_tp2_stage.h: --tp_launch_trims=0, the launches as before 3 November */
 	bool chunk_core; /* model_v41_tp2_stage.h: a chunked step's attention core over the chunk */

@@ -2,12 +2,15 @@
 /* Private driver ownership/completion state shared by eager and graph startup. */
 #ifndef STEP_DRIVER_H
 #define STEP_DRIVER_H
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <time.h>
 #include "anemone/step.h"
 #include "anemone/engine_stats.h"
 #include "step_rounds.h"
+
+struct engram_step;
 
 #define STEP_PAUSE_REGIONS \
 	2u /* per expert pause: its jobs in the block, its experts' copies */
@@ -38,7 +41,14 @@ struct step_driver {
 		programs; /* the first's card areas and hand-offs are every one's */
 	const struct execution_program **
 		image_programs; /* parallel table; only steps with IMAGE rows select it */
+	const struct execution_program **flight_programs,
+		**flight_image_programs; /* [bank][program], copied startup pointer tables */
+	uint32_t flight_bank_count;
+	size_t flight_graph_stride; /* segments in one bank's ordinary program table */
+	struct visit_lease flight_owner_guard;
 	const struct engram_record *engram;
+	struct engram_step *
+		engram_step; /* step I/O without a pipeline (a pipeline slot holds its own); NULL: gathers */
 	struct step_images *images;
 	unsigned char *staging;
 	uint32_t *run_graphs; /* [program][segment]: graph handle + 1, or eager */
@@ -189,16 +199,25 @@ MUST_CHECK result_status step_row_ids(const struct step_driver *driver,
 /* A card's n-gram rows gathered from row_ids into its staging in block (the TP coordinator's steps: at submit, behind
  * the step in flight). */
 MUST_CHECK result_status step_card_gather(struct step_driver *driver,
+					  struct engram_step *engram_step,
 					  unsigned char *block,
 					  const uint64_t *row_ids,
 					  uint32_t row_count, uint32_t card);
 /* A card's step area and n-gram rows go up from block, the rows first gathered there from row_ids where it gathers
  * (once a step: a card visited again puts the same bytes up again). */
 MUST_CHECK result_status step_card_begin(struct step_driver *driver,
+					 struct engram_step *engram_step,
 					 unsigned char *block,
 					 const uint64_t *row_ids,
 					 uint32_t row_count, uint32_t card,
 					 bool gathers);
+/* Step I/O (engram_step.h): every table's blocks of the step's rows read at once, as soon as the row ids are known;
+ * the rows land in the staging of the first card that reads each table. OK at once without step I/O. */
+MUST_CHECK result_status step_engram_issue(const struct step_driver *driver,
+					   struct engram_step *engram_step,
+					   unsigned char *block,
+					   const uint64_t *row_ids,
+					   uint32_t row_count);
 void step_block_write(unsigned char *block, uint64_t sequence,
 		      const struct step_row_record *rows, uint32_t row_count);
 /* A wide program's views of the step (model_seam.h) into block at the driver's view staging: the same views on every
@@ -239,6 +258,11 @@ const struct execution_program *
 step_program_for_rows(const struct step_driver *driver,
 		      const struct step_row_record *rows, uint32_t row_count,
 		      const uint32_t **run_graphs_out);
+/* Select an attached immutable table by actual slot index. A default driver returns base unchanged. */
+const struct execution_program *
+step_flight_program(const struct step_driver *driver,
+		    const struct execution_program *base, uint32_t bank,
+		    const uint32_t **run_graphs_out);
 /* Optional startup companion map: enqueue each complete pair before processing either outgoing boundary. */
 MUST_CHECK result_status step_companions_run(
 	struct step_driver *driver, const struct execution_program *program,
@@ -268,6 +292,14 @@ void step_history_commit(struct step_driver *driver,
  * driver's staging (staging_is_read: some copy may still read it). Accepts a driver without a pipeline. */
 void step_pipeline_stop(struct step_driver *driver);
 void step_pipeline_free(struct step_driver *driver, bool staging_is_read);
+#if CHECKING_HOOKS_ENABLED
+/* Tests only: pipeline slot index's step I/O record (NULL: gathers) and its staging block, so that a test can leave a
+ * slot issued with a read in flight at teardown, which the pipeline's own cards never do (they wait on every table a
+ * step issued). Without a pipeline or past its depth: STATUS_INVALID_ARGUMENT, and the outputs stay untouched. */
+MUST_CHECK result_status step_pipeline_slot_record(
+	const struct step_driver *driver, uint32_t slot_index,
+	struct engram_step **engram_step_out, unsigned char **block_out);
+#endif
 /* No step in flight: true without a pipeline. */
 bool step_pipeline_is_idle(const struct step_driver *driver);
 /* Step sequence still in flight: false without a pipeline. */

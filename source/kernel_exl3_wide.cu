@@ -1,28 +1,39 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
  * kernel_exl3_wide.cu: EXL3 routed-expert products and transforms for the TP passes' wide (chunked) and thin calls,
- * by exl3_v3_claude (R&D epoch02/src42 sources, unchanged arithmetic). Device code only, one module
+ * by exl3_v3_b (R&D epoch02/src42 sources, unchanged arithmetic). Device code only, one module
  * "kernel_exl3_wide". Contract: anemone/exl3_records.h (the 80-byte exl3_expert_record) and kernel_exl3.cu's
- * launches: every product writes the words of kernel_exl3.cu's exl3_{gate_up,down}_k{2,3} (slice s an
+ * launches: every product writes the words of kernel_exl3.cu's exl3_{gate_up,down}_<width> (slice s an
  * in-order m16n8k16 chain over its K tiles from +0, the four slices' partials added in order from +0), every
  * transform those of exl3_{input,activate,finish}. Only the work mapping differs:
- *   - exl3_c_{gate_up,down}_k{2,3}_t8_g1: a warp decodes 8 adjacent output tiles of a K tile; grid x = width
+ *   - exl3_c_{gate_up,down}_<width>_t8_g1: a warp decodes 8 adjacent output tiles of a K tile; grid x = width
  *     / 128 (width / 16 / 8), y = job_count, z = 2 (gate/up) or 1; block 128 (4 slices).
- *   - exl3_c_{gate_up,down}_k{2,3}_t4_g4p (wide calls: the wide select's runs of 8-row jobs): the CTA of
+ *   - exl3_c_{gate_up,down}_<width>_t4_g4p (wide calls: the wide select's runs of 8-row jobs): the CTA of
  *     every 4th job of a run decodes each tile once for up to 4 jobs of that run; CTAs of the other jobs exit;
  *     groups past the run issue no load and no MMA. grid x = width / 64, y = job_count, z = 2 / 1; block 128.
  *   - exl3_w_{input,activate,finish}: one warp a 128-channel block; grid x = (blocks + 3) / 4, y =
  *     job_count, z = 2 (input) / 1; block 128; no shared memory.
- * Built like every module with --fmad=false.
+ * Built like every module with --fmad=false, for sm_80 and sm_120a native (kernel_exl3_wide_native): the f16 products'
+ * sums are each class's own (kernel_exl3_mma.cuh); the u8 byte sums are exact on both. No build emulates class 80 on
+ * class 120 (its products would need local memory there): that emulation takes kernel_exl3's retained products.
  */
 #include <cuda_fp16.h>
 #include "anemone/exl3_records.h"
+#include "kernel_exl3_ring.cuh"
 #include "anemone/linear_records.h"
+#include "kernel_exl3_mma.cuh"
 
 #define DECODE_C_WARP 32u
 #define DECODE_C_LANE_GROUP 4u
 #define DECODE_C_PAIR 2u
 #define DECODE_C_CHAINS 4u
+/* a fragment's second symbols: (0,1) with (4,5), (2,3) with (6,7) */
+#define DECODE_C_HIGH_SYMBOLS 4u
+#define DECODE_C_STAGES 2u /* stage_a and stage_b: two steps an iteration */
+/* the decode forms t8_g1 and t4_g4p: tiles, groups */
+#define DECODE_C_T8_TILES 8
+#define DECODE_C_T4_TILES 4
+#define DECODE_C_G4_GROUPS 4
 #define DECODE_C_INPUT_HALF 8u
 #define DECODE_C_OUTPUT_HALF 8u
 #define DECODE_C_VALUES_PER_LANE 8u
@@ -37,7 +48,7 @@
 /* A run is at most 1024 rows / 8 rows per job; the backward scan covers it. */
 #define DECODE_C_RUN_SCAN 128u
 
-template <uint32_t bits>
+template <uint32_t bits_x2>
 __device__ static __forceinline__ uint32_t decode_c_pair(uint64_t window,
 							 uint32_t low_shift,
 							 uint32_t high_shift)
@@ -140,12 +151,14 @@ decode_c_tensor_sums(uint32_t low_first, uint32_t high_first,
 					   EXL3_MUL1_BASE, EXL3_MUL1_BASE };
 	asm volatile("mma.sync.aligned.m16n8k32.row.col.s32.u8.u8.s32 "
 		     "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
-		     : "+r"(sums[0]), "+r"(sums[1]), "+r"(sums[2]),
-		       "+r"(sums[3])
+		     : "+r"(sums[0]), "+r"(sums[1]), "+r"(sums[DECODE_C_PAIR]),
+		       "+r"(sums[DECODE_C_PAIR + 1u])
 		     : "r"(low_first), "r"(low_second), "r"(high_first),
 		       "r"(high_second), "r"(select_low), "r"(select_high));
 	*first_pair = __byte_perm(sums[0], sums[1], DECODE_C_HALF_PAIR_SELECT);
-	*second_pair = __byte_perm(sums[2], sums[3], DECODE_C_HALF_PAIR_SELECT);
+	*second_pair = __byte_perm(sums[DECODE_C_PAIR],
+				   sums[DECODE_C_PAIR + 1u],
+				   DECODE_C_HALF_PAIR_SELECT);
 }
 
 __device__ static __forceinline__ uint32_t decode_c_scale_pair(uint32_t packed)
@@ -158,7 +171,7 @@ __device__ static __forceinline__ uint32_t decode_c_scale_pair(uint32_t packed)
 	return *(const uint32_t *)&value;
 }
 
-template <uint32_t bits, uint32_t tiles, uint32_t groups, bool tensor_sums,
+template <uint32_t bits_x2, uint32_t tiles, uint32_t groups, bool tensor_sums,
 	  bool predicated = false>
 __device__ static __forceinline__ void
 decode_c_compute(const decode_c_stage<groups> *stage,
@@ -183,14 +196,20 @@ decode_c_compute(const decode_c_stage<groups> *stage,
 					EXL3_MUL1_MULTIPLIER;
 			/* Fragments 0/1 hold symbols (0,1)/(4,5), 2/3 hold
 			 * (2,3)/(6,7). */
-			decode_c_tensor_sums(product[0], product[1], product[4],
-					     product[5], select_low,
-					     select_high, &weights[0],
-					     &weights[1]);
-			decode_c_tensor_sums(product[2], product[3], product[6],
-					     product[7], select_low,
-					     select_high, &weights[2],
-					     &weights[3]);
+			decode_c_tensor_sums(
+				product[0], product[1],
+				product[DECODE_C_HIGH_SYMBOLS],
+				product[DECODE_C_HIGH_SYMBOLS + 1u], select_low,
+				select_high, &weights[0], &weights[1]);
+			decode_c_tensor_sums(
+				product[DECODE_C_PAIR],
+				product[DECODE_C_PAIR + 1u],
+				product[DECODE_C_HIGH_SYMBOLS + DECODE_C_PAIR],
+				product[DECODE_C_HIGH_SYMBOLS + DECODE_C_PAIR +
+					1u],
+				select_low, select_high,
+				&weights[DECODE_C_PAIR],
+				&weights[DECODE_C_PAIR + 1u]);
 			for (uint32_t fragment = 0; fragment < DECODE_C_CHAINS;
 			     fragment++)
 				weights[fragment] =
@@ -203,25 +222,17 @@ decode_c_compute(const decode_c_stage<groups> *stage,
 						DECODE_C_HIGH_COLUMN_BIT +
 					(fragment / DECODE_C_PAIR) *
 						DECODE_C_HIGH_ROW_BIT;
-				weights[fragment] = decode_c_pair<bits>(
+				weights[fragment] = decode_c_pair<bits_x2>(
 					window, symbol_shift[element],
 					symbol_shift[element + 1u]);
 			}
 		}
 		for (uint32_t group = 0; group < groups; group++)
 			if (!predicated || group < live_groups)
-				asm volatile(
-					"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-					"{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, "
-					"{%0,%1,%2,%3};"
-					: "+f"(accumulators[tile][group][0]),
-					  "+f"(accumulators[tile][group][1]),
-					  "+f"(accumulators[tile][group][2]),
-					  "+f"(accumulators[tile][group][3])
-					: "r"(weights[0]), "r"(weights[1]),
-					  "r"(weights[2]), "r"(weights[3]),
-					  "r"(stage->operand_low[group]),
-					  "r"(stage->operand_high[group]));
+				exl3_mma_f16(accumulators[tile][group], weights,
+					     stage->operand_low[group],
+					     stage->operand_high[group],
+					     EXL3_MMA_COLUMNS);
 	}
 }
 
@@ -293,7 +304,7 @@ struct decode_c_place {
  * the slices-part order and store their raw chains into split_partials
  * [slice][projection][pair][outputs] (FP32, slice stride in floats); a later
  * pass adds the slices in order from +0, exactly as the slice-zero epilogue. */
-template <uint32_t bits, uint32_t slices, uint32_t tiles, uint32_t groups,
+template <uint32_t bits_x2, uint32_t slices, uint32_t tiles, uint32_t groups,
 	  bool coherent, bool zero_absent, bool tensor_sums, bool split = false,
 	  bool predicated = false>
 __device__ static void
@@ -342,18 +353,16 @@ decode_c_product_core(const struct decode_c_place *place, unsigned char *arena,
 					    inputs) +
 			lane_place + (uint64_t)first * operand_words_per_tile;
 	}
-	const uint32_t ring_bits = EXL3_TILE_VALUES * bits;
-	const uint32_t ring_words = ring_bits / EXL3_WORD_BITS;
-	const uint32_t begin = ((lane * DECODE_C_VALUES_PER_LANE + 1u) * bits +
-				ring_bits - EXL3_STATE_BITS) %
-			       ring_bits;
+	typedef exl3_lane_ring<bits_x2> ring;
+	const uint32_t ring_words = ring::ring_words;
+	const uint32_t begin = ring::begin(lane);
 	const uint32_t word = begin / EXL3_WORD_BITS;
 	const uint32_t next_word = (word + 1u) % ring_words;
 	const uint32_t shift = begin % EXL3_WORD_BITS;
 	uint32_t symbol_shift[DECODE_C_VALUES_PER_LANE];
 	for (uint32_t symbol = 0; symbol < DECODE_C_VALUES_PER_LANE; symbol++)
 		symbol_shift[symbol] = EXL3_WORD_BITS + EXL3_STATE_BITS -
-				       shift - symbol * bits;
+				       shift - ring::offset(symbol);
 	/* B of the tensor-core byte sums: lane (column g, place t) holds
 	 * chunks t and t + 4 of column g. */
 	const uint32_t sum_chunk = DECODE_C_SUM_CHUNK(lane_group);
@@ -389,31 +398,35 @@ decode_c_product_core(const struct decode_c_place *place, unsigned char *arena,
 			operand_pointer, operand_mask, ring_words, false,
 			owned_jobs);
 	uint32_t step = 0;
-	for (; step + 1u < steps; step += 2u) {
+	for (; step + 1u < steps; step += DECODE_C_STAGES) {
 		decode_c_load<tiles, groups, coherent, predicated>(
 			&stage_b, word_pointer + tile_stride,
 			successor_pointer + tile_stride, operand_pointer,
 			operand_mask, ring_words, true, owned_jobs);
-		decode_c_compute<bits, tiles, groups, tensor_sums, predicated>(
-			&stage_a, symbol_shift, select_low, select_high,
-			accumulators, owned_jobs);
-		word_pointer += 2u * tile_stride;
-		successor_pointer += 2u * tile_stride;
+		decode_c_compute<bits_x2, tiles, groups, tensor_sums,
+				 predicated>(&stage_a, symbol_shift, select_low,
+					     select_high, accumulators,
+					     owned_jobs);
+		word_pointer += DECODE_C_STAGES * tile_stride;
+		successor_pointer += DECODE_C_STAGES * tile_stride;
 		for (uint32_t group = 0; group < groups; group++)
-			operand_pointer[group] += 2u * operand_words_per_tile;
-		if (step + 2u < steps)
+			operand_pointer[group] +=
+				DECODE_C_STAGES * operand_words_per_tile;
+		if (step + DECODE_C_STAGES < steps)
 			decode_c_load<tiles, groups, coherent, predicated>(
 				&stage_a, word_pointer, successor_pointer,
 				operand_pointer, operand_mask, ring_words,
 				false, owned_jobs);
-		decode_c_compute<bits, tiles, groups, tensor_sums, predicated>(
-			&stage_b, symbol_shift, select_low, select_high,
-			accumulators, owned_jobs);
+		decode_c_compute<bits_x2, tiles, groups, tensor_sums,
+				 predicated>(&stage_b, symbol_shift, select_low,
+					     select_high, accumulators,
+					     owned_jobs);
 	}
 	if (step < steps)
-		decode_c_compute<bits, tiles, groups, tensor_sums, predicated>(
-			&stage_a, symbol_shift, select_low, select_high,
-			accumulators, owned_jobs);
+		decode_c_compute<bits_x2, tiles, groups, tensor_sums,
+				 predicated>(&stage_a, symbol_shift, select_low,
+					     select_high, accumulators,
+					     owned_jobs);
 	if (split) {
 		float *const out =
 			split_partials + (uint64_t)slice * slice_stride;
@@ -487,7 +500,7 @@ decode_c_product_core(const struct decode_c_place *place, unsigned char *arena,
 	}
 }
 
-template <uint32_t bits, bool down, uint32_t slices, uint32_t tiles,
+template <uint32_t bits_x2, bool down, uint32_t slices, uint32_t tiles,
 	  uint32_t groups, bool zero_absent, bool tensor_sums,
 	  bool predicated = false>
 __device__ static void exl3_decode_c_product(struct exl3_expert_record record,
@@ -514,8 +527,9 @@ __device__ static void exl3_decode_c_product(struct exl3_expert_record record,
 		       (blockIdx.z == 0 ? job->gate_offset : job->up_offset);
 	place.operand_offset = record.operands_offset;
 	place.product_offset = record.products_offset;
-	decode_c_product_core<bits, slices, tiles, groups, false, zero_absent,
-			      tensor_sums, false, predicated>(&place, arena);
+	decode_c_product_core<bits_x2, slices, tiles, groups, false,
+			      zero_absent, tensor_sums, false, predicated>(
+		&place, arena);
 }
 
 #include <cuda_bf16.h>
@@ -560,8 +574,8 @@ __device__ static __forceinline__ void transform_w_hadamard(float *value)
 __device__ static __forceinline__ uint64_t
 transform_w_codes_bytes(struct exl3_expert_record record)
 {
-	return (uint64_t)record.input_size * record.inner_size /
-	       EXL3_BITS_PER_BYTE * record.bits_per_weight;
+	return exl3_code_bytes(record.input_size, record.inner_size,
+			       exl3_bits_x2(record.bits_per_weight));
 }
 
 template <uint32_t warps>
@@ -732,29 +746,31 @@ EXL3_TRANSFORM_W_ENTRY(exl3_w_activate, transform_w_activate)
 EXL3_TRANSFORM_W_ENTRY(exl3_w_finish, transform_w_finish)
 #undef EXL3_TRANSFORM_W_ENTRY
 
-#define EXL3_DECODE_C_ENTRY(name, bits, down, slices, tiles, groups,      \
-			    predicated)                                   \
-	extern "C" __global__ void name(struct exl3_expert_record record, \
-					unsigned char *arena)             \
-	{                                                                 \
-		exl3_decode_c_product<bits, down, slices, tiles, groups,  \
-				      false, false, predicated>(record,   \
-								arena);   \
+#define EXL3_DECODE_C_ENTRY(name, bits_x2, down, slices, tiles, groups,     \
+			    predicated)                                     \
+	extern "C" __global__ void name(struct exl3_expert_record record,   \
+					unsigned char *arena)               \
+	{                                                                   \
+		exl3_decode_c_product<bits_x2, down, slices, tiles, groups, \
+				      false, false, predicated>(record,     \
+								arena);     \
 	}
-#define EXL3_DECODE_C_FAMILY(tiles, groups, suffix, predicated)            \
-	EXL3_DECODE_C_ENTRY(exl3_c_gate_up_k2_t##tiles##_g##suffix,        \
-			    EXL3_MINIMUM_BITS, false, EXL3_PRODUCT_SLICES, \
-			    tiles, groups, predicated)                     \
-	EXL3_DECODE_C_ENTRY(exl3_c_gate_up_k3_t##tiles##_g##suffix,        \
-			    EXL3_MAXIMUM_BITS, false, EXL3_PRODUCT_SLICES, \
-			    tiles, groups, predicated)                     \
-	EXL3_DECODE_C_ENTRY(exl3_c_down_k2_t##tiles##_g##suffix,           \
-			    EXL3_MINIMUM_BITS, true, EXL3_PRODUCT_SLICES,  \
-			    tiles, groups, predicated)                     \
-	EXL3_DECODE_C_ENTRY(exl3_c_down_k3_t##tiles##_g##suffix,           \
-			    EXL3_MAXIMUM_BITS, true, EXL3_PRODUCT_SLICES,  \
-			    tiles, groups, predicated)
-EXL3_DECODE_C_FAMILY(8, 1, 1, false)
-EXL3_DECODE_C_FAMILY(4, 4, 4p, true)
+#define EXL3_DECODE_C_WIDTH(width, bits_x2, tiles, groups, form, predicated) \
+	EXL3_DECODE_C_ENTRY(exl3_c_gate_up_##width##_##form, bits_x2, false, \
+			    EXL3_PRODUCT_SLICES, tiles, groups, predicated)  \
+	EXL3_DECODE_C_ENTRY(exl3_c_down_##width##_##form, bits_x2, true,     \
+			    EXL3_PRODUCT_SLICES, tiles, groups, predicated)
+#define EXL3_DECODE_C_FAMILY(tiles, groups, form, predicated)             \
+	EXL3_DECODE_C_WIDTH(k2, EXL3_BITS_X2_K2, tiles, groups, form,     \
+			    predicated)                                   \
+	EXL3_DECODE_C_WIDTH(k2_5, EXL3_BITS_X2_K2_5, tiles, groups, form, \
+			    predicated)                                   \
+	EXL3_DECODE_C_WIDTH(k3, EXL3_BITS_X2_K3, tiles, groups, form,     \
+			    predicated)                                   \
+	EXL3_DECODE_C_WIDTH(k4, EXL3_BITS_X2_K4, tiles, groups, form,     \
+			    predicated)
+EXL3_DECODE_C_FAMILY(DECODE_C_T8_TILES, 1, t8_g1, false)
+EXL3_DECODE_C_FAMILY(DECODE_C_T4_TILES, DECODE_C_G4_GROUPS, t4_g4p, true)
 #undef EXL3_DECODE_C_FAMILY
+#undef EXL3_DECODE_C_WIDTH
 #undef EXL3_DECODE_C_ENTRY

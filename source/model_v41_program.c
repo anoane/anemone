@@ -11,6 +11,7 @@
  * with a copy. The plan's cards are checked first; each launch is its family's prepare function's, which checks it;
  * step.h's create checks the hand-offs and the pauses.
  */
+#include "checked_size.h"
 #include "model_v41.h"
 #include "model_v41_tp2.h"
 #include "model_v41_tp2_program.h"
@@ -39,6 +40,7 @@
 #include "anemone/expert_fused.h"
 #include "anemone/hooks.h"
 #include "anemone/hyper_connection.h"
+#include "anemone/head_offload.h"
 #include "anemone/index_scan.h"
 #include "anemone/image_routing.h"
 #include "anemone/router.h"
@@ -64,6 +66,10 @@ _Static_assert(EP_FILTER_HIDDEN_WIDTH == V41_DATA_EXPERT_INNER,
 #define HEAD_MMA_LEAST_ROWS 2u
 #define HEAD_MMA_WIDE_FORMS 3u                /* head02: _64_s1 to 24 rows, _s2 to 48, _s4 above */
 #define HEAD_MMA_WIDE_THIN_FORM 2u            /* _64_s4: HEAD_MMA_SPLIT_8, the 8-row form's split */
+/* head_wide_product: _64_s1 to so many rows, _64_s2 to HEAD_MMA_WIDE_S2_MOST_ROWS, _64_s4 above */
+#define HEAD_MMA_WIDE_S1_MOST_ROWS 24u
+#define HEAD_MMA_WIDE_S2_MOST_ROWS 48u
+#define HEAD_MMA_WIDE_S4_FORM 2u
 _Static_assert((1u << HEAD_MMA_WIDE_THIN_FORM) == HEAD_MMA_SPLIT_8, "the thin wide head splits as the 8-row form");
 #define HEAD_MMA_THREADS 256u
 #define HEAD_MMA_BLOCK_OUTPUTS 128u             /* of a split of 1: the _sN forms take 128 / N */
@@ -72,6 +78,8 @@ _Static_assert((1u << HEAD_MMA_WIDE_THIN_FORM) == HEAD_MMA_SPLIT_8, "the thin wi
 #define HEAD_MMA_TILE_OUTPUTS 16u               /* a warp's outputs */
 #define ROUTER_MMA_WARPS 4u                     /* router_mma: kernel_head_mma.cu's geometry */
 #define ROUTER_MMA_REDUCE_THREADS 256u
+/* router_scores' product and its reduce */
+#define ROUTER_MMA_LAUNCHES 2u
 #define TRUNK_MMA_KERNEL_FILE "kernel_trunk_mma" /* trunk_mma (kernel_trunk_mma.cu): forms t<T>_s<S>, geometry */
 #define TRUNK_MMA_FORMS 11u                   /* trunk_mma_forms below */
 #define TRUNK_MMA_THREADS 256u
@@ -91,6 +99,8 @@ _Static_assert((1u << HEAD_MMA_WIDE_THIN_FORM) == HEAD_MMA_SPLIT_8, "the thin wi
 #define DRAFT_WIDE_CORES 3u /* batch_draft_wide: and its window writes and core once, each verifier's block whole */
 #define TC_GATE_UP_PRODUCT_LAUNCH 1u
 #define TC_DOWN_PRODUCT_LAUNCH 3u
+/* batch_core_once: the window writes once over the rows too */
+#define BATCH_CORE_WINDOWS 2u
 #define BATCH_CORE_POOLS \
 	3u /* whole-step pools, followed by separate compressor slot retention */
 #define TRUNK_MMA_PAIR_SUFFIX "_pair"
@@ -103,6 +113,19 @@ _Static_assert((1u << HEAD_MMA_WIDE_THIN_FORM) == HEAD_MMA_SPLIT_8, "the thin wi
 #define TRUNK_MMA_MOST_SPLITS 16u
 #define TRUNK_MMA_REDUCE_THREADS 256u
 #define TRUNK_MMA_VALUES_ALIGNMENT 16u          /* the _64 form stages the rows by 16-byte copies */
+/* trunk_mma_form_of: t1_s16 (trunk_mma_forms' 8) to so many tiles, t1_s4 (2) to TRUNK_MMA_S4_MOST_TILES, t1_s2
+ * (1) above */
+#define TRUNK_MMA_S16_MOST_TILES 128u
+#define TRUNK_MMA_S4_MOST_TILES 512u
+#define TRUNK_MMA_FORM_T1_S16 8u
+#define TRUNK_MMA_FORM_T1_S4 2u
+#define TRUNK_MMA_FORM_T1_S2 1u
+/* trunk_mma_splits_of: the splits double while the doubled fit */
+#define TRUNK_MMA_SPLIT_GROWTH 2u
+/* trunk_mma_grouped_kernels[0]: the form of so many row groups */
+#define TRUNK_MMA_GROUPED_LEAST_GROUPS 2u
+/* trunk_mma_pair_merge: the two launches it merges */
+#define TRUNK_MMA_PAIR_LAUNCHES 2u
 #define SWIGLU_LIMIT 10.0f                  /* CFG:19 swiglu_limit: every expert's (REF:845-847, 879, 887) */
 #define EXPERT_BITS 4u                      /* E2M1 */
 #define LEGACY_LAYER_MOST_LAUNCHES 41u      /* layer 14: n-gram 4, attention 23, FFN 14 */
@@ -128,7 +151,9 @@ _Static_assert((1u << HEAD_MMA_WIDE_THIN_FORM) == HEAD_MMA_SPLIT_8, "the thin wi
 #define CONTEXT_PIECE_LAUNCHES 6u             /* quantize, main projection, norm, quantize, two wkv products */
 #define DRAFT_POSITION_LAUNCHES 2u           /* Markov product and sampler for one position */
 #define DRAFT_FIXED_LAUNCHES 6u              /* block setup, normalization, head and confidence */
-#define DRAFT_SHARD_LAUNCHES(positions) (2u + DRAFT_POSITION_LAUNCHES * (positions)) /* wait, cut; per position */
+#define DRAFT_SHARD_FIXED_LAUNCHES 2u /* wait, cut */
+#define DRAFT_SHARD_LAUNCHES(positions) \
+	(DRAFT_SHARD_FIXED_LAUNCHES + DRAFT_POSITION_LAUNCHES * (positions))
 #define DRAFT_MOST_LAUNCHES(positions)              \
 	(MODEL_DRAFT_STAGES * LAYER_MOST_LAUNCHES + \
 	 DRAFT_POSITION_LAUNCHES * (positions) + DRAFT_FIXED_LAUNCHES)
@@ -152,6 +177,27 @@ _Static_assert((1u << HEAD_MMA_WIDE_THIN_FORM) == HEAD_MMA_SPLIT_8, "the thin wi
     (PP_MOST_HAND_OFFS > TP4_OWNER_MOST_HAND_OFFS ? PP_MOST_HAND_OFFS : TP4_OWNER_MOST_HAND_OFFS)
 #define SESSION_KINDS 4u                        /* a layer's session ranges: ring, compressor slots, pool, key tiles */
 #define VISION_FFN_EXTRA_LAUNCHES 2u
+/* split_overlap's chunk: halves A (0) and B (1); a half of CHUNK_HALVES is the whole chunk, none selected */
+#define CHUNK_HALVES 2u
+/* half views count from 1 behind the slabs': the second behind the first's block and rows */
+#define SECOND_HALF_VIEW 2u
+/* split_layer's halves_parts: the attention's runs and the FFN's (split_overlap's modes) */
+#define SPLIT_ATTENTION_FIRST_PART 1u
+#define SPLIT_ATTENTION_LAST_PART 6u
+#define SPLIT_FFN_FIRST_PART 7u
+#define SPLIT_FFN_LAST_PART 9u
+/* a widened slice count above the most is halved until it fits */
+#define SLICE_HALVING 2u
+/* shared_launches' wide_products: gate, up, down */
+#define SHARED_DOWN_PRODUCT 2u
+/* graph_branches: a BATCH step's shared expert a branch too */
+#define GRAPH_BRANCHES_BATCH 2u
+/* original_head_walk: the result card's final norm and sampler beside a broadcast a rank (a rank: dense, gather) */
+#define ORIGINAL_HEAD_FIXED_LAUNCHES 2u
+/* graph_parts' boundaries: the first segment, the cuts between its parts, the front and the end (parts + 2) */
+#define GRAPH_OUTER_BOUNDARIES 2u
+/* a BATCH verifier's draft walk: so many launches beyond DRAFT_MOST_LAUNCHES (its verify included) */
+#define BATCH_WALK_MORE_LAUNCHES 2u
 #define MOST_SESSION_RANGES \
 	(SESSION_KINDS * V41_DATA_WALK_LAYERS * BACKEND_MAXIMUM_CARDS)
 #define MOST_LEASES            \
@@ -238,16 +284,31 @@ struct made_program {
  * (rows from first_row on, read through view: 0 the step area, 1 + s slab s's view). A thin program's launches take
  * its rows; a wide program's its chunk_rows or a slab of them (slab_count slabs of at most 8). */
 struct builder {
-	struct official_reference_kernels official;
 	const struct v41_tp2_layer_plan *tensor_layer;
+	/* head_shards (model_v41_tp2_stage.h): the card's stage. */
+	const struct v41_tp2_stage_plan *head_stage;
+	const struct v41_tp2_stage_plan
+		*batch_stage; /* the result card's stage of a BATCH program */
+	/* draft_layers: the program's description and tensor plan, for the draft layers' plans */
+	const struct v41_tp2_program_description *tp_description;
+	struct v41_tp2_layer_plan *tp_tensor;
+	/* batch_draft_rows' walk (draft_slab_select): its slab blocks and collapse rows */
+	uint64_t draft_slab_steps, draft_slab_collapse;
+	const struct model_plan_record *plan;
+	const struct backend_operations *backend;
+	struct device_card *const *cards;
+	const struct card_description_record *descriptions;
+	struct made_program *made;
+	struct kernel_launch *launches
+		[BACKEND_MAXIMUM_CARDS]; /* each card's part of made->launches */
+	struct linear_range arrays[V41_DATA_ARRAY_COUNT];
+	uint64_t arena;
+	struct official_reference_kernels official;
 	uint32_t tensor_slices;
 	uint32_t tensor_join_kernel, exact_ring_kernel, unequal_ring_kernel,
 		wire_quantize_kernel, wire_decode_kernel;
 	uint32_t tensor_push_kernel;
-	/* head_shards (model_v41_tp2_stage.h): the card's stage, sharded sampler and head cut's kernel. */
-	const struct v41_tp2_stage_plan *head_stage;
-	const struct v41_tp2_stage_plan
-		*batch_stage; /* the result card's stage of a BATCH program */
+	/* head_shards: the sharded sampler's and head cut's kernels. */
 	uint32_t sampler_shard_kernel, head_stream_kernel, draft_share_kernel,
 		head_wide_kernel;
 	uint32_t head_mma_kernel; /* head_mma: kernel_head_mma's 8-row form */
@@ -256,37 +317,23 @@ struct builder {
 	uint32_t trunk_mma_kernels
 		[TRUNK_MMA_FORMS]; /* trunk_mma: kernel_trunk_mma's forms, trunk_mma_forms' order, each
                                                     prepared on the card when a product first takes it */
-	bool trunk_mma; /* the card's stage asks for trunk_mma */
-	/* draft_layers (model_v41_tp2_stage.h): the card's stage runs its rank of the draft's layers; the program's
-     * description and tensor plan for their plans; the draft tail's first segment made */
-	bool draft_layers, draft_tail_begun;
-	const struct v41_tp2_program_description *tp_description;
-	struct v41_tp2_layer_plan *tp_tensor;
 	uint32_t trunk_mma_wide_kernel; /* and its _64 form */
 	uint32_t trunk_cone_layer; /* 0, or (a full program's decoder layer) its wide trunks' cone: relaxed_linear.h */
 	uint32_t ffn_cone_layer; /* and its FFN's (the hyper site's mix, the router): the layer's own */
 	uint32_t program_rows; /* the program's rows (chunk_rows: a half's while one is selected) */
 	uint32_t trunk_mma_fused_kernel; /* and that form adding its own splits (trunk_mma_fused) */
-	bool trunk_mma_thin_splits; /* the _64 form split as the 1-8-row form (trunk_mma_thin_splits) */
-	bool batch_thin_bits; /* a BATCH program's rows the thin steps' bits (batch_thin_bits) */
-	uint32_t batch_grouped_rows; /* and its products of at most so many rows by the grouped forms */
+	uint32_t batch_grouped_rows; /* a BATCH program's products of at most so many rows by the grouped forms */
 	uint32_t batch_tc_paired; /* and from so many rows its TC MoE's short forms paired */
 	uint32_t batch_row_sets; /* and above batch_grouped_rows its trunk in row sets of so many */
 	uint32_t batch_core_once; /* a BATCH step's core (2: and window writes) once */
 	uint32_t front_branch; /* coefficient fronts as side branches: 1 attention, 2 both */
 	uint32_t core_heads; /* the reference order's core: at most so many heads a block */
-	bool draft_bf16_rows; /* the draft layers' attention products of BF16 rows */
 	uint32_t batch_draft_wide; /* a batched draft's sites summed and posted once (1) */
-	bool ffn_post_deferred; /* batch_draft_wide: ffn_launches leaves its sum and post */
-	/* batch_draft_rows' walk: its slab blocks, collapse rows and rows (draft_slab_select) */
-	uint64_t draft_slab_steps, draft_slab_collapse;
+	/* batch_draft_rows' walk (draft_slab_select): its slab count and rows */
 	uint32_t draft_slab_count, draft_rows;
-	bool draft_wide_step; /* batch_draft_wide 3: all the rows through the step block behind the slab blocks */
-	bool draft_wide_kernels; /* batch_draft_wide 2 over more than 8 rows: card_select prepares the wide forms too */
 	/* draft_bf16_operands (class 80): the carry kernel the draft's quantizations take (draft_swap), else NO_KERNEL;
      * the kernels table's own quantization meanwhile */
 	uint32_t draft_carry_kernel, draft_quantize_kernel;
-	bool ring_column_owners; /* the BF16 ring sums with column owners (ring_column_owners) */
 	/* Grouped forms of 2 + g row groups, in trunk_mma_forms' order; prepared when first taken. */
 	uint32_t trunk_mma_grouped_kernels[TRUNK_MMA_GROUPED_FORMS]
 					  [TRUNK_MMA_FORMS];
@@ -298,8 +345,7 @@ struct builder {
 	uint32_t batch_join_kernel; /* batch_draft_rows, the result card: the row copies into position-major slots */
 	uint32_t settings_push_kernel; /* head_shards, the result card: the sampler settings to every rank's copy */
 	uint32_t sampler_call; /* the target sampler shard's use in the step: a BATCH program's slab */
-	bool batch_draft; /* a BATCH program's draft walk of verifier batch_verifier (draft_records.h's flags) */
-	uint32_t batch_verifier;
+	uint32_t batch_verifier; /* the verifier of batch_draft's walk */
 	uint32_t batch_slabs; /* a BATCH program's target slabs, while its draft walks run as a thin program's */
 	uint32_t tensor_ep_filter_kernel;
 	uint32_t tensor_parallel_kernels[ORDERED_PUSH_PARALLEL_LAUNCHES];
@@ -313,14 +359,6 @@ struct builder {
 		[TP_EXCHANGE_WIDE_LAUNCHES]; /* its copy-engine owner sums' */
 	uint32_t tensor_ce_ring_kernels
 		[TP_EXCHANGE_WIDE_LAUNCHES]; /* its copy-engine owner ring sums' (FFN) */
-	bool tensor_local_stub;
-	const struct model_plan_record *plan;
-	const struct backend_operations *backend;
-	struct device_card *const *cards;
-	const struct card_description_record *descriptions;
-	struct made_program *made;
-	struct kernel_launch *launches
-		[BACKEND_MAXIMUM_CARDS]; /* each card's part of made->launches */
 	uint32_t launch_capacity[BACKEND_MAXIMUM_CARDS];
 	struct linear_kernels_record linear;
 	struct relaxed_linear_kernels relaxed;
@@ -344,8 +382,6 @@ struct builder {
 
 	struct linear_kernels_record draft_linear;
 	struct attention_core_kernels draft_core;
-	struct linear_range arrays[V41_DATA_ARRAY_COUNT];
-	uint64_t arena;
 	uint32_t card, rows, stage, arithmetic_class;
 	uint32_t chunk_rows, slab_count, first_row, view;
 	uint32_t chunk_first,
@@ -354,21 +390,34 @@ struct builder {
 	uint32_t half_rows; /* split_overlap: the first half's rows (the program's rows over two, a multiple of 8) */
 	uint32_t tcp_emit; /* split_overlap mode 7: next TC prefill call's launches (enum tcp_emit). */
 	uint32_t index_row_first; /* index_span: the view's row of the next scan's first row */
-	bool index_grouped; /* index_span: scan rows_select's rows from index_row_first on (index_scans). */
 	uint32_t ahead_layer
-		[BACKEND_MAXIMUM_CARDS]; /* its pipeline: 1 + the layer whose half A a card took */
-	bool reads_draft_step;
-	bool vision_active;
-	/* launches_untrimmed off, a TC-MoE FFN site of graph branches: the combine asked to add the routed sums to the
-     * shared expert's rows (exl3_tc_records.h shared_sum), and whether the TC routed launches did */
-	bool shared_sum_requested, shared_sum_fused;
+		[BACKEND_MAXIMUM_CARDS]; /* split_overlap's pipeline: 1 + the layer whose half A a card took */
 	/* launches_untrimmed off: layer whose wq_b left this rank's heads only in compact rows (no copy into the
      * heads), and those rows, which its queries read (compact_rows 0: none) */
 	uint32_t compact_layer, compact_first_row, compact_rows;
 	/* and the layer whose core wrote the rank's heads into those rows alone (no copy for wo_a), the first row of
      * the rows wo_a then takes */
 	uint32_t core_compact_layer, core_compact_first;
-	bool core_compact;
+	bool trunk_mma; /* the card's stage asks for trunk_mma */
+	/* draft_layers (model_v41_tp2_stage.h): the card's stage runs its rank of the draft's layers; the draft tail's
+     * first segment made */
+	bool draft_layers, draft_tail_begun;
+	bool trunk_mma_thin_splits; /* trunk_mma's _64 form split as the 1-8-row form (trunk_mma_thin_splits) */
+	bool batch_thin_bits; /* a BATCH program's rows the thin steps' bits (batch_thin_bits) */
+	bool draft_bf16_rows; /* the draft layers' attention products of BF16 rows */
+	bool ffn_post_deferred; /* batch_draft_wide: ffn_launches leaves its sum and post */
+	bool draft_wide_step; /* batch_draft_wide 3: all the rows through the step block behind the slab blocks */
+	bool draft_wide_kernels; /* batch_draft_wide 2 over more than 8 rows: card_select prepares the wide forms too */
+	bool ring_column_owners; /* the BF16 ring sums with column owners (ring_column_owners) */
+	bool batch_draft; /* a BATCH program's draft walk of verifier batch_verifier (draft_records.h's flags) */
+	bool tensor_local_stub;
+	bool index_grouped; /* index_span: scan rows_select's rows from index_row_first on (index_scans). */
+	bool reads_draft_step;
+	bool vision_active;
+	/* launches_untrimmed off, a TC-MoE FFN site of graph branches: the combine asked to add the routed sums to the
+     * shared expert's rows (exl3_tc_records.h shared_sum), and whether the TC routed launches did */
+	bool shared_sum_requested, shared_sum_fused;
+	bool core_compact; /* whether core_compact_layer's core wrote the compact rows alone */
 };
 
 /* What a session keeps on the cards (model_seam.h): of each walk layer, on every card that holds them, its window ring,
@@ -511,15 +560,17 @@ static void rows_select(struct builder *b, uint32_t view, uint32_t first_row, ui
 	}
     if (view != 0) {
         /* a half view lies behind the slabs' (VIEW_BYTES apart), the second behind the first's block and rows */
-        const uint32_t half = b->half_view_first != 0 && view >= b->half_view_first ? view - b->half_view_first + 1u : 0;
+        const uint32_t half = b->half_view_first != 0 && view >= b->half_view_first ?
+            view - b->half_view_first + 1u : 0;
         const uint32_t slabs_before = half != 0 ? b->half_view_first - 1u : view - 1u;
 	b->arrays[V41_DATA_ARRAY_STEP] = (struct linear_range){
 		planned->array_offset[V41_DATA_ARRAY_VIEWS] +
 			(uint64_t)slabs_before * VIEW_BYTES +
-			(half == 2u ? STEP_BLOCK_BYTES_VALUE +
-					      (uint64_t)b->half_rows *
-						      STEP_ROW_BYTES_VALUE :
-				      0u),
+			(half == SECOND_HALF_VIEW ?
+				 STEP_BLOCK_BYTES_VALUE +
+					 (uint64_t)b->half_rows *
+						 STEP_ROW_BYTES_VALUE :
+				 0u),
 		STEP_BLOCK_BYTES_VALUE + (uint64_t)rows * STEP_ROW_BYTES_VALUE
 	};
     }
@@ -675,7 +726,8 @@ MUST_CHECK static result_status card_select(struct builder *b, uint32_t card)
 		    &b->linear));
 	    status = THEN(dense_linear_wide_kernels_prepare(
 		    b->backend, opened, arithmetic_class, &b->dense));
-	    /* dense_skinny_bf16 / _f32 (model_v41_tp2_stage.h): the skinny products above 48 rows, their outputs a block */
+	    /* dense_skinny_bf16 / _f32 (model_v41_tp2_stage.h): the skinny products above 48 rows, their outputs a
+	     * block */
 	    const struct v41_tp2_stage_plan *const stage =
 		    b->tp_description == NULL ||
 				    arithmetic_class != ARITHMETIC_CLASS_SM_80 ?
@@ -845,20 +897,23 @@ static struct kernel_launch *slots(struct builder *b, uint32_t count)
 }
 
 /* trunk_mma's 1-8-row forms: a block of `warps` warps, groups of `split` warps on `tiles` tiles each. */
-static const struct trunk_mma_form {
-    const char *name;
-    uint32_t tiles, split, warps;
-} trunk_mma_forms[TRUNK_MMA_FORMS] = { { "trunk_mma_8_t1_s1", 1, 1, 8 },
-				       { "trunk_mma_8_t1_s2", 1, 2, 8 },
-				       { "trunk_mma_8_t1_s4", 1, 4, 8 },
-				       { "trunk_mma_8_t1_s8", 1, 8, 8 },
-				       { "trunk_mma_8_t2_s1", 2, 1, 8 },
-				       { "trunk_mma_8_t2_s2", 2, 2, 8 },
-				       { "trunk_mma_8_t2_s4", 2, 4, 8 },
-				       { "trunk_mma_8_t2_s8", 2, 8, 8 },
-				       { "trunk_mma_8_t1_s16", 1, 16, 16 },
-				       { "trunk_mma_8_t1_s8_w16", 1, 8, 16 },
-				       { "trunk_mma_8_t1_s4_w16", 1, 4, 16 } };
+struct trunk_mma_form {
+	const char *name;
+	uint32_t tiles, split, warps;
+};
+static const struct trunk_mma_form trunk_mma_forms[TRUNK_MMA_FORMS] = {
+	{ "trunk_mma_8_t1_s1", 1, 1, 8 },
+	{ "trunk_mma_8_t1_s2", 1, 2, 8 },
+	{ "trunk_mma_8_t1_s4", 1, 4, 8 },
+	{ "trunk_mma_8_t1_s8", 1, 8, 8 },
+	{ "trunk_mma_8_t2_s1", 2, 1, 8 },
+	{ "trunk_mma_8_t2_s2", 2, 2, 8 },
+	{ "trunk_mma_8_t2_s4", 2, 4, 8 },
+	{ "trunk_mma_8_t2_s8", 2, 8, 8 },
+	{ "trunk_mma_8_t1_s16", 1, 16, 16 },
+	{ "trunk_mma_8_t1_s8_w16", 1, 8, 16 },
+	{ "trunk_mma_8_t1_s4_w16", 1, 4, 16 }
+};
 
 /* trunk_mma: the form of a shard shape (relbench02), else the split that gives the narrow shapes the most warps. */
 static uint32_t trunk_mma_form_of(const struct matrix_shape_record *shape)
@@ -868,7 +923,9 @@ static uint32_t trunk_mma_form_of(const struct matrix_shape_record *shape)
         if (measured[index].output_size == shape->output_size && measured[index].input_size == shape->input_size)
             return measured[index].form;
     const uint32_t tiles = shape->output_size / TRUNK_MMA_TILE_OUTPUTS;
-    return tiles <= 128u ? 8u : tiles <= 512u ? 2u : 1u;
+    return tiles <= TRUNK_MMA_S16_MOST_TILES ? TRUNK_MMA_FORM_T1_S16 :
+           tiles <= TRUNK_MMA_S4_MOST_TILES  ? TRUNK_MMA_FORM_T1_S4 :
+                                               TRUNK_MMA_FORM_T1_S2;
 }
 
 /* --tp_trunk_mma: a prepared BF16-row trunk launch of 1 to 8 rows (trunk_linear_bfloat16_<S>, the same record)
@@ -908,9 +965,9 @@ static void trunk_mma_swap(struct builder *b, struct kernel_launch *launch,
     const uint32_t block_tiles = form->tiles * form->warps / form->split;
     launch->kernel = b->trunk_mma_kernels[index];
     launch->grid[0] = (shape->output_size / TRUNK_MMA_TILE_OUTPUTS + block_tiles - 1u) / block_tiles;
-    launch->grid[1] = launch->grid[2] = 1;
+    launch->grid[1] = launch->grid[LAUNCH_DIMENSIONS - 1u] = 1;
     launch->block[0] = form->warps * LINEAR_THREADS_PER_WARP;
-    launch->block[1] = launch->block[2] = 1;
+    launch->block[1] = launch->block[LAUNCH_DIMENSIONS - 1u] = 1;
     launch->dynamic_shared_byte_count = 0;
 }
 
@@ -956,11 +1013,12 @@ static uint32_t trunk_mma_splits_of(const struct builder *b,
     const uint32_t blocks = (tiles + TRUNK_MMA_WIDE_TILES - 1u) / TRUNK_MMA_WIDE_TILES;
     uint32_t splits = 1;
     while (splits < TRUNK_MMA_MOST_SPLITS &&
-	   2u * splits * blocks <= TRUNK_MMA_WIDE_BLOCKS &&
-	   2u * splits * shape->output_size <=
+	   TRUNK_MMA_SPLIT_GROWTH * splits * blocks <= TRUNK_MMA_WIDE_BLOCKS &&
+	   TRUNK_MMA_SPLIT_GROWTH * splits * shape->output_size <=
 		   V41_DATA_TRUNK_MMA_PARTIAL_VALUES &&
-	   2u * splits <= shape->input_size / TRUNK_MMA_GROUP_INPUTS)
-	    splits *= 2u;
+	   TRUNK_MMA_SPLIT_GROWTH * splits <=
+		   shape->input_size / TRUNK_MMA_GROUP_INPUTS)
+	    splits *= TRUNK_MMA_SPLIT_GROWTH;
     return splits;
 }
 
@@ -996,8 +1054,7 @@ trunk_mma_wide_applies(const struct builder *b,
 	       tiles % (product->segment_count * TRUNK_MMA_WIDE_TILES) == 0 &&
 	       product->values.byte_offset % TRUNK_MMA_VALUES_ALIGNMENT == 0 &&
 	       (splits == 1u ||
-		(b->slab_count >= 2u &&
-		 b->relaxed.reduce != BACKEND_NO_KERNEL &&
+		(b->slab_count > 1u && b->relaxed.reduce != BACKEND_NO_KERNEL &&
 		 trunk_mma_partials_of(b).byte_count >=
 			 (uint64_t)splits * b->rows * shape->output_size *
 				 sizeof(float)));
@@ -1017,7 +1074,9 @@ static uint32_t trunk_mma_grouped_ready(struct builder *b,
 	const uint32_t groups =
 		(b->rows + LINEAR_MAXIMUM_ROWS - 1u) / LINEAR_MAXIMUM_ROWS;
 	uint32_t *const kernel =
-		&b->trunk_mma_grouped_kernels[groups - 2u][index];
+		&b->trunk_mma_grouped_kernels[groups -
+					      TRUNK_MMA_GROUPED_LEAST_GROUPS]
+					     [index];
 	if (*kernel == BACKEND_NO_KERNEL) {
 		char name[TRUNK_MMA_NAME_BYTES];
 		(void)snprintf(name, sizeof(name), "trunk_mma_%" PRIu32 "_%s",
@@ -1048,7 +1107,9 @@ static uint32_t trunk_mma_sets_ready(struct builder *b,
 	uint32_t *const kernel =
 		groups == 1u ?
 			&b->trunk_mma_kernels[index] :
-			&b->trunk_mma_grouped_kernels[groups - 2u][index];
+			&b->trunk_mma_grouped_kernels
+				 [groups - TRUNK_MMA_GROUPED_LEAST_GROUPS]
+				 [index];
 	if (*kernel == BACKEND_NO_KERNEL) {
 		char name[TRUNK_MMA_NAME_BYTES];
 		(void)snprintf(name, sizeof(name), "trunk_mma_%" PRIu32 "_%s",
@@ -1070,10 +1131,11 @@ static void trunk_mma_pair_merge(struct builder *b)
 {
 	struct program_card_record *const card = &b->made->cards[b->card];
 	if (b->tensor_layer == NULL || b->tensor_layer->launches_untrimmed ||
-	    card->launch_count < 2u)
+	    card->launch_count < TRUNK_MMA_PAIR_LAUNCHES)
 		return;
 	struct kernel_launch *const first =
-		&b->launches[b->card][card->launch_count - 2u];
+		&b->launches[b->card]
+			    [card->launch_count - TRUNK_MMA_PAIR_LAUNCHES];
 	const struct kernel_launch *const second = first + 1;
 	uint32_t form = TRUNK_MMA_GROUPED_FORMS + 1u;
 	if (first->kernel == b->trunk_mma_kernels[TRUNK_MMA_PAIR_FORM])
@@ -1082,7 +1144,7 @@ static void trunk_mma_pair_merge(struct builder *b)
 		if (first->kernel ==
 		    b->trunk_mma_grouped_kernels[groups][TRUNK_MMA_PAIR_FORM])
 			form = groups + 1u;
-	struct trunk_linear_bfloat16_arguments records[2];
+	struct trunk_linear_bfloat16_arguments records[TRUNK_MMA_PAIR_LAUNCHES];
 	if (form > TRUNK_MMA_GROUPED_FORMS ||
 	    first->kernel == BACKEND_NO_KERNEL ||
 	    second->kernel != first->kernel ||
@@ -1217,7 +1279,7 @@ trunk_mma_wide(struct builder *b, struct kernel_launch *launch,
 
 /* --prefill_tail_rows (model_v41_tp2_stage.h tail_rows): a tail program, a full (or, --prefill_front_tail, a wide)
  * program of more than 64 rows and at most the stage's tail_rows, no whole multiple of the exact plan's 256 (the
- * ladder's programs above 64 rows all are: main.c), whose rows take the 64-row chunk's forms a 64-row group, one
+ * ladder's programs above 64 rows all are: commands.c), whose rows take the 64-row chunk's forms a 64-row group, one
  * decode TC MoE call over them and no split halves */
 static bool tail_program(const struct builder *b)
 {
@@ -1578,7 +1640,7 @@ dense_shard_matrix(const struct builder *b, enum linear_family_code family,
 	const uint32_t loads =
 		matrix_out->shape.input_size / LINEAR_VALUES_PER_LOAD;
 	while (widened > LINEAR_MAXIMUM_SLICES || widened > loads)
-		widened /= 2u;
+		widened /= SLICE_HALVING;
 	matrix_out->slice_count = widened > slices ? widened : slices;
 	matrix_out->wide_form = LINEAR_WIDE_GROUP_BLOCKS;
 	return OK;
@@ -1898,8 +1960,8 @@ MUST_CHECK static result_status site_begin(struct builder *b,
 {
 	const struct v41_tensor *const mix = is_ffn ? WEIGHTS(FFN_MIX) :
 						      WEIGHTS(ATTENTION_MIX);
-	/* a full program's decoder layer: the attention site's mix feeds the layer's window rows (the trunks' cone), the
-     * FFN site's only the layer's output (the layer's own) */
+	/* a full program's decoder layer: the attention site's mix feeds the layer's window rows (the trunks' cone),
+     * the FFN site's only the layer's output (the layer's own) */
 	result_status status;
 	if (b->plan->limits.official_hc_rows != 0) {
 		const struct dense_linear_description description = {
@@ -2118,6 +2180,8 @@ MUST_CHECK static result_status dense_gather_slabs(struct builder *b,
  * (half A: attention site, half B: FFN site), the router's of half A (FFN site, beside half B's attention sums) and of
  * half B (attention site, beside half A's FFN sums). */
 #define SUMS_PHASE 2u
+/* split_overlap's second half: its sums so many phases on (8 l + 2 + 2 h) */
+#define SUMS_HALF_PHASES 2u
 #define GATHER_INDEX_PHASE 0u
 #define GATHER_ROUTER_FIRST_PHASE 1u
 #define GATHER_ROUTER_SECOND_PHASE 5u
@@ -2134,7 +2198,7 @@ static uint32_t exchange_phase(const struct builder *b)
 	       SUMS_PHASE +
 	       (b->half_view_first != 0 &&
 				b->chunk_view == b->half_view_first + 1u ?
-			2u :
+			SUMS_HALF_PHASES :
 			0u);
 }
 
@@ -2186,6 +2250,14 @@ static bool gathers_apply(const struct builder *b)
 	return apply;
 }
 
+/* tp_exchange.h's wide form: its launches in their order */
+enum wide_exchange_launch {
+	WIDE_EXCHANGE_PUBLISH,
+	WIDE_EXCHANGE_READY,
+	WIDE_EXCHANGE_SUM,
+	WIDE_EXCHANGE_DONE
+};
+
 /* A gathered range: bytes of the rank's rows at own in this card's arena, copied to peers[r] in rank r's arena. */
 struct gather_range {
     uint64_t own, bytes;
@@ -2227,8 +2299,8 @@ MUST_CHECK static result_status rows_gather(struct builder *b, uint32_t site,
 						ranges[range].bytes,
 						LAUNCH_CHAIN);
 	}
-    status = THEN(put(b, &wide[1])); /* READY */
-    return THEN(put(b, &wide[3]));   /* DONE */
+	status = THEN(put(b, &wide[WIDE_EXCHANGE_READY]));
+	return THEN(put(b, &wide[WIDE_EXCHANGE_DONE]));
 }
 
 /* The router's scores of the selected half, a quarter of its rows a rank (each row's by the product every rank runs),
@@ -2282,10 +2354,12 @@ static uint32_t live_first_row(const struct builder *b)
     return row;
 }
 
-/* The selected half of split_overlap's chunk: 0 (A) or 1 (B); 2 without one selected. */
+/* The selected half of split_overlap's chunk: 0 (A) or 1 (B); CHUNK_HALVES without one selected. */
 static uint32_t selected_half(const struct builder *b)
 {
-    return b->half_view_first != 0 && b->chunk_view >= b->half_view_first ? b->chunk_view - b->half_view_first : 2u;
+	return b->half_view_first != 0 && b->chunk_view >= b->half_view_first ?
+		       b->chunk_view - b->half_view_first :
+		       CHUNK_HALVES;
 }
 
 /* pool_gather (model_v41_tp2_stage.h) applies to the selected half: split_overlap's pipeline's gathers, its whole rows
@@ -2397,9 +2471,9 @@ tensor_complete_ce(struct builder *b, uint32_t site, struct linear_range values)
 		    moved > 1u ? copy_branch(put_copies, moved) : LAUNCH_CHAIN);
 	    put_copies++;
     }
-    wide[1].branch = moved > 1u ? LAUNCH_JOIN : LAUNCH_CHAIN;
-    status = THEN(put(b, &wide[1])); /* READY */
-    status = THEN(put(b, &wide[2])); /* the rank's quarter summed */
+    wide[WIDE_EXCHANGE_READY].branch = moved > 1u ? LAUNCH_JOIN : LAUNCH_CHAIN;
+    status = THEN(put(b, &wide[WIDE_EXCHANGE_READY]));
+    status = THEN(put(b, &wide[WIDE_EXCHANGE_SUM])); /* the rank's quarter summed */
     const uint64_t own_skipped = skipped[tensor->rank];
     for (uint32_t step = 1;
 	 step < TP4_RANKS && status == OK && own_skipped < quarter; step++) {
@@ -2416,8 +2490,8 @@ tensor_complete_ce(struct builder *b, uint32_t site, struct linear_range values)
 		    quarter - own_skipped,
 		    copy_branch(step - 1u, TP4_RANKS - 1u));
     }
-    wide[3].branch = own_skipped < quarter ? LAUNCH_JOIN : LAUNCH_CHAIN;
-    status = THEN(put(b, &wide[3])); /* DONE */
+    wide[WIDE_EXCHANGE_DONE].branch = own_skipped < quarter ? LAUNCH_JOIN : LAUNCH_CHAIN;
+    status = THEN(put(b, &wide[WIDE_EXCHANGE_DONE]));
     const struct tp2_join_description back = {
 	    .source = { arguments->region_offset + arguments->output_offset,
 			quarter * TP4_RANKS },
@@ -2499,9 +2573,10 @@ tensor_complete_ce_rings(struct builder *b, uint32_t site,
 				rank * segment + skipped,
 			segment - skipped, copy_branch(step - 1u, TP4_RANKS));
 	}
-	wide[1].branch = LAUNCH_JOIN;
-	status = THEN(put(b, &wide[1])); /* READY */
-	status = THEN(put(b, &wide[2])); /* the rank's segment added */
+	wide[WIDE_EXCHANGE_READY].branch = LAUNCH_JOIN;
+	status = THEN(put(b, &wide[WIDE_EXCHANGE_READY]));
+	/* the rank's segment added */
+	status = THEN(put(b, &wide[WIDE_EXCHANGE_SUM]));
 	for (uint32_t step = 1; step < TP4_RANKS && status == OK; step++) {
 		const uint32_t rank = (tensor->rank + step) % TP4_RANKS;
 		status = copy_put(
@@ -2514,8 +2589,8 @@ tensor_complete_ce_rings(struct builder *b, uint32_t site,
 			segment - skipped,
 			copy_branch(step - 1u, TP4_RANKS - 1u));
 	}
-	wide[3].branch = LAUNCH_JOIN;
-	status = THEN(put(b, &wide[3])); /* DONE */
+	wide[WIDE_EXCHANGE_DONE].branch = LAUNCH_JOIN;
+	status = THEN(put(b, &wide[WIDE_EXCHANGE_DONE]));
 	const struct tp2_join_description unpack = {
 		.source = { output, segment * TP4_RANKS },
 		.output = values,
@@ -2568,10 +2643,10 @@ MUST_CHECK static result_status tensor_complete(struct builder *b,
 		return STATUS_UNSUPPORTED;
 	if (!round_once && b->tensor_layer->bf16_ring &&
 	    b->rows <= b->tensor_layer->ring_rows) {
-		/* the BF16 ring: values plus the routed sums added and rounded in one pass into the packed rows (the bits of
-         * the FP32 publish and the round it replaces), then the ring's BF16 sum back into values; with no routed sums
-         * (the attention site, or an FFN site whose combine added them: shared_sum) the values are those rows already:
-         * the ring sums them in place (launches_untrimmed) */
+		/* the BF16 ring: values plus the routed sums added and rounded in one pass into the packed rows (the
+         * bits of the FP32 publish and the round it replaces), then the ring's BF16 sum back into values; with no
+         * routed sums (the attention site, or an FFN site whose combine added them: shared_sum) the values are those
+         * rows already: the ring sums them in place (launches_untrimmed) */
 		if (routed.byte_count == 0 &&
 		    !b->tensor_layer->launches_untrimmed)
 			return exact_gather(b, site, values, values,
@@ -2898,7 +2973,8 @@ attention_launches(struct builder *b, uint32_t layer, uint32_t source,
 	const bool is_draft = layer >= MODEL_DRAFT_FIRST_LAYER;
 	const bool is_thin = b->slab_count == 1u;
 	const bool is_exl3 = b->plan->exl3_bits[layer] != 0;
-	/* draft_bf16_rows: a draft layer's wq_a, wkv, wq_b and wo_b of its BF16 rows, as an EXL3 layer's (drafts only) */
+	/* draft_bf16_rows: a draft layer's wq_a, wkv, wq_b and wo_b of its BF16 rows, as an EXL3 layer's (drafts
+	 * only) */
 	const bool bf16_rows = is_exl3 || (is_draft && b->draft_bf16_rows);
 	const bool fused_projection = b->plan->limits.official_reference == 0 &&
 				      is_thin && !bf16_rows &&
@@ -3102,8 +3178,8 @@ attention_launches(struct builder *b, uint32_t layer, uint32_t source,
 						      b->arena, &b->state,
 						      state));
 	if ((steps & INPUT_PRODUCTS) != 0) {
-		/* an EXL3 layer's wq_a and wkv (exl3_trunk_bfloat16) read the hidden BF16 rows: no quantization of them in a
-         * chunked or BATCH step (an n-gram layer quantizes its own values; launches_untrimmed: as before) */
+		/* an EXL3 layer's wq_a and wkv (exl3_trunk_bfloat16) read the hidden BF16 rows: no quantization of them
+         * in a chunked or BATCH step (an n-gram layer quantizes its own values; launches_untrimmed: as before) */
 		const bool unread = is_exl3 && b->tensor_layer != NULL &&
 				    !b->tensor_layer->launches_untrimmed;
 		status = (is_thin && b->plan->limits.official_hc_rows == 0) ||
@@ -3307,8 +3383,9 @@ attention_launches(struct builder *b, uint32_t layer, uint32_t source,
 			ARRAY(HEADS),
 			{ ARRAY(ROTATION).byte_offset +
 				  (uint64_t)(ratio != 0 ? 1u : 0u) *
-					  OFFICIAL_ROPE_WIDTH * sizeof(float),
-			  OFFICIAL_ROPE_WIDTH * sizeof(float) },
+					  (uint64_t)OFFICIAL_ROPE_WIDTH *
+					  sizeof(float),
+			  (size_t)OFFICIAL_ROPE_WIDTH * sizeof(float) },
 			ARRAY(QUERIES),
 			MODEL_HEAD_DIMS,
 			MODEL_HEADS_VALUE,
@@ -3441,12 +3518,14 @@ attention_launches(struct builder *b, uint32_t layer, uint32_t source,
 	    const bool exact_dense = b->tensor_layer != NULL &&
 				     b->tensor_layer->exact_dense;
 	    if (exact_dense) {
-		    /* the rank's two groups (full-K wo_a rows) into its owner slot; all eight gathered row-major; wo_b's 1280
-             * owned outputs over the full K = 8192 into the slot again; the complete sublayer output gathered */
+		    /* the rank's two groups (full-K wo_a rows) into its owner slot; all eight gathered row-major;
+             * wo_b's 1280 owned outputs over the full K = 8192 into the slot again; the complete sublayer output
+             * gathered */
 		    const uint32_t group_width =
 			    groups.matrix.shape.output_size;
 		    const uint32_t owned = WEIGHTS(OUTPUT)->shape.output_size;
-		    /* a piece of a chunked step (more than 8 rows): the products over the piece, the gathers a slab at a time */
+		    /* a piece of a chunked step (more than 8 rows): the products over the piece, the gathers a slab at
+		     * a time */
 		    const bool wide = b->rows > LINEAR_MAXIMUM_ROWS;
 		    groups.output = wide ? dense_own(b, group_width) :
 					   dense_slot(b, group_width);
@@ -3494,8 +3573,8 @@ attention_launches(struct builder *b, uint32_t layer, uint32_t source,
 		    status = THEN(groups_product(
 			    b, &groups,
 			    WEIGHTS(OUTPUT_GROUPS)->fold_reference));
-		    /* an EXL3 layer's wo_b (exl3_trunk_bfloat16 below) reads the groups' BF16 rows: no quantization of them
-             * (launches_untrimmed: as before) */
+		    /* an EXL3 layer's wo_b (exl3_trunk_bfloat16 below) reads the groups' BF16 rows: no quantization of
+             * them (launches_untrimmed: as before) */
 		    const bool unread = bf16_rows && !fused_projection &&
 					b->tensor_layer != NULL &&
 					!b->tensor_layer->launches_untrimmed;
@@ -3552,8 +3631,9 @@ MUST_CHECK static result_status layer_steps(struct builder *b, uint32_t layer,
 	result_status status = has_engram && (steps & ENGRAM_STEPS) != 0 ?
 				       engram_launches(b, layer, steps) :
 				       OK;
-	/* a full program's decoder layer after the first: its wide trunks leave the rows whose output at the layer before
-     * nothing reads (the engine's prefill cone: none of the layer's own outputs or window rows of them is read) */
+	/* a full program's decoder layer after the first: its wide trunks leave the rows whose output at the layer
+     * before nothing reads (the engine's prefill cone: none of the layer's own outputs or window rows of them is
+     * read) */
 	const uint32_t cone_before = b->trunk_cone_layer;
 	b->trunk_cone_layer =
 		b->made->program.kind == PROGRAM_FULL &&
@@ -3695,8 +3775,8 @@ routed_of(const struct builder *b, uint32_t layer, uint32_t job_count,
 			b->plan->layer_tensors[layer][V41_DATA_SHARED_DOWN]
 				.shape.input_size;
 		if (expert_rotation_of(b, layer) != 0) {
-			/* every rank holds 512- and 640-column chunks: the router's matrix bounds at the narrower (each matrix
-             * still lies inside the experts' range); the TC MoE records take the 640 layout */
+			/* every rank holds 512- and 640-column chunks: the router's matrix bounds at the narrower (each
+             * matrix still lies inside the experts' range); the TC MoE records take the 640 layout */
 			experts_out->gate_up_shape.output_size =
 				TP4_SMALL_INNER;
 			experts_out->down_shape.input_size = TP4_SMALL_INNER;
@@ -3748,8 +3828,8 @@ shared_launches(struct builder *b, uint32_t layer, bool is_chunk_quantized)
 		.row_count = b->rows,
 		.activation_limit = SWIGLU_LIMIT
 	};
-	if (is_chunk_quantized) { /* one quantization took the chunk: its rows lie packed at its width from its first row
-                                   (split_overlap: the half's, which begins chunk_first rows into the arrays) */
+	if (is_chunk_quantized) { /* one quantization took the chunk: its rows lie packed at its width from its first
+                                   row (split_overlap: the half's, which begins chunk_first rows into the arrays) */
 		const uint32_t into = b->first_row - b->chunk_first;
 		shared.codes = (struct linear_range){
 			arrays[V41_DATA_ARRAY_ROW_CODES] +
@@ -3835,11 +3915,12 @@ shared_launches(struct builder *b, uint32_t layer, bool is_chunk_quantized)
 	      .segment_count = 1 }
     };
     if (!is_thin && b->tensor_layer != NULL && thin_forms_of(b) &&
-        trunk_mma_wide_applies(b, &wide_products[0]) && trunk_mma_wide_applies(b, &wide_products[2])) {
+        trunk_mma_wide_applies(b, &wide_products[0]) &&
+        trunk_mma_wide_applies(b, &wide_products[SHARED_DOWN_PRODUCT])) {
         /* --tp_trunk_mma, a BATCH step: the same from the chunk's BF16 rows by the _64 form */
         for (uint32_t matrix = 0; matrix < sizeof(wide_products) / sizeof(wide_products[0]) && status == OK;
              matrix++) {
-            if (matrix == 2u)
+            if (matrix == SHARED_DOWN_PRODUCT)
 		    status = put(b, &launches[LINEAR_SHARED_EXPERT_HIDDEN]);
 	    struct kernel_launch *const launch = slots(b, 1);
 	    status = launch == NULL ?
@@ -4011,7 +4092,8 @@ exact_gather_bank(struct builder *b, uint32_t site, uint64_t ring_offset,
 		.packs_per_owner = bytes / (TP4_RANKS * EXACT_RING_PACK_BYTES),
 		.vectors = vectors,
 		.rank = tensor->rank,
-		/* ring_column_owners: a BF16 sum's owners the quarters of every row, not of the rows (the input row-major) */
+		/* ring_column_owners: a BF16 sum's owners the quarters of every row, not of the rows (the input
+		 * row-major) */
 		.mode = !tensor->bf16_ring ? EXACT_RING_GATHER :
 			b->ring_column_owners && vectors != 0 &&
 					(uint64_t)packs % vectors == 0 ?
@@ -4134,7 +4216,12 @@ MUST_CHECK static result_status
 exl3_routed_launches(struct builder *b, uint32_t layer,
 		     const struct linear_routed_experts_description *experts)
 {
-	if (b->arithmetic_class != ARITHMETIC_CLASS_SM_80 ||
+	/* a PRO (class 120, emulated or native) runs whole matrices only: every tensor-parallel form is the CMPs' */
+	const bool is_pro = b->arithmetic_class == ARITHMETIC_CLASS_SM_120 ||
+			    b->arithmetic_class ==
+				    ARITHMETIC_CLASS_SM_120_NATIVE;
+	if ((b->arithmetic_class != ARITHMETIC_CLASS_SM_80 &&
+	     (!is_pro || b->tensor_layer != NULL)) ||
 	    layer >= MODEL_LAYERS)
 		return STATUS_UNSUPPORTED;
 	const uint32_t pairs = b->rows * experts->pairs_per_row;
@@ -4189,7 +4276,7 @@ exl3_routed_launches(struct builder *b, uint32_t layer,
 		    .row_count = b->rows,
 		    .job_capacity = experts->job_count,
 		    .intermediate = intermediate,
-		    .bits_x2 = 2u * b->plan->exl3_bits[layer],
+		    .bits_x2 = exl3_bits_x2(b->plan->exl3_bits[layer]),
 		    .activation_limit = SWIGLU_LIMIT,
 		    .rotation = rotation,
 		    .shared_sum = b->shared_sum_requested ? 1u : 0u,
@@ -4257,12 +4344,13 @@ exl3_routed_launches(struct builder *b, uint32_t layer,
 			.output_offset = experts->row_output.byte_offset,
 			.row_count = b->rows,
 			.intermediate = intermediate,
-			.bits_x2 = 2u * b->plan->exl3_bits[layer],
+			.bits_x2 = exl3_bits_x2(b->plan->exl3_bits[layer]),
 			.activation_limit = SWIGLU_LIMIT,
 			.rotation = rotation,
 			.half_rows =
 				b->tcp_emit != TCP_EMIT_ALL ? b->half_rows : 0u,
-			/* a full program's decoder layer: the rows the engine's prefill cone marks past it take no route */
+			/* a full program's decoder layer: the rows the engine's prefill cone marks past it take no
+			 * route */
 			.step_offset = ARRAY(STEP).byte_offset,
 			.cone_layer =
 				b->made->program.kind == PROGRAM_FULL &&
@@ -4320,16 +4408,19 @@ exl3_routed_launches(struct builder *b, uint32_t layer,
 	/* exl3_fast_products: kernel_exl3_wide's transforms and products, the same words (exl3.h) */
 	const bool fast = b->tensor_layer != NULL &&
 			  b->tensor_layer->exl3_fast_products;
+	/* the relaxed order (--cmp_order) is the CMPs' */
 	result_status status =
-		b->plan->limits.cmp_order == CMP_ORDER_RELAXED ?
-			exl3_experts_relaxed_prepare(&whole, b->arena,
-						     b->backend,
-						     b->cards[b->card],
-						     launches) :
+		b->plan->limits.cmp_order == CMP_ORDER_RELAXED && !is_pro ?
+			exl3_experts_relaxed_prepare(
+				&whole, b->arena, b->backend, b->cards[b->card],
+				b->arithmetic_class, launches) :
 		fast ? exl3_experts_fast_prepare(&whole, b->arena, b->backend,
-						 b->cards[b->card], launches) :
+						 b->cards[b->card],
+						 b->arithmetic_class,
+						 launches) :
 		       exl3_experts_prepare(&whole, b->arena, b->backend,
-					    b->cards[b->card], launches);
+					    b->cards[b->card],
+					    b->arithmetic_class, launches);
 	for (uint32_t pass = 0; pass < EXL3_EXPERT_LAUNCHES && status == OK;
 	     pass++)
 		status = put(b, &launches[pass]);
@@ -4337,6 +4428,7 @@ exl3_routed_launches(struct builder *b, uint32_t layer,
 		products, experts->row_output.byte_offset, MODEL_HIDDEN,
 		experts->pairs_per_row
 	};
+	/* the row sum is float32 adds, no product: kernel_exl3's build of it computes the same on every class */
 	struct kernel_launch launch;
 	status = THEN(bb_exl3_row_sum_prepare(&sum, b->rows, b->arena,
 					      b->backend, b->cards[b->card],
@@ -4409,7 +4501,8 @@ exl3_routed_launches(struct builder *b, uint32_t layer,
 					      b->backend, b->cards[b->card],
 					      &launch));
 	status = THEN(put(b, &launch));
-	/* the row sums: owner-major [rank][rows][own outputs]; slab s of each rank's part to rows 8 s .. of exact_sums */
+	/* the row sums: owner-major [rank][rows][own outputs]; slab s of each rank's part to rows 8 s .. of
+	 * exact_sums */
 	const uint64_t own_bytes = (uint64_t)shard->down.output_count * sizeof(float);
 	const uint32_t slab_bytes =
 		slab_rows * MODEL_HIDDEN * (uint32_t)sizeof(float);
@@ -4883,12 +4976,16 @@ MUST_CHECK static result_status draft_wide_ffn(struct builder *b,
     result_status status = site_begin(b, weights, true, site);
     for (uint32_t slab = 0; slab < slabs && status == OK; slab++) {
         draft_slab_select(b, slab);
-        status = dense(b, WEIGHTS(ROUTER), ARRAY(HIDDEN), ARRAY(ROUTER_SCORES), F32, 0, 1.0f);
-	status = THEN(quantize(b, ARRAY(HIDDEN),
-			       MODEL_HIDDEN)); /* the thin site front's codes */
-	struct linear_routed_experts_description experts;
-	status = routed_of(b, layer, b->rows * MODEL_DRAFT_EXPERTS_PER_ROW,
-			   &experts);
+        status = FAULT_POINT(model_v41_draft_slab_dense) ?
+			 STATUS_INJECTED_FAULT :
+			 dense(b, WEIGHTS(ROUTER), ARRAY(HIDDEN), ARRAY(ROUTER_SCORES), F32, 0, 1.0f);
+	status = THEN(FAULT_POINT(model_v41_draft_slab_quantize) ?
+			      STATUS_INJECTED_FAULT :
+			      quantize(b, ARRAY(HIDDEN),
+				       MODEL_HIDDEN)); /* the thin site front's codes */
+	struct linear_routed_experts_description experts = { 0 };
+	status = THEN(routed_of(b, layer, b->rows * MODEL_DRAFT_EXPERTS_PER_ROW,
+				&experts));
 	struct linear_routed_experts_description router_experts = experts;
 	const struct router_description router = {
 		&router_experts,
@@ -5155,7 +5252,7 @@ MUST_CHECK static result_status router_scores(struct builder *b,
 	const uint32_t items = shape->output_size / HEAD_MMA_TILE_OUTPUTS *
 			       V41_DATA_ROUTER_MMA_SPLITS;
 	const uint32_t results = b->rows * shape->output_size;
-	struct kernel_launch launches[2];
+	struct kernel_launch launches[ROUTER_MMA_LAUNCHES];
 	prepare_launch_fill(&launches[0],
 			    wide ? b->router_mma_wide_kernel :
 				   b->router_mma_kernel,
@@ -5163,7 +5260,8 @@ MUST_CHECK static result_status router_scores(struct builder *b,
 			    wide ? (b->rows + HEAD_MMA_MOST_ROWS - 1u) /
 					    HEAD_MMA_MOST_ROWS :
 				   1u,
-			    32u * ROUTER_MMA_WARPS, 0, &record, sizeof(record));
+			    LINEAR_THREADS_PER_WARP * ROUTER_MMA_WARPS, 0,
+			    &record, sizeof(record));
 	prepare_launch_fill(&launches[1], b->router_mma_reduce_kernel,
 			    (results + ROUTER_MMA_REDUCE_THREADS - 1u) /
 				    ROUTER_MMA_REDUCE_THREADS,
@@ -5261,7 +5359,7 @@ exl3_wide_ffn_phases(struct builder *b, uint32_t layer, uint32_t phases)
 	    b->tensor_layer->exl3_tc_moe && b->rows <= EXL3_TC_MOST_ROWS &&
 	    piece_count_of(b) == 1u && status == OK &&
 	    shared_wide_mma(b, layer);
-    const bool side_shared = shared_ahead && b->tensor_layer->graph_branches >= 2u;
+    const bool side_shared = shared_ahead && b->tensor_layer->graph_branches >= GRAPH_BRANCHES_BATCH;
     const bool chain_shared = shared_ahead && !side_shared &&
 			      !b->tensor_layer->launches_untrimmed &&
 			      b->tensor_layer->bf16_ring &&
@@ -5606,9 +5704,9 @@ MUST_CHECK static result_status head_product(struct builder *b, uint32_t first,
 		launch->kernel = b->head_mma_kernel;
 		launch->grid[0] =
 			(outputs + block_outputs - 1u) / block_outputs;
-		launch->grid[1] = launch->grid[2] = 1;
+		launch->grid[1] = launch->grid[LAUNCH_DIMENSIONS - 1u] = 1;
 		launch->block[0] = HEAD_MMA_THREADS;
-		launch->block[1] = launch->block[2] = 1;
+		launch->block[1] = launch->block[LAUNCH_DIMENSIONS - 1u] = 1;
 		launch->dynamic_shared_byte_count = 0;
 	}
     return status;
@@ -5669,7 +5767,11 @@ sampler_shard_launch(struct builder *b, struct linear_range step, uint32_t rows,
 	    result.byte_count <
 		    STEP_RESULT_BYTES +
 			    (uint64_t)rows * STEP_ROW_RESULT_BYTES ||
-	    stage->sampler_exchange.byte_count < SAMPLER_SHARD_EXCHANGE_BYTES)
+	    stage->sampler_exchange.byte_count <
+		    (uint64_t)SAMPLER_SHARD_DEFAULT_EXCHANGE_BYTES ||
+	    stage->sampler_entry.byte_count <
+		    (uint64_t)SAMPLER_SHARD_ENTRY_BYTES ||
+	    stage->sampler_peers.byte_count < SAMPLER_SHARD_PEER_TABLE_BYTES)
 		return STATUS_INVALID_ARGUMENT;
 	struct kernel_launch launch;
 	prepare_launch_fill(&launch, b->sampler_shard_kernel, 1, rows,
@@ -5686,6 +5788,10 @@ draft_cut_launches(struct builder *b, struct linear_range rows,
 		   struct linear_range logits, struct linear_range results,
 		   struct linear_range markov, uint32_t first_call)
 {
+    /* the cut is the head stage's rank of the draft: draft_layers and draft_shards both hold head_shards
+     * (v41_tp2_stage_plan_create, the tp2 model), so tp2_program_select gave the builder its head stage */
+    if (b->head_stage == NULL)
+	    return STATUS_INVALID_ARGUMENT;
     const uint32_t positions = b->plan->limits.draft_positions, rank = b->head_stage->description.rank;
     const uint32_t shard = MODEL_VOCABULARY_VALUE / SAMPLER_SHARD_RANKS;
     const struct v41_tensor *const embedding =
@@ -5742,8 +5848,9 @@ MUST_CHECK static result_status draft_shard_rank_launches(struct builder *b,
 							  uint32_t first_call);
 
 /* batch_wide_head: the head's rows [first, first + outputs) of the card's copy over `rows` rows of hidden (bfloat16
- * [rows][5,120]) into float32 [rows][outputs] at output, one launch of dense_stream's wide form (dense_stream_records.h:
- * the bits of the thin launches); flags DENSE_STEP_ROWS gates the rows by the step area at step, 0 stores all. */
+ * [rows][5,120]) into float32 [rows][outputs] at output, one launch of dense_stream's wide form
+ * (dense_stream_records.h: the bits of the thin launches); flags DENSE_STEP_ROWS gates the rows by the step area at
+ * step, 0 stores all. */
 MUST_CHECK static result_status
 head_wide_product(struct builder *b, uint32_t first, uint32_t outputs,
 		  uint32_t rows, struct linear_range hidden, uint64_t step,
@@ -5776,12 +5883,14 @@ head_wide_product(struct builder *b, uint32_t first, uint32_t outputs,
 	};
 	const uint32_t groups = outputs / DENSE_OUTPUTS_PER_BLOCK;
 	struct kernel_launch launch;
-	/* head_mma: the form head02 measured fastest for the rows (a split of N: blocks of 128 / N outputs); thin_split:
-     * the 8-row form's split (each row's sums are the warps' of its split, added in warp order: the thin bits) */
-	const uint32_t wide_form = thin_split  ? HEAD_MMA_WIDE_THIN_FORM :
-				   rows <= 24u ? 0u :
-				   rows <= 48u ? 1u :
-						 2u;
+	/* head_mma: the form head02 measured fastest for the rows (a split of N: blocks of 128 / N outputs);
+     * thin_split: the 8-row form's split (each row's sums are the warps' of its split, added in warp order: the thin
+     * bits) */
+	const uint32_t wide_form =
+		thin_split			   ? HEAD_MMA_WIDE_THIN_FORM :
+		rows <= HEAD_MMA_WIDE_S1_MOST_ROWS ? 0u :
+		rows <= HEAD_MMA_WIDE_S2_MOST_ROWS ? 1u :
+						     HEAD_MMA_WIDE_S4_FORM;
 	const uint32_t split = rows <= LINEAR_MAXIMUM_ROWS ? HEAD_MMA_SPLIT_8 :
 							     1u << wide_form;
 	if (b->head_mma_wide_kernels[0] != BACKEND_NO_KERNEL &&
@@ -5928,6 +6037,66 @@ MUST_CHECK static result_status head_launches(struct builder *b)
 		   THEN(draft_shard_rank_launches(b, 0, 1));
 }
 
+/* Original PP5: PRO alone normalizes, four independent late CMP visits produce disjoint vocabulary cuts,
+ * then PRO's unchanged whole sampler and draft consume the gathered logits. Tiny ordinary hand-offs carry
+ * readiness only; their recorded marks cover the masked peer stores. No future producer wait is submitted. */
+MUST_CHECK static result_status original_head_walk(struct builder *b)
+{
+	const struct model_plan_record *const plan = b->plan;
+	const struct v41_original_head *const head = &plan->original_head;
+	const uint32_t pro = plan->result_card;
+	uint32_t first = b->made->cards[pro].launch_count;
+	const struct hyper_final_description final = {
+		ARRAY(STREAMS),
+		ARRAY(CARRIED_PRE),
+		plan->globals[V41_DATA_NORM].stored,
+		ARRAY(HIDDEN),
+		no_range,
+		b->rows,
+		0
+	};
+	result_status status =
+		hyper_final_prepare(&final, b->arena, &b->hyper, slots(b, 1));
+	for (uint32_t rank = 0; rank < V41_HEAD_RANKS && status == OK; rank++)
+		status = v41_original_head_launch(plan, b->backend, b->cards,
+						  V41_HEAD_BROADCAST, rank, 0,
+						  b->rows, slots(b, 1));
+	segment_add(b, SEGMENT_NO_LAYER, first);
+	for (uint32_t rank = 0; rank < V41_HEAD_RANKS; rank++)
+		hand_off(b, rank, head->cards[pro].control_source.byte_offset,
+			 head->cards[rank].control_input[0].byte_offset,
+			 V41_HEAD_CONTROL_ROW_BYTES, 0, 0);
+	for (uint32_t rank = 0; rank < V41_HEAD_RANKS && status == OK; rank++) {
+		b->stage++;
+		status = card_select(b, rank);
+		if (status != OK)
+			break;
+		first = b->made->cards[rank].launch_count;
+		status = v41_original_head_launch(plan, b->backend, b->cards,
+						  V41_HEAD_DENSE, rank, 0,
+						  b->rows, slots(b, 1));
+		status = THEN(v41_original_head_launch(
+			plan, b->backend, b->cards, V41_HEAD_GATHER, rank, 0,
+			b->rows, slots(b, 1)));
+		segment_add(b, SEGMENT_NO_LAYER, first);
+		hand_off(b, pro, head->cards[rank].control_source.byte_offset,
+			 head->cards[pro].control_input[rank].byte_offset,
+			 V41_HEAD_CONTROL_ROW_BYTES, 0, 0);
+	}
+	if (status != OK)
+		return status;
+	b->stage++;
+	status = card_select(b, pro);
+	if (status != OK)
+		return status;
+	first = b->made->cards[pro].launch_count;
+	status = v41_original_head_launch(plan, b->backend, b->cards,
+					  V41_HEAD_SAMPLE, 0, 0, b->rows,
+					  slots(b, 1));
+	segment_add(b, SEGMENT_NO_LAYER, first);
+	return status;
+}
+
 /* draft_shards, a rank other than the result card's, verifier v's draft (a thin step's: 0): in a step that holds its
  * DRAFTS row, the result card's rows of it; then its cut draft, sampler uses from first_call. */
 MUST_CHECK static result_status draft_shard_rank_launches(struct builder *b,
@@ -5957,14 +6126,15 @@ MUST_CHECK static result_status draft_shard_rank_launches(struct builder *b,
 	const result_status status = put(b, &launch);
 	return THEN(draft_cut_launches(
 		b,
-		(struct linear_range){ area,
-				       positions * MODEL_HIDDEN_ROW_BYTES },
-		(struct linear_range){ area + DRAFT_SHARE_STEP,
+		(struct linear_range){
+			area, (uint64_t)(positions * MODEL_HIDDEN_ROW_BYTES) },
+		(struct linear_range){ area + (uint64_t)DRAFT_SHARE_STEP,
 				       STEP_BLOCK_BYTES_VALUE +
 					       positions *
 						       STEP_ROW_BYTES_VALUE },
-		(struct linear_range){ area + DRAFT_SHARE_VIEWS,
-				       positions * STEP_DRAFT_VIEW_BYTES },
+		(struct linear_range){
+			area + DRAFT_SHARE_VIEWS,
+			(uint64_t)(positions * STEP_DRAFT_VIEW_BYTES) },
 		(struct linear_range){ logits, (uint64_t)positions * shard *
 						       sizeof(float) },
 		(struct linear_range){ results,
@@ -6146,11 +6316,12 @@ MUST_CHECK static result_status draft_probe(struct builder *b,
     const uint64_t element = is_float32 ? sizeof(float) : sizeof(uint16_t);
     const uint32_t rows = b->plan->limits.draft_positions;
     const struct linear_range logits = ARRAY(DRAFT_LOGITS);
-    if (offset + rows * width * element > logits.byte_count)
+    const uint64_t bytes = (uint64_t)(rows * width) * element;
+    if (offset + bytes > logits.byte_count)
 	    return STATUS_INVALID_ARGUMENT;
     const struct tp2_join_description copy = {
-	    .source = { source.byte_offset, rows * width * element },
-	    .output = { logits.byte_offset + offset, rows * width * element },
+	    .source = { source.byte_offset, bytes },
+	    .output = { logits.byte_offset + offset, bytes },
 	    .width = width,
 	    .row_count = rows,
 	    .source_row_stride = width,
@@ -6163,6 +6334,21 @@ MUST_CHECK static result_status draft_probe(struct builder *b,
 
 #define PROBE_QUERY_WIDTH (MODEL_HEADS_VALUE * MODEL_HEAD_DIMS)
 #define PROBE_ROTATION_WIDTH (MODEL_ROTATION_ROW_BYTES / 4u)
+#define PROBE_STREAMS_WIDTH (MODEL_STREAMS_ROW_BYTES / 2u)
+#define PROBE_POST_WIDTH (MODEL_SITE_ROW_BYTES / 4u)
+#define PROBE_COMB_WIDTH (MODEL_COMB_ROW_BYTES / 4u)
+/* draft_walk's DIAG_DRAFT_PROBE: where each probe lands in the logits */
+#define PROBE_FRONT_STREAMS_OFFSET 1257472u
+#define PROBE_POST_OFFSET 1255424u
+#define PROBE_COMB_OFFSET 1255936u
+#define PROBE_HEADS_OFFSET 790528u
+#define PROBE_QUERIES_OFFSET 4096u
+#define PROBE_CORE_OUTPUT_OFFSET 393216u
+#define PROBE_ROTATION_AGAIN_OFFSET 786432u
+#define PROBE_GROUPS_OFFSET 1122304u
+#define PROBE_SUBLAYER_OUTPUT_OFFSET 1204224u
+#define PROBE_POST_STREAMS_OFFSET 1462272u
+#define DECIMAL_BASE 10 /* DIAG_DRAFT_STAGES */
 
 MUST_CHECK static result_status draft_walk(struct builder *b)
 {
@@ -6201,7 +6387,7 @@ MUST_CHECK static result_status draft_walk(struct builder *b)
     const char *const stages_text = getenv("DIAG_DRAFT_STAGES");
     const char *const skip_text = getenv("DIAG_DRAFT_SKIP_FFN");
     const uint32_t stages = stages_text != NULL ?
-				    (uint32_t)strtoul(stages_text, NULL, 10) :
+				    (uint32_t)strtoul(stages_text, NULL, DECIMAL_BASE) :
 				    MODEL_DRAFT_STAGES;
     const bool skip_ffn = skip_text != NULL && strcmp(skip_text, "1") == 0;
     /* DIAG_DRAFT_PROBE: stage 0's attention in its parts, the rotations, wq_b's heads and the queries behind the
@@ -6218,16 +6404,15 @@ MUST_CHECK static result_status draft_walk(struct builder *b)
 			     status; /* the card's rank of the stage */
 	    if (probe && stage == 0) {
 		    status = THEN(layer_steps(b, layer, 0, 0, FRONT_STEPS));
-		    /* the site front's: the streams it read, its post and comb (offsets 1,257,472, 1,255,424, 1,255,936) */
+		    /* the site front's: the streams it read, its post and comb (offsets 1,257,472, 1,255,424,
+		     * 1,255,936) */
 		    status = THEN(draft_probe(b, ARRAY(STREAMS),
-					      MODEL_STREAMS_ROW_BYTES / 2u,
-					      false, 1257472u));
-		    status = THEN(draft_probe(b, ARRAY(POST),
-					      MODEL_SITE_ROW_BYTES / 4u, true,
-					      1255424u));
-		    status = THEN(draft_probe(b, ARRAY(COMB),
-					      MODEL_COMB_ROW_BYTES / 4u, true,
-					      1255936u));
+					      PROBE_STREAMS_WIDTH, false,
+					      PROBE_FRONT_STREAMS_OFFSET));
+		    status = THEN(draft_probe(b, ARRAY(POST), PROBE_POST_WIDTH,
+					      true, PROBE_POST_OFFSET));
+		    status = THEN(draft_probe(b, ARRAY(COMB), PROBE_COMB_WIDTH,
+					      true, PROBE_COMB_OFFSET));
 		    status = THEN(layer_steps(
 			    b, layer, 0, 0,
 			    QUERY_PRODUCTS | INDEX_WEIGHTS_PRODUCT | QUERIES));
@@ -6235,27 +6420,30 @@ MUST_CHECK static result_status draft_walk(struct builder *b)
 					      PROBE_ROTATION_WIDTH, true, 0));
 		    status =
 			    THEN(draft_probe(b, ARRAY(HEADS), PROBE_QUERY_WIDTH,
-					     false, 790528u));
+					     false, PROBE_HEADS_OFFSET));
 		    status = THEN(draft_probe(b, ARRAY(QUERIES),
-					      PROBE_QUERY_WIDTH, false, 4096u));
+					      PROBE_QUERY_WIDTH, false,
+					      PROBE_QUERIES_OFFSET));
 		    status = THEN(layer_steps(b, layer, 0, 0, CORE));
 		    status = THEN(draft_probe(b, ARRAY(ATTENTION_OUTPUT),
 					      PROBE_QUERY_WIDTH, false,
-					      393216u));
+					      PROBE_CORE_OUTPUT_OFFSET));
 		    status = THEN(draft_probe(b, ARRAY(ROTATION),
 					      PROBE_ROTATION_WIDTH, true,
-					      786432u));
+					      PROBE_ROTATION_AGAIN_OFFSET));
 		    status = THEN(layer_steps(b, layer, 0, 0,
 					      OUTPUT_PRODUCTS | SITE_POST));
-		    /* wo_a's groups, the sublayer output and the streams behind the post (1,122,304, 1,204,224, 1,462,272) */
+		    /* wo_a's groups, the sublayer output and the streams behind the post (1,122,304, 1,204,224,
+		     * 1,462,272) */
 		    status = THEN(draft_probe(b, ARRAY(GROUPS),
 					      V41_DATA_WIDEST_ROW, false,
-					      1122304u));
+					      PROBE_GROUPS_OFFSET));
 		    status = THEN(draft_probe(b, ARRAY(SUBLAYER_OUTPUT),
-					      MODEL_HIDDEN, false, 1204224u));
+					      MODEL_HIDDEN, false,
+					      PROBE_SUBLAYER_OUTPUT_OFFSET));
 		    status = THEN(draft_probe(b, ARRAY(STREAMS),
-					      MODEL_STREAMS_ROW_BYTES / 2u,
-					      false, 1462272u));
+					      PROBE_STREAMS_WIDTH, false,
+					      PROBE_POST_STREAMS_OFFSET));
 	    } else {
 		    status = THEN(layer_steps(b, layer, 0, 0,
 					      FRONT_STEPS | REST_STEPS));
@@ -6616,20 +6804,21 @@ MUST_CHECK static result_status batch_draft_rows_walk(struct builder *b,
     } else if (own_rows_head && verifiers == 1u) {
         const uint32_t cut_first = b->draft_layers ? head_cut_first(b) : 0u;
         status = THEN(head_wide_product(b, cut_first, vocabulary, positions, hidden, 0, 0, logits, false));
-        for (uint32_t piece = 0; piece < vocabulary / shard && positions >= 2u && status == OK; piece++) {
+        for (uint32_t piece = 0; piece < vocabulary / shard && positions > 1u && status == OK; piece++) {
+		const uint32_t moved = positions - 1u; /* the rows behind the first */
 		const struct tp2_join_description slot_rows = {
 			.source = { logits.byte_offset + row_bytes +
 					    piece * piece_bytes,
-				    (uint64_t)(positions - 2u) * row_bytes +
+				    (uint64_t)(moved - 1u) * row_bytes +
 					    piece_bytes },
 			.output = { logits.byte_offset +
 					    slot_count * row_bytes +
 					    piece * piece_bytes,
-				    (uint64_t)(positions - 2u) * slot_count *
+				    (uint64_t)(moved - 1u) * slot_count *
 						    row_bytes +
 					    piece_bytes },
 			.width = shard,
-			.row_count = positions - 1u,
+			.row_count = moved,
 			.source_row_stride = vocabulary,
 			.output_row_stride = slot_count * vocabulary,
 			.operation = TP2_JOIN_FLOAT32_COPY
@@ -6866,9 +7055,13 @@ MUST_CHECK static result_status program_walk(struct builder *b)
 			}
 		} else if (status ==
 			   OK) { /* the embedding (unit 0), the head */
-			status = unit == 0 ? step_launches(b, true) :
-					     head_launches(b);
-			segment_add(b, SEGMENT_NO_LAYER, first_launch);
+			if (unit != 0 && plan->original_head.enabled) {
+				status = original_head_walk(b);
+			} else {
+				status = unit == 0 ? step_launches(b, true) :
+						     head_launches(b);
+				segment_add(b, SEGMENT_NO_LAYER, first_launch);
+			}
 		}
 	}
     return plan->limits.draft_positions != 0 ? THEN(draft_walk(b)) : status;
@@ -6965,8 +7158,8 @@ MUST_CHECK static result_status chunk_walk(struct builder *b, bool is_full)
 			chunk_select(b);
 			status = draft_tap_launch(b, layer);
 		}
-		/* over the chunk: ahead of the slabs' state writes, and the rest's products behind qr alone (layer 20's behind
-         * its front, whose prepares wrote qr) */
+		/* over the chunk: ahead of the slabs' state writes, and the rest's products behind qr alone (layer 20's
+         * behind its front, whose prepares wrote qr) */
 		const uint32_t ahead = ENGRAM_STEPS | SITE_MIX |
 				       INPUT_PRODUCTS | POOL_PRODUCTS;
 		const uint32_t queries = QUERY_PRODUCTS | INDEX_WEIGHTS_PRODUCT;
@@ -7188,6 +7381,9 @@ program_prepare_mode(const struct model_plan_record *plan,
 	if (plan->limits.official_reference != 0)
 		launch_capacity[card] +=
 			layers * LINEAR_MAXIMUM_ROWS + LINEAR_MAXIMUM_ROWS;
+	if (!is_wide && plan->original_head.enabled)
+		launch_capacity[card] +=
+			V41_HEAD_RANKS + ORIGINAL_HEAD_FIXED_LAUNCHES;
 	launch_total += launch_capacity[card];
     }
     struct builder *const b = FAULT_POINT(model_v41_program_memory) ?
@@ -7238,7 +7434,8 @@ program_prepare_mode(const struct model_plan_record *plan,
 	    }
 	    made->cards[card] = (struct program_card_record){
 		    b->launches[card],
-		    card == 0 && plan->vision.enabled ?
+		    card == 0 && plan->vision.enabled &&
+				    !plan->original_head.enabled ?
 			    plan->vision.text_arena_bytes :
 			    planned->arena_byte_count,
 		    arrays[V41_DATA_ARRAY_STEP],
@@ -7266,34 +7463,49 @@ program_prepare_mode(const struct model_plan_record *plan,
         const uint32_t draft_first = !is_wide && plan->limits.draft_positions != 0
                                          ? made->program.draft_segment_first : made->program.segment_count;
 	made->program = (struct execution_program){
-		made->cards,
-		made->segments,
-		made->hand_offs,
-		plan->limits,
-		plan->card_count,
-		made->program.segment_count,
-		made->program.hand_off_count,
-		row_count,
-		plan->result_card,
-		made->expert_pauses,
-		made->host_expert_offsets,
-		made->program.expert_pause_count,
-		made->program.host_expert_count,
-		kind,
-		0,
-		made->session_ranges,
-		session_ranges_make(plan, made->session_ranges),
-		made->program.front_segment_count,
-		MODEL_CONE_ROWS,
-		plan->limits.draft_positions != 0 ? V41_DATA_WALK_LAYERS :
-						    MODEL_LAYERS,
-		made->checkpoints,
-		made->leases,
-		draft_first
+		.cards = made->cards,
+		.segments = made->segments,
+		.hand_offs = made->hand_offs,
+		.limits = plan->limits,
+		.card_count = plan->card_count,
+		.segment_count = made->program.segment_count,
+		.hand_off_count = made->program.hand_off_count,
+		.row_count = row_count,
+		.result_card = plan->result_card,
+		.expert_pauses = made->expert_pauses,
+		.host_expert_offsets = made->host_expert_offsets,
+		.expert_pause_count = made->program.expert_pause_count,
+		.host_expert_count = made->program.host_expert_count,
+		.kind = kind,
+		.lease_count = 0,
+		.session_ranges = made->session_ranges,
+		.session_range_count =
+			session_ranges_make(plan, made->session_ranges),
+		.front_segment_count = made->program.front_segment_count,
+		.cone_rows = MODEL_CONE_ROWS,
+		.checkpoint_count = plan->limits.draft_positions != 0 ?
+					    V41_DATA_WALK_LAYERS :
+					    MODEL_LAYERS,
+		.checkpoints = made->checkpoints,
+		.leases = made->leases,
+		.draft_segment_first = draft_first
 	};
 	checkpoints_make(plan, made->checkpoints);
-        made->program.lease_count = leases_make(plan, made);
-        *program_out = &made->program;
+	made->program.lease_count = leases_make(plan, made);
+	if (!is_wide && plan->original_head.enabled &&
+	    plan->original_head.bank_count == 0) {
+		uint32_t first = 0;
+		while (first < made->program.segment_count &&
+		       made->segments[first].card != plan->result_card)
+			first++;
+		ASSERT(first < made->program.segment_count &&
+		       made->program.lease_count < MOST_LEASES);
+		made->leases[made->program.lease_count++] =
+			(struct visit_lease){ plan->result_card, first,
+					      made->program.segment_count -
+						      1u };
+	}
+	*program_out = &made->program;
     } else {
         free(made);
     }
@@ -7662,7 +7874,7 @@ tp2_program_view_is_valid(const struct v41_tp2_program_description *description,
 		if (canonical->layer_card[layer] != primary)
 			return false;
 	}
-	if (view == NULL || stage == NULL || stage->model == NULL ||
+	if (view == NULL ||
 	    !tp2_program_limits_equal(&canonical->limits, &view->limits) ||
 	    view->card_count != canonical->card_count || view->vision.enabled ||
 	    view->embedding_card != canonical->embedding_card ||
@@ -7730,7 +7942,8 @@ tp2_program_view_is_valid(const struct v41_tp2_program_description *description,
         memcmp(view->layer_card, canonical->layer_card, sizeof(view->layer_card)) != 0)
         return false;
     for (uint32_t global = 0; global < V41_DATA_GLOBALS; global++) {
-	    /* head_shards: ranks 1-3 hold their own norm and head rows; replicated_embedding: every rank its embedding */
+	    /* head_shards: ranks 1-3 hold their own norm and head rows; replicated_embedding: every rank its
+	     * embedding */
 	    const bool own = global == V41_DATA_EMBEDDING ?
 				     stage->description.include_embedding :
 				     stage->description.head_shards &&
@@ -7742,7 +7955,8 @@ tp2_program_view_is_valid(const struct v41_tp2_program_description *description,
 		    return false;
     }
     for (uint32_t global = 0; global < V41_DATA_DRAFT_GLOBALS; global++) {
-	    /* draft_shards: ranks 1-3 hold their own Markov tables; draft_layers: main_proj, main_norm, the final norm */
+	    /* draft_shards: ranks 1-3 hold their own Markov tables; draft_layers: main_proj, main_norm, the final
+	     * norm */
 	    const bool own = (((global == V41_DATA_DRAFT_MARKOV_EMBEDDING ||
 				global == V41_DATA_DRAFT_MARKOV_HEAD) &&
 			       stage->description.draft_shards) ||
@@ -7986,8 +8200,8 @@ tp2_program_tensor_fill(const struct builder *build,
 	tensor->exl3_tc_moe = stage->description.exl3_tc_moe;
 	tensor->exl3_expert_rotation = stage->description.exl3_expert_rotation;
 	tensor->trunk_shape_slices = stage->description.trunk_shape_slices;
-	/* a BATCH stage's banks of up to 64 rows serve its BATCH programs; its wide and full programs complete as a THIN
-     * stage's do (slab rings, the copy-engine sums, split_overlap, chunk_core: the same programs and bits) */
+	/* a BATCH stage's banks of up to 64 rows serve its BATCH programs; its wide and full programs complete as a
+     * THIN stage's do (slab rings, the copy-engine sums, split_overlap, chunk_core: the same programs and bits) */
 	tensor->ring_rows = stage->description.batch &&
 					    build->made->program.kind !=
 						    PROGRAM_BATCH ?
@@ -8457,12 +8671,13 @@ static bool split_applies(const struct builder *b, uint32_t layer)
 		       LINEAR_WIDE_MOST_ROWS; /* each half a wide launch */
 }
 
-/* Half h of the chunk (rows, slabs, view) for chunk_select, piece_select and slab_select; h == 2: the whole again. */
+/* Half h of the chunk (rows, slabs, view) for chunk_select, piece_select and slab_select; h == CHUNK_HALVES: the whole
+ * again. */
 static void half_select(struct builder *b, uint32_t half, uint32_t chunk_rows)
 {
     b->chunk_first = half == 1u ? b->half_rows : 0u;
     b->chunk_rows = half == 0 ? b->half_rows : half == 1u ? chunk_rows - b->half_rows : chunk_rows;
-    b->chunk_view = half < 2u ? b->half_view_first + half : 0u;
+    b->chunk_view = half < CHUNK_HALVES ? b->half_view_first + half : 0u;
     b->slab_count =
 	    (b->chunk_rows + LINEAR_MAXIMUM_ROWS - 1u) / LINEAR_MAXIMUM_ROWS;
     chunk_select(b);
@@ -8857,18 +9072,20 @@ MUST_CHECK static result_status split_layer(struct builder *b, uint32_t layer,
 		       tp2_program_layer_card(b->tp_description, next) ==
 			       tp2_program_layer_card(b->tp_description, layer);
     /* prefill_dead_halves: a dead half's sums left out (half_dead), their side runs' resume and join then the chain */
-    const bool dead[2] = {half_dead(b, layer, 0u), half_dead(b, layer, 1u)};
+    const bool dead[CHUNK_HALVES] = {half_dead(b, layer, 0u), half_dead(b, layer, 1u)};
     bool unforked = false;
     result_status status = OK;
     for (uint32_t part = pipeline && b->ahead_layer[b->card] == next ? 1u : 0u; part < last && status == OK; part++) {
 	    const bool marks = mode == V41_DATA_SPLIT_OVERLAP ||
 			       mode >= V41_DATA_SPLIT_PIPELINE ||
 			       (mode == V41_DATA_SPLIT_ATTENTION_ONLY &&
-				part >= 1u && part <= 6u) ||
-			       (mode == V41_DATA_SPLIT_FFN_ONLY && part >= 7u &&
-				part <= 9u);
+				part >= SPLIT_ATTENTION_FIRST_PART &&
+				part <= SPLIT_ATTENTION_LAST_PART) ||
+			       (mode == V41_DATA_SPLIT_FFN_ONLY &&
+				part >= SPLIT_FFN_FIRST_PART &&
+				part <= SPLIT_FFN_LAST_PART);
 	    const uint32_t half = parts[part].half;
-	    if (half < 2u && dead[half] &&
+	    if (half < CHUNK_HALVES && dead[half] &&
 		(parts[part].steps == SITE_SUM || parts[part].ffn == FFN_SUM)) {
 		    unforked = unforked ||
 			       (marks && parts[part].branch == LAUNCH_SIDE);
@@ -8907,7 +9124,7 @@ MUST_CHECK static result_status split_layer(struct builder *b, uint32_t layer,
 				     dead[1] ? LAUNCH_CHAIN : LAUNCH_JOIN));
 	    b->ahead_layer[b->card] = status == OK ? next + 1u : 0u;
     }
-    half_select(b, 2u, chunk_rows);
+    half_select(b, CHUNK_HALVES, chunk_rows);
     return status;
 }
 
@@ -8951,9 +9168,11 @@ tp2_program_layer_steps_inner(struct builder *build, uint32_t layer,
 	    /* chunk_core: window writes over the chunk, pool writes per slab (layer 20's front: per slab too).
          * BATCH level 3 computes pools over the step, then retains compressor slots separately: mixed prompt rows
          * can wrap a session's slots, and must not overwrite a previous partner before a pool row reads it. */
-	    const bool window =
-		    chunk_core && !original_chunk_core_applies(build) &&
-		    !divided && (!batch_core || build->batch_core_once >= 2u);
+	    const bool window = chunk_core &&
+				!original_chunk_core_applies(build) &&
+				!divided &&
+				(!batch_core ||
+				 build->batch_core_once >= BATCH_CORE_WINDOWS);
 	    const bool pool_chunk = window && !thin_tail_program(build) &&
 				    (!batch_core || build->batch_core_once >=
 							    BATCH_CORE_POOLS) &&
@@ -9280,15 +9499,15 @@ tp2_program_walk(struct builder *build,
 		    status = THEN(tp2_program_segment(build, SEGMENT_NO_LAYER,
 						      first_launch));
 	    }
-	    /* then each verifier's draft walk on the result card (draft_records.h's round table, slab results), each a thin
-         * program's walk: the card's kernels selected as a thin program's (the draft layers' site fronts) */
+	    /* then each verifier's draft walk on the result card (draft_records.h's round table, slab results), each a
+         * thin program's walk: the card's kernels selected as a thin program's (the draft layers' site fronts) */
 	    const struct model_limits *const limits =
 		    &description->canonical->limits;
 	    build->batch_stage = description->stages[result];
 	    build->batch_slabs = build->slab_count;
 	    build->slab_count = 1;
-	    /* batch_draft_wide 2: the wide forms for a batched draft of more than 8 rows, where its layers can take them
-         * (TP draft layers on the BF16 ring, no exact dense shards: batch_draft_rows_walk's once) */
+	    /* batch_draft_wide 2: the wide forms for a batched draft of more than 8 rows, where its layers can take
+         * them (TP draft layers on the BF16 ring, no exact dense shards: batch_draft_rows_walk's once) */
 	    const struct v41_tp2_stage_description *const draft_stage =
 		    &build->batch_stage->description;
 	    build->draft_wide_kernels =
@@ -9442,7 +9661,7 @@ tp4_graph_ranges_merge(struct made_program *made,
     /* graph_parts (--tp_graph_parts): the cone's groups (a decode step's work; the same in every program, which the
      * driver holds equal) cut at graph_parts - 1 group starts spread evenly, so that a card's step begins after a
      * smaller graph's launch; the part behind the cone stays one */
-    uint32_t boundaries[2u + TP_MOST_GRAPH_PARTS], boundary_count = 0;
+    uint32_t boundaries[GRAPH_OUTER_BOUNDARIES + TP_MOST_GRAPH_PARTS], boundary_count = 0;
     uint32_t starts[MOST_SEGMENTS], start_count = 0;
     for (uint32_t index = 0; index < *pair_count; index++)
         if (pairs[index].first_segment > first && pairs[index].first_segment < front)
@@ -9571,7 +9790,8 @@ v41_tp_program_prepare(const struct v41_tp2_program_description *description,
 			MODEL_DRAFT_STAGES +
 			DRAFT_MOST_LAUNCHES(canonical->limits.draft_positions);
 	if (batch) /* a BATCH program: the head of each slab on a card that samples; the verifiers' draft walks (with
-                    * batch_draft_rows: a slab of draft rows as many launches as a walk at most, plus a verify a walk) */
+                    * batch_draft_rows: a slab of draft rows as many launches as a walk at most, plus a verify a
+                    * walk) */
 		launch_capacity[card] +=
 			slabs * CARD_MOST_LAUNCHES +
 			(card == canonical->result_card &&
@@ -9583,7 +9803,7 @@ v41_tp_program_prepare(const struct v41_tp2_program_description *description,
 						 (DRAFT_MOST_LAUNCHES(
 							  canonical->limits
 								  .draft_positions) +
-						  2u) +
+						  BATCH_WALK_MORE_LAUNCHES) +
 					 V41_DATA_BATCH_DRAFT_SLABS *
 						 DRAFT_MOST_LAUNCHES(
 							 canonical->limits
@@ -9620,16 +9840,20 @@ v41_tp_program_prepare(const struct v41_tp2_program_description *description,
 			   0,
 		   "checkpoint tail follows aligned launch storage");
     const size_t launch_end =
-	    sizeof(struct made_program) +
-	    (size_t)launch_total * sizeof(struct kernel_launch);
+	    size_add(sizeof(struct made_program),
+		     size_multiply(launch_total, sizeof(struct kernel_launch)));
+    size_t made_bytes = size_add(
+	    launch_end, size_multiply((size_t)TP2_PROGRAM_CHECKPOINTS,
+				      sizeof(struct window_checkpoint)));
+    made_bytes = size_add(made_bytes,
+			  size_multiply(TP2_PROGRAM_PAIRS,
+					sizeof(struct step_companion_pair)));
+    if (made_bytes == SIZE_MAX) {
+	    return STATUS_INVALID_ARGUMENT;
+    }
     struct builder *const build = calloc(1, sizeof(*build));
     struct v41_tp2_layer_plan *const tensor = calloc(1, sizeof(*tensor));
-    struct made_program *const made =
-	    calloc(1, launch_end +
-			      (size_t)TP2_PROGRAM_CHECKPOINTS *
-				      sizeof(struct window_checkpoint) +
-			      (size_t)TP2_PROGRAM_PAIRS *
-				      sizeof(struct step_companion_pair));
+    struct made_program *const made = calloc(1, made_bytes);
     if (build == NULL || tensor == NULL || made == NULL) {
         free(made); free(tensor); free(build);
 	return STATUS_OUT_OF_MEMORY;
@@ -9638,10 +9862,11 @@ v41_tp_program_prepare(const struct v41_tp2_program_description *description,
     struct window_checkpoint *const checkpoints = checkpoint_storage;
     struct step_companion_pair *const pairs =
 	    (struct step_companion_pair *)(checkpoints +
-					   TP2_PROGRAM_CHECKPOINTS);
+					   (size_t)TP2_PROGRAM_CHECKPOINTS);
     /* split_overlap: two half views behind the slabs' where a chunked program's rows split on slabs */
-    const uint32_t half_rows =
-	    row_count / (2u * LINEAR_MAXIMUM_ROWS) * LINEAR_MAXIMUM_ROWS;
+    const uint32_t half_rows = row_count /
+			       (CHUNK_HALVES * LINEAR_MAXIMUM_ROWS) *
+			       LINEAR_MAXIMUM_ROWS;
     const bool halves = (kind == PROGRAM_WIDE || kind == PROGRAM_FULL) &&
 			description->stages[0]->description.split_overlap &&
 			half_rows >= V41_DATA_SPAN_ROWS &&
@@ -9691,8 +9916,8 @@ v41_tp_program_prepare(const struct v41_tp2_program_description *description,
 	made->cards[card] = (struct program_card_record){
 		build->launches[card], planned->arena_byte_count,
 		arrays[V41_DATA_ARRAY_STEP], arrays[V41_DATA_ARRAY_SESSIONS],
-		/* a BATCH model: BATCH and chunked programs' result area the slab results (one driver's cards agree; the
-             * chunked ones sample nothing) */
+		/* a BATCH model: BATCH and chunked programs' result area the slab results (one driver's cards agree;
+             * the chunked ones sample nothing) */
 		description->stages[0]->description.batch &&
 				kind != PROGRAM_THIN &&
 				card == canonical->result_card ?
@@ -9786,29 +10011,31 @@ v41_tp_program_prepare(const struct v41_tp2_program_description *description,
 			  expected_groups);
 	if (status == OK) {
 		made->program = (struct execution_program){
-			made->cards,
-			made->segments,
-			made->hand_offs,
-			canonical->limits,
-			canonical->card_count,
-			made->program.segment_count,
-			made->program.hand_off_count,
-			row_count,
-			canonical->result_card,
-			made->expert_pauses,
-			made->host_expert_offsets,
-			0,
-			0,
-			kind,
-			0,
-			made->session_ranges,
-			session_ranges_make(canonical, made->session_ranges),
-			made->program.front_segment_count,
-			MODEL_CONE_ROWS,
-			checkpoints_count,
-			checkpoints,
-			made->leases,
-			draft_first
+			.cards = made->cards,
+			.segments = made->segments,
+			.hand_offs = made->hand_offs,
+			.limits = canonical->limits,
+			.card_count = canonical->card_count,
+			.segment_count = made->program.segment_count,
+			.hand_off_count = made->program.hand_off_count,
+			.row_count = row_count,
+			.result_card = canonical->result_card,
+			.expert_pauses = made->expert_pauses,
+			.host_expert_offsets = made->host_expert_offsets,
+			.expert_pause_count = 0,
+			.host_expert_count = 0,
+			.kind = kind,
+			.lease_count = 0,
+			.session_ranges = made->session_ranges,
+			.session_range_count = session_ranges_make(
+				canonical, made->session_ranges),
+			.front_segment_count =
+				made->program.front_segment_count,
+			.cone_rows = MODEL_CONE_ROWS,
+			.checkpoint_count = checkpoints_count,
+			.checkpoints = checkpoints,
+			.leases = made->leases,
+			.draft_segment_first = draft_first
 		};
 		const bool whole_graph =
 			(layout == V41_DATA_TP_LAYOUT_QUAD || exl3_all) &&

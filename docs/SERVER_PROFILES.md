@@ -1,14 +1,23 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Server profiles for Anemone v0.0.2-alpha
+# Server profiles for Anemone v0.0.3-alpha
+
+The default-off [Messages adapter](ANTHROPIC_MESSAGES.md) and shared HTTP
+`top_k` extension are newer than the `6b9e276` option-map snapshots and functional
+smokes below, which retain their original option counts and qualification scope.
+The `f57d813` parser contains them, but its pass over the four arrays neither
+enables nor exercises them.
 
 Use this page for the three release launch recipes: original exact, original
 balanced and EXL3 balanced. Each complete command below passed the real axis
 resolver and argument parser at source
-`6b9e276fe4da6750be46c874e5fb5c0ee2a46871`. Four separate functional smokes then
-started these three servers plus the optional guard: all 12 health, model-listing
+`f57d81375a8830db16925e42740aae1fe0773e90` (v0.0.3-alpha). Four separate functional
+smokes, at source `6b9e276fe4da6750be46c874e5fb5c0ee2a46871` and with that source's
+arrays, started these three servers plus the optional guard: all 12 health, model-listing
 and tiny T0 Chat requests returned HTTP 200. Every Chat request completed eight
 native output tokens with finish reason `length`. This is functional model/HTTP
-evidence, with no speed, quality, concurrency or full-context claim.
+evidence, with no speed, quality, concurrency or full-context claim. Commit `ab815b6`
+later gave the two EXL3 arrays eight explicit knobs, `--pipeline_steps=1` among them;
+in that form they passed the parser at `f57d813` but were not smoke-run.
 The CPU parser check itself stops before model, GPU, socket and server startup.
 The [comparison matrix](results/COMPARISON_MATRIX.md)
 records GPU execution, identity, quality, timing and capacity separately, with
@@ -27,8 +36,8 @@ numerical controls when comparing a measurement.
 ## Prepare the binary and data
 
 1. Follow [BUILD.md](../BUILD.md) from a fresh release export on Linux x86-64.
-   The tested CUDA 13.4/GCC 15.2 release build needs neither Git nor Python nor
-   GPU devices. Check `./build/release/anemone --version` for `v0.0.2-alpha`.
+   The tested CUDA 13.5 V13.5.37 and GCC 14.2.0 release build needs neither Git nor Python nor
+   GPU devices. Check `./build/release/anemone --version` for `v0.0.3-alpha`.
 2. Follow [MODEL_DATA.md](user/MODEL_DATA.md) for the separate CPU Python
    environment, all 112 pinned input files, SHA256 verification and every
    producer command. The official source is
@@ -76,8 +85,14 @@ service installation or privileged `/opt` copy is required by this example.
 | EXL3 balanced | Four-CMP TP4, BF16 wire, TC-MoE/head/trunk, DSpark and BATCH menu. | A separate weight family. Its shipped-default concurrent mixed identity gate failed; mixed rates are withheld. The separate guard below has narrower positive evidence. |
 
 These names describe the recorded explicit launch recipes. The two balanced
-commands do not select a literal all-balanced four-axis tuple; that tuple remains
-held. There is no `--profile=NAME` switch and no implicit axis defaults. See
+commands do not select a four-axis tuple. There is no `--profile=NAME` switch; an
+unset axis takes its balanced value. A command without axis flags takes every knob it does not give from its
+split's all-balanced row (the base, plus 1M context and `--session_slots=max` on serve). Both balanced commands give
+each of those knobs explicitly, so they run exactly as recorded: the EXL3 BATCH command pins the eight knobs the
+TP4_EXL3 (THIN) base would otherwise fill at the values it ran with (`--pipeline_steps=1`, which BATCH requires, the
+CLI's draft prices 14300/0/690 and learned acceptance 1, session acceptance 0, product blocks 0, round-once 0). It is
+not the generated concurrency=multiple set, which runs batch_adaptive's own prices (13000/0/1200), split rows and
+prefill scheduling. See
 [the four-axis rules](USAGE.md#7-four-axis-configuration) and
 [strict reference scope](USAGE.md#97-the-exactnessexact-tier-original-weight-reference-profile).
 
@@ -180,8 +195,9 @@ The shared row/full/cone/graph/DSpark flags have the meanings above. The BATCH
 row menu `8,8,12,12,16,24,32,48` pairs with verifier capacities
 `1,2,2,4,4,4,8,8`, including distinct eight-row programs for one and two
 verifiers. `batch_wide_head=1` and `batch_draft_rows=1` put verification/draft rows
-in BATCH programs. This resolves ordinary pipeline depth to 1 and draft policy
-to rate policy 2. Eight session slots and 65,536-token contexts allocate capacity;
+in BATCH programs. Pipeline depth 1 (BATCH requires it), the CLI's draft prices and acceptances and the zero
+product-block and round-once pins are stated explicitly, so the TP4_EXL3 base fills none of them; the omitted
+draft policy resolves to rate policy 2. Eight session slots and 65,536-token contexts allocate capacity;
 the omitted-request output default is also 65,536. These settings do not guarantee arbitrary mixed traffic or full
 context numerical qualification.
 
@@ -218,6 +234,14 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID ./build/release/anemone serve \
   --batch_wide_head=1 \
   --batch_draft_rows=1 \
   --tp_draft_layers=1 \
+  --pipeline_steps=1 \
+  --draft_learned_acceptance=1 \
+  --draft_session_acceptance=0 \
+  --draft_base_us=14300 \
+  --draft_tail_us=0 \
+  --draft_row_us=690 \
+  --exl3_tc_product_blocks=0 \
+  --tp_decode_round_once=0 \
   --reasoning_effort=0 \
   --context_tokens=65536 \
   --generated_tokens=65536 \
@@ -230,6 +254,11 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID ./build/release/anemone serve \
   /opt/anemone/data/tokenizer.bin /opt/anemone/data/model.exl3map
 ```
 
+Each profile can name the model folder instead of the last two arguments: `--model_dir=/opt/anemone/data` reads
+`tokenizer.bin` and `original.anemone` from it, or `model.exl3map` with `--weights=exl3` or `--placement=tp4_exl3`
+(USAGE section 3.4). A linked pack is followed to its real path, and startup reports it; the model identity and the
+argv the profile pins are otherwise the same.
+
 ### Separate EXL3 prompt-chunk guard
 
 The optional `exl3_guard` array in the command JSON is the EXL3 balanced command
@@ -241,6 +270,82 @@ It is opt-in, does not change a shipped default, and does not admit the held
 balanced axis tuple. Read the [current matrix](results/COMPARISON_MATRIX.md)
 before selecting it. One 1,048,576-token slot's readiness in either placement
 also remains an allocation result, not full-context inference qualification.
+
+## Axis compatibility and retained routes
+
+The generated [axis table](../tools/cli/AXES.md) is the current selector map.
+
+`--placement` picks the GPU split (PP5 when omitted) and each split has its own table: each selected axis
+value adds its knob set to the split's base (the knobs its measured routes share, [USAGE.md section
+7.1](USAGE.md#71-availability-and-meanings)). A generate or serve without axis flags runs the split's all-balanced
+row; `--axes=off` runs the raw engine defaults with nothing inserted. Each route has three separate parameters, derived
+from its settings (generated route table in [AXES.md](../tools/cli/AXES.md)); a generate value that differs
+follows in parentheses:
+
+| Original axis value | Route | GPU split (`--placement`) | Pipeline depth (`--pipeline_steps`) | Serving slots (`--session_slots`) |
+| --- | --- | --- | --- | --- |
+| concurrency=single on `--placement=tp4_pro` (the base) | `original_tp_serial2` without `--session_slots` | TP4_PRO | 2 | max |
+| concurrency=balanced or unset, serve, every split (the owner's rule, the raw defaults) | the split's base (1M context, `--session_slots=max`, both raw defaults) | PP5 / TP4_PRO / TP4_EXL3 | default (TP4_PRO, TP4_EXL3: 2) | max: the most that fit, no cap |
+| concurrency=multiple on PP5 | `original_pp_depth8` without `--session_slots` | PP5 | 8 (generate 2) | max |
+| exactness=exact on PP5 (concurrency single or unset) | `original_reference_serial_m1` | PP5 | 1 | 1 |
+| raw alternative, with `--axes=off` | `original_pp_banked_single` | PP5 | 5 (generate 1) | 8 |
+
+Both recipe sets drop the recipes' `--prefix_reuse=0`, a measurement-protocol pin, so serving keeps the
+prefix cache. On every split the owner's rule is the raw defaults since U5a: 1M context per session and
+`--session_slots=max`, the most sessions that fit the cards (no cap), resolved by the engine's host fit at startup and
+printed as `session slots: max -> N`; a serve where not even one 1M session fits refuses, the context is never
+shrunk. No axis set pins the context or the slots, so concurrency=balanced adds nothing, and every serve
+prints `N session(s) fit at C tokens of context on this split; a shorter --context_tokens gives more`. TP4_EXL3
+concurrency=multiple runs BATCH on serve only at exactly `--session_slots=8` (for example with
+`--context_tokens=65536`, as measured); otherwise it runs its concurrency=balanced row, and that line says
+`concurrency=multiple: ...; BATCH needs exactly 8`. The interim it replaces (stage 2: TP4_PRO and TP4_EXL3 balanced repeated their
+single set, one slot) stays the comparison arm of per-split request 5, which is held under the owner's pause. The
+recipes leave the draft block, depth, policy and session acceptance (and TP4_PRO's rows) to category=code (depth 7)
+and focus=decode (arm 1; on TP4_PRO with 6 rows). PP5's concurrency=single is `--rows=6` (r7c g3): single/decode
+without `--placement` runs the PP5 base at 6 rows with arm 1, and the fastest original single-user decode is
+`--placement=tp4_pro`.
+
+Selectable non-lossy balanced tuples also accept `--exactness=fast` with exactly
+the same low-level settings and evidence boundaries. This adds no arithmetic
+change, accuracy claim or empirical error tolerance. Held balanced tuples remain
+held at fast; additional lossy routes still require their own numerical and speed
+gates. Strict original-reference exactness retains its separate execution and
+override contract.
+
+For example, the scoped original decode selection can be requested as
+`--placement=tp4_pro --category=code --exactness=fast --concurrency=single --focus=decode`.
+It inserts the measured TP4_PRO recipe (pipeline depth 2, 1 serving slot) with session0, as does the
+balanced category after its same-binary decode win. The PP5 banked/session6 recipe below is retained as a raw alternative. Session6 on TP4_PRO is flat within repeat spread. `single` describes the measured workload rather than
+setting a numeric slot count by itself. Explicit low-level overrides still win
+for balanced/fast, and ordinary parser/program admission still applies.
+
+`anemone help axes` also lists retained proposals with their four-axis scope,
+constraints, old fallback and missing gates. These records contain no executable
+settings. The leased PP5 target head remains an unselected alternative;
+the eight-layer layout is a fast/multiple proposal; masked-head selection awaits
+native vector/state and paired-speed gates. None becomes selectable through an
+incomplete tuple. Unintegrated branch controls are unavailable in this binary.
+A held or ambiguous tuple refuses: choosing a fallback requires an explicit
+admitted recipe or no axes. The launch arrays and their historical evidence pins
+in the command JSON below are unchanged.
+
+### Retained raw PP5 banked head
+
+No axis selects the banked head after the same-binary decode comparison.
+TP4_PRO at pipeline depth 2 with 1 serving slot (session0) wins structured/code/prose C1 at284.74/203.40/148.02
+tok/s versus250.51/193.00/131.28 for bankedPP5/session6, with identical outputs.
+GPU split TP4_PRO's concurrency=single set is therefore that recipe, including fast compatibility.
+The banked recipe retains much lower TTFT (about14.5–18ms versus75–103ms), but
+this does not admit a held TTFT or joint tuple.
+
+The generated original_pp_banked_single declaration retains the complete raw
+PP5 recipe: original_head_offload2, draft=dspark, pipeline5,8allocated slots,
+65536context, native PRO and measured layer layout, COST1 prices and session6.
+Both architecture head modules must be embedded. Set the complete recipe for
+one active workload; setting head2 on the selected TP route is incompatible.
+Raw head0 restores the PRO head within PP5. Defaults stay0. C2/prefill/vision,
+strict original exactness and arbitrary full-context state remain unqualified.
+Generate's retained PP5 recipe uses1slot/pipeline1 without a speed claim.
 
 ## Request sampling and output controls
 
@@ -280,22 +385,33 @@ For Pi, use the [model template and private user-key setup](USAGE.md#67-pi-confi
 
 ## Every serve configuration option
 
-The tables cover **169 distinct accepted configuration spellings** in the
-current serve parser: 149 numeric/array options and 20 text/fraction/policy/axis
-options. Actions and other-command flags follow separately. Each option links
-to its detailed definition in the single canonical [USAGE manual](USAGE.md#15-compact-serve-flag-reference).
+The tables have 170 option rows: the **169 distinct accepted configuration
+spellings** of the `6b9e276` snapshot's serve parser (149 numeric/array options and
+20 text/fraction/policy/axis options) and `--metrics`, added after it. The rows
+marked `C` give the current parser's range, raw default or text: `--session_slots`,
+`--context_tokens`, `--reader_threads_per_copy`, `--tp_load_copy_split`, `--metrics`,
+`--category`, `--concurrency` and `--focus`. Later options (Engram, storage,
+Messages and others) are documented in [USAGE](USAGE.md) and
+[the knob catalogue](../tools/cli/KNOBS.md). Actions and
+other-command flags follow separately. Each option links to its detailed definition
+in the single canonical [USAGE manual](USAGE.md#15-compact-serve-flag-reference).
 The shown ranges describe the parser vocabulary, not blanket admission of every
 combination. Normal whole-recipe startup, program, weight-family, device and
 memory gates still apply.
 
-Values come from six real resolver/parser snapshots at the source pin above:
+Outside the `C` rows, values come from six real resolver/parser snapshots at source `6b9e276`:
 the three commands, the optional guard, bare original serve and bare explicit
 EXL3 serve. All 149 numeric fields were captured in each snapshot. The **Raw**
 column shows those no-axis omitted defaults: `O:` original and `E:` EXL3 where
 they differ. Bare EXL3 defaults are a parser snapshot, not a runnable TP recipe:
 TP startup additionally needs context at least 16,384, rows at most 8, DSpark or
 hybrid, native arithmetic and reference CMP order. No axis defaults are invented.
+The `C` rows give the current parser's range, raw default or text (source/commands.c and
+[the knob catalogue](../tools/cli/KNOBS.md)), which changed after that pin or, for `--metrics`, were added after it:
+serve takes `--session_slots=max` and 1M context when they are omitted.
 
+- `C` after an option's name marks a row with the current parser's range, raw
+  default or text, not the `6b9e276` snapshot's.
 - `I` after a value means its implementation path is inactive for that recipe
   (for example EXL3 controls under PP5, BATCH controls without BATCH, or draft
   policy with speculation off). The stored value is still shown. These labels
@@ -322,12 +438,12 @@ hybrid, native arithmetic and reference CMP order. No axis defaults are invented
 | Option, accepted vocabulary and effect | Raw O / E | Original exact | Original balanced | EXL3 balanced |
 | --- | --- | --- | --- | --- |
 | [--card_order](USAGE.md#knob-card_order): 0..15; comma list, at most16. Choose backend card ordinals in stage-fill order. | auto | 0,1,3,4,2 | 0,1,3,4,2 | auto |
-| [--reader_threads_per_copy](USAGE.md#knob-reader_threads_per_copy): 1..16. Allocate this many asynchronous readers per pack copy. | 2 | 2 | 2 | 2 |
+| [--reader_threads_per_copy](USAGE.md#knob-reader_threads_per_copy) `C`: 1..16. Allocate this many asynchronous readers per pack copy. | 4 | 4 | 4 | 4 |
 | [--tp_load_threads](USAGE.md#knob-tp_load_threads): 0..64. Load TP card weights concurrently; zero keeps the serial loader. | 32 | 32 (I) | 32 (I) | 32 |
 | [--turbo_load](USAGE.md#knob-turbo_load): 0..1. Discover and read receipted replicas on other drives. | 1 | 1 | 1 | 1 |
 | [--map_reads](USAGE.md#knob-map_reads): 0 buffered;1 drop;2 direct;3 direct+drop;4 auto. Choose buffered/direct EXL3-map reads and page-cache eviction policy. | 4 auto | 4 auto (I) | 4 auto (I) | 4 auto |
 | [--tp_load_host_threads](USAGE.md#knob-tp_load_host_threads): 0..64. Load the host arena with this many workers; zero follows TP load threads. | 16 | 16 (I) | 16 (I) | 16 |
-| [--tp_load_copy_split](USAGE.md#knob-tp_load_copy_split): 0..1. Read host chunks from copy zero and device extents from the last copy. | 1 | 1 (I) | 1 (I) | 1 |
+| [--tp_load_copy_split](USAGE.md#knob-tp_load_copy_split) `C`: 0..2. Choose each TP load read's copy: roles with stealing (2), fixed roles (1) or soonest (0). | 2 | 2 (I) | 2 (I) | 2 |
 | [--tp_load_reads_per_copy](USAGE.md#knob-tp_load_reads_per_copy): 0..64. Limit TP in-flight reads per copy; zero is unlimited. | 0 | 0 (I) | 0 (I) | 0 |
 
 ### Logging, profiling and diagnostic dumps
@@ -344,10 +460,10 @@ hybrid, native arithmetic and reference CMP order. No axis defaults are invented
 | Option, accepted vocabulary and effect | Raw O / E | Original exact | Original balanced | EXL3 balanced |
 | --- | --- | --- | --- | --- |
 | [--card_memory_kept_free_mib](USAGE.md#knob-card_memory_kept_free_mib): 0..1048576. Subtract this many MiB from each card's placement budget. | 0 | 0 | 0 | 0 |
-| [--session_slots](USAGE.md#knob-session_slots): 1..8. Allocate this many independent active session slots. | 1 | 1 | 8 | 8 |
+| [--session_slots](USAGE.md#knob-session_slots) `C`: 1..1024, or max. Allocate this many independent active session slots; max is the most sessions of the context the cards hold, resolved at startup. | max | 1 | 8 | 8 |
 | [--wide_rows](USAGE.md#knob-wide_rows): 0..4096. Prepare a wide prefill program of this many rows; zero disables it. | 0 | 0 | 1024 | 1024 |
 | [--rows](USAGE.md#knob-rows): 1..8. Set ordinary THIN step row capacity (and proposal capacity minus one). | 1 | 1 | 8 | 8 |
-| [--context_tokens](USAGE.md#knob-context_tokens): 1..1048576. Allocate the maximum prompt-plus-generation context per slot. | 16384 | 512 | 65536 | 65536 |
+| [--context_tokens](USAGE.md#knob-context_tokens) `C`: 1..1048576, a multiple of 16. Allocate the maximum prompt-plus-generation context per slot. | 1048576 | 512 | 65536 | 65536 |
 | [--layout](USAGE.md#knob-layout): &lt;=4096-byte statements joined by semicolon+space: &lt;units&gt;: card &lt;c&gt; or experts kept: &lt;units&gt;: &lt;n&gt;. Override PP5 unit placement. | unset | PP5 map | PP5 map | unset (I) |
 
 ### Original weights and PRO arithmetic
@@ -537,6 +653,7 @@ hybrid, native arithmetic and reference CMP order. No axis defaults are invented
 | [--port](USAGE.md#knob-port): 1..65535. Bind the serve HTTP listener to this port. | 8321 | 8321 | 8321 | 8321 |
 | [--bind_address](USAGE.md#knob-bind_address): numeric IPv4/IPv6. Bind the server listener. | 127.0.0.1 | 127.0.0.1 | 127.0.0.1 | 127.0.0.1 |
 | [--key_file](USAGE.md#knob-key_file): path. Read server API-user authentication records from a private file; all routes except health then require a valid bearer key. | unset | unset | unset | unset |
+| [--metrics](USAGE.md#knob-metrics) `C`: 0 or 1. Enable Prometheus exposition; same stats auth/ACL, anonymous without key_file. | 0 | 0 | 0 | 0 |
 | [--stats_users](USAGE.md#knob-stats_users): comma list of &lt;=64 usernames; each1..32 ASCII letters/digits/._-. Authorize named users to access the statistics endpoint. | unset | unset | unset | unset |
 | [--model_alias](USAGE.md#knob-model_alias): 1..63 bytes. Add a request/listing model alias. | unset | anemone | anemone | anemone |
 
@@ -556,10 +673,10 @@ hybrid, native arithmetic and reference CMP order. No axis defaults are invented
 
 | Option, accepted vocabulary and effect | Raw O / E | Original exact | Original balanced | EXL3 balanced |
 | --- | --- | --- | --- | --- |
-| [--category](USAGE.md#knob-category): code / prose / structured / vision / balanced. Workload axis; no omitted default, subject to tuple qualification. | unset axis | unset axis | unset axis | unset axis |
+| [--category](USAGE.md#knob-category) `C`: code / prose / structured / vision / balanced. Workload axis; unset takes balanced (an empty set on every split). | unset axis | unset axis | unset axis | unset axis |
 | [--exactness](USAGE.md#knob-exactness): exact / balanced / fast. Numerical-tier axis; exact inserts bounded original-reference controls, distinct from numerics=exact. | unset axis | exact | unset axis | unset axis |
-| [--concurrency](USAGE.md#knob-concurrency): single / multiple / balanced. Workload concurrency axis; this is not session_slots and has no omitted default. | unset axis | unset axis | unset axis | unset axis |
-| [--focus](USAGE.md#knob-focus): balanced / ttft / decode / prefill. Objective axis; no omitted default and no latency guarantee. | unset axis | unset axis | unset axis | unset axis |
+| [--concurrency](USAGE.md#knob-concurrency) `C`: single / multiple / balanced. Workload concurrency axis; this is not session_slots; unset takes balanced (an empty set on every split). | unset axis | unset axis | unset axis | unset axis |
+| [--focus](USAGE.md#knob-focus) `C`: balanced / ttft / decode / prefill. Objective axis; unset takes balanced (an empty set on every split); no latency guarantee. | unset axis | unset axis | unset axis | unset axis |
 
 ## Actions, aliases and unavailable controls
 
@@ -594,7 +711,11 @@ their resolved values. Its snapshot and complete command were checked separately
 
 ## Evidence and limits of this setup check
 
-The documented command arrays are pinned to source `6b9e276`; all six parser
+At source `f57d81375a8830db16925e42740aae1fe0773e90` (v0.0.3-alpha), the release
+executable itself ran the four arrays of [SERVER_PROFILE_COMMANDS.json](SERVER_PROFILE_COMMANDS.json)
+with nonexistent data paths: each parsed and stopped with exit 1 at its first
+front-end step, `open the tables and the socket`, before any model, socket or GPU
+backend was opened. In the earlier check at source `6b9e276`, all six parser
 snapshots and 201 binary overrides used helper SHA256
 `64b94814a8d30455dbf5e4f07368f32b726fbb3e6ccec91915d0dd4579bfc10e`.
 It calls the real axis resolver and parser while omitting `run_program`, so it
@@ -608,8 +729,10 @@ omitting a request limit retained 1, explicit `max_tokens=8` returned 8,
 against the current prebuilt reader objects. This directly checks the serving
 default-versus-request distinction without starting a model or HTTP listener.
 
-The four separately admitted model/HTTP smokes used the exact frozen command
-arrays and requests above, substituting only the executable and two data paths.
+The four separately admitted model/HTTP smokes used the command arrays as they
+were at `6b9e276` and the requests above, substituting only the executable and two
+data paths. `ab815b6` later gave the two EXL3 arrays eight explicit knobs; in that
+form they passed the parser at `f57d813` but were not smoke-run.
 They passed on `6b9e276` / `spdx_02` / SHA256 `da39965f79adf7883f92c8941e2b92d928706dc7b3f55671b89dce23b67c413e`:
 all 12 responses were HTTP 200; each tiny Chat response had eight native output
 tokens and finish reason `length`. All owned servers/statistics/telemetry
@@ -619,7 +742,7 @@ timing, quality, cross-profile identity, concurrency or long-context result.
 They do not claim an end-to-end Pi agent run, and are not relabelled as a later
 help-only binary. Detailed receipts are published through the comparison matrix.
 
-The fresh candidate export built the source with an empty HOME and isolated
+The v0.0.2-alpha fresh candidate export built the source with an empty HOME and isolated
 filesystem/network, no Git/Python execution or GPU devices: release build, exact
 documented build command, version, storage probe, all 125 release host executables
 and 594 header-alone compilations passed. Those synthetic host fixtures exercise
@@ -633,3 +756,26 @@ the full preparation wrapper, new Python-package installation and service
 installation were not executed by this audit. Existing full-file, map and
 deterministic original-slice evidence keeps its original epoch. Refer to
 [MODEL_DATA.md](user/MODEL_DATA.md) for the exact scope, pinned hashes and paths.
+
+
+### Session acceptance preserves the measured route
+
+A session policy modifies its measured placement and schedule. It does not
+replace a faster measured route or admit a held tuple. GPU split TP4_PRO's single set
+keeps TP4_PRO at pipeline depth 2 with 1 serving slot; PP5's multiple set keeps PP5 at pipeline depth 8 with 8 serving slots.
+Both retain session0 until route-local session6 comparisons pass. Structured
+retains0. Banked6 is raw-only. Exact, EXL3 and raw no-axis defaults are unchanged.
+Explicit low-level overrides still win.
+
+The PP5 depth5 session0/6/10 confirmation preserved all C1/C4 outputs. Session6
+structured C1 lost0.23% beyond0.007% spread; its measured control is0. Code/prose
+gained decode throughput with6, but proseC4 TTFTp90 off/6/10 was112.5/138.3/112.6ms:
+about26ms of p90 cost for6. Session10 preserves that measured PP5 TTFT tail.
+These component results remain unselected metadata and do not qualify6 on PP5 at pipeline depth 8 with 8 serving slots
+or TP4_PRO, a new joint/TTFT tuple, full context, vision or strict exactness.
+
+The banked+6 C1 route gained in all three genres; captures78/42/42/42/42 plus144
+shared reuses preserved all outputs. The direct comparison made TP4_PRO at pipeline depth 2 with 1 serving slot the
+single set of its own split (`--placement=tp4_pro`) while retaining banked as a raw latency alternative. Eight allocated PP5 slots describe capacity, not a
+qualification for multiple active banked workloads. Generate keeps its measured
+route and command-specific slot/pipeline settings, without a new speed claim.

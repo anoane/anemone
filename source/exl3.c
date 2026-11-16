@@ -16,14 +16,16 @@ exl3_stored_byte_count(const struct matrix_shape_record *shape,
 	    shape->output_size == 0 ||
 	    shape->input_size % EXL3_TRANSFORM != 0 ||
 	    shape->output_size % EXL3_TRANSFORM != 0 ||
-	    shape->bits_per_weight < EXL3_MINIMUM_BITS ||
-	    shape->bits_per_weight > EXL3_MAXIMUM_BITS) {
+	    exl3_bits_x2(shape->bits_per_weight) == 0) {
 		return STATUS_INVALID_ARGUMENT;
 	}
+	if (!exl3_width_supported(shape->bits_per_weight)) {
+		return STATUS_UNSUPPORTED;
+	}
 	/* Divide before multiplying: even the largest uint32 shapes cannot overflow. */
-	const uint64_t codes = (uint64_t)shape->input_size *
-			       shape->output_size / EXL3_BITS_PER_BYTE *
-			       shape->bits_per_weight;
+	const uint64_t codes =
+		exl3_code_bytes(shape->input_size, shape->output_size,
+				exl3_bits_x2(shape->bits_per_weight));
 	const uint64_t vectors =
 		((uint64_t)shape->input_size + shape->output_size) *
 		EXL3_HALF_BYTES;
@@ -32,6 +34,22 @@ exl3_stored_byte_count(const struct matrix_shape_record *shape,
 	}
 	*byte_count_out = codes + vectors;
 	return STATUS_OK;
+}
+
+const char *exl3_width_name(uint32_t bits_x2)
+{
+	switch (bits_x2) {
+	case EXL3_BITS_X2_K2:
+		return "k2";
+	case EXL3_BITS_X2_K2_5:
+		return "k2_5";
+	case EXL3_BITS_X2_K3:
+		return "k3";
+	case EXL3_BITS_X2_K4:
+		return "k4";
+	default:
+		return NULL;
+	}
 }
 
 const struct weight_format_operations exl3_weight_operations = {
@@ -123,15 +141,23 @@ uint64_t exl3_scratch_byte_count(uint32_t pair_count, uint32_t input_size)
 
 enum exl3_products { EXL3_RETAINED, EXL3_RELAXED, EXL3_FAST };
 
-MUST_CHECK static result_status experts_prepare(
-	const struct exl3_expert_record *record, uint64_t arena_byte_count,
-	const struct backend_operations *backend, struct device_card *card,
-	struct kernel_launch *launches_out, enum exl3_products products)
+MUST_CHECK static result_status
+experts_prepare(const struct exl3_expert_record *record,
+		uint64_t arena_byte_count,
+		const struct backend_operations *backend,
+		struct device_card *card, uint32_t arithmetic_class,
+		struct kernel_launch *launches_out, enum exl3_products products)
 {
+	/* class 80 and its emulation on class 120 take the plain modules, class 120 native the *_native ones; the
+	 * emulation takes the retained products for the fast ones, the same words (kernel_exl3_wide is native only) */
 	const bool relaxed = products == EXL3_RELAXED,
-		   fast = products == EXL3_FAST;
+		   fast = products == EXL3_FAST &&
+			  arithmetic_class != ARITHMETIC_CLASS_SM_120;
+	const bool native = arithmetic_class == ARITHMETIC_CLASS_SM_120_NATIVE;
 	if (record == NULL || backend == NULL || card == NULL ||
 	    launches_out == NULL || backend->kernel_prepare == NULL ||
+	    (arithmetic_class != ARITHMETIC_CLASS_SM_80 &&
+	     arithmetic_class != ARITHMETIC_CLASS_SM_120 && !native) ||
 	    record->reserved_zero != 0 || record->pair_count == 0 ||
 	    record->pairs_per_row == 0 ||
 	    record->pair_count % record->pairs_per_row != 0 ||
@@ -187,14 +213,23 @@ MUST_CHECK static result_status experts_prepare(
 		    arena_byte_count)) {
 		return STATUS_INVALID_ARGUMENT;
 	}
-	const bool k2 = record->bits_per_weight == EXL3_MINIMUM_BITS;
+	if (relaxed && arithmetic_class != ARITHMETIC_CLASS_SM_80) {
+		return STATUS_UNSUPPORTED; /* the relaxed order is the CMPs' (--cmp_order) */
+	}
+	const char *const width_name =
+		exl3_width_name(exl3_bits_x2(record->bits_per_weight));
+	const char *const order_suffix = relaxed ? "_s8" : "";
+	char retained_gate_up[EXL3_KERNEL_NAME_BYTES],
+		retained_down[EXL3_KERNEL_NAME_BYTES];
+	if (width_name == NULL ||
+	    snprintf(retained_gate_up, sizeof(retained_gate_up),
+		     "exl3_gate_up_%s%s", width_name, order_suffix) <= 0 ||
+	    snprintf(retained_down, sizeof(retained_down), "exl3_down_%s%s",
+		     width_name, order_suffix) <= 0) {
+		return STATUS_INVALID_ARGUMENT;
+	}
 	const char *const names[EXL3_EXPERT_LAUNCHES] = {
-		"exl3_input",
-		relaxed ? (k2 ? "exl3_gate_up_k2_s8" : "exl3_gate_up_k3_s8") :
-			  (k2 ? "exl3_gate_up_k2" : "exl3_gate_up_k3"),
-		"exl3_activate",
-		relaxed ? (k2 ? "exl3_down_k2_s8" : "exl3_down_k3_s8") :
-			  (k2 ? "exl3_down_k2" : "exl3_down_k3"),
+		"exl3_input", retained_gate_up, "exl3_activate", retained_down,
 		"exl3_finish"
 	};
 	/* The fast form: thin launches (at most 8 rows) take _t8_g1, wide ones _t4_g4p. */
@@ -208,11 +243,10 @@ MUST_CHECK static result_status experts_prepare(
 	}
 	char gate_up_name[EXL3_KERNEL_NAME_BYTES], down_name[EXL3_KERNEL_NAME_BYTES];
 	const char *const product_suffix = wide ? "t4_g4p" : "t8_g1";
-	if (snprintf(gate_up_name, sizeof(gate_up_name),
-		     "exl3_c_gate_up_k%u_%s", record->bits_per_weight,
-		     product_suffix) <= 0 ||
-	    snprintf(down_name, sizeof(down_name), "exl3_c_down_k%u_%s",
-		     record->bits_per_weight, product_suffix) <= 0) {
+	if (snprintf(gate_up_name, sizeof(gate_up_name), "exl3_c_gate_up_%s_%s",
+		     width_name, product_suffix) <= 0 ||
+	    snprintf(down_name, sizeof(down_name), "exl3_c_down_%s_%s",
+		     width_name, product_suffix) <= 0) {
 		return STATUS_INVALID_ARGUMENT;
 	}
 	const char *const fast_names[EXL3_EXPERT_LAUNCHES] = {
@@ -223,7 +257,11 @@ MUST_CHECK static result_status experts_prepare(
 	for (uint32_t index = 0; index < EXL3_EXPERT_LAUNCHES; index++) {
 		uint32_t kernel = BACKEND_NO_KERNEL;
 		const result_status status = backend->kernel_prepare(
-			card, fast ? EXL3_WIDE_KERNEL_FILE : EXL3_KERNEL_FILE,
+			card,
+			fast ? (native ? EXL3_WIDE_KERNEL_FILE_NATIVE :
+					 EXL3_WIDE_KERNEL_FILE) :
+			       (native ? EXL3_KERNEL_FILE_NATIVE :
+					 EXL3_KERNEL_FILE),
 			fast ? fast_names[index] : names[index],
 			sizeof(*record), &kernel);
 		if (status != STATUS_OK) {
@@ -232,8 +270,10 @@ MUST_CHECK static result_status experts_prepare(
 		if (kernel == BACKEND_NO_KERNEL) {
 			return STATUS_UNSUPPORTED;
 		}
-		const bool product = index == 1u || index == EXL3_MAXIMUM_BITS;
-		const bool inner = index == 1u || index == EXL3_MINIMUM_BITS;
+		const bool product = index == EXL3_GATE_UP ||
+				     index == EXL3_DOWN;
+		const bool inner = index == EXL3_GATE_UP ||
+				   index == EXL3_ACTIVATE;
 		const uint32_t width = inner ? record->inner_size :
 					       record->input_size;
 		const uint32_t blocks = width / EXL3_TRANSFORM;
@@ -259,26 +299,27 @@ result_status exl3_experts_prepare(const struct exl3_expert_record *record,
 				   uint64_t arena_byte_count,
 				   const struct backend_operations *backend,
 				   struct device_card *card,
+				   uint32_t arithmetic_class,
 				   struct kernel_launch *launches_out)
 {
 	return experts_prepare(record, arena_byte_count, backend, card,
-			       launches_out, EXL3_RETAINED);
+			       arithmetic_class, launches_out, EXL3_RETAINED);
 }
 
 result_status exl3_experts_fast_prepare(
 	const struct exl3_expert_record *record, uint64_t arena_byte_count,
 	const struct backend_operations *backend, struct device_card *card,
-	struct kernel_launch *launches_out)
+	uint32_t arithmetic_class, struct kernel_launch *launches_out)
 {
 	return experts_prepare(record, arena_byte_count, backend, card,
-			       launches_out, EXL3_FAST);
+			       arithmetic_class, launches_out, EXL3_FAST);
 }
 
 result_status exl3_experts_relaxed_prepare(
 	const struct exl3_expert_record *record, uint64_t arena_byte_count,
 	const struct backend_operations *backend, struct device_card *card,
-	struct kernel_launch *launches_out)
+	uint32_t arithmetic_class, struct kernel_launch *launches_out)
 {
 	return experts_prepare(record, arena_byte_count, backend, card,
-			       launches_out, EXL3_RELAXED);
+			       arithmetic_class, launches_out, EXL3_RELAXED);
 }

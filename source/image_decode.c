@@ -345,7 +345,9 @@ static bool image_inflate(const uint8_t *input, size_t input_bytes,
 				return false;
 			distance = distance_base[distance] +
 				   image_take(&reader, distance_bits[distance]);
-			if (reader.failed || distance > written ||
+			/* the copy reads bytes written: distance from 1 (distance_base's least) to written */
+			if (reader.failed || distance == 0 ||
+			    distance > written ||
 			    distance > (1u << ((input[0] >> HALF_BYTE_BITS) +
 					       BYTE_BITS)) ||
 			    count > output_bytes - written)

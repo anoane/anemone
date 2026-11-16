@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
- * draft_batch_card_test (tp4_v3_claude): a BATCH step's draft kernels (draft_records.h's ROUND_TABLE and SLAB_RESULTS,
+ * draft_batch_card_test (tp4_v3_b): a BATCH step's draft kernels (draft_records.h's ROUND_TABLE and SLAB_RESULTS,
  * model_seam.h's BATCH) on the real cards against the host reference (draft_reference.h), with no model:
  *
  *     draft_batch_card_test [TRIALS]
@@ -39,6 +39,7 @@
 #include "draft_reference.h"
 #include "linear_card_fixture.h"
 #include "linear_reference.h"
+#include "byte_identity.h"
 
 #define TEST_TIME_LIMIT_SECONDS 1800
 #define WORK_CAPACITY (48ull << 20u)
@@ -70,6 +71,30 @@
 #define SEED 0x0BA7C4D2A5ull
 #define STREAM_STEP 1u
 #define STREAM_INPUTS 2u
+/* a plain value: one of PLAIN_STEPS quarters about PLAIN_CENTRE, as the upper half of its float */
+#define PLAIN_STEPS 17u
+#define PLAIN_CENTRE 8
+#define PLAIN_STEP 0.25f
+#define BF16_SHIFT 16u
+/* the draws' keys: a trial's index under its stream, a session's draws under its key */
+#define STREAM_SHIFT 32u
+#define SESSION_KEY_SHIFT 8u
+#define DRAW_DRAFTS 100u
+#define DRAW_PROPOSALS 101u
+#define DRAW_MISMATCH 102u
+#define DRAW_END 103u
+#define DRAW_POSITION 104u
+#define DRAFT_ODDS 4u /* a session drafts unless its draw of 4 is 0 */
+#define END_PLACES_MORE 2u /* the end token at one of the proposals + 1 rows, or at none */
+#define FIRST_POSITION 100
+#define POSITION_SPREAD 4000u
+#define SESSION_TOKEN_STRIDE 16u
+#define TOKEN_STRIDE 64u /* a verifier's (a slot's) tokens apart */
+#define INPUT_SHIFT 16u
+#define LOGIT_SHIFT 20u
+#define LOGIT_SPAN_HALVES 2.0
+#define LAUNCHES_A_VERIFIER 2u
+#define MOST_ARGUMENTS 2 /* the program and TRIALS */
 #define TEST_PASSED 0
 #define TEST_FAILED 1
 #define TEST_WRONG_USAGE 2
@@ -90,10 +115,10 @@ static uint32_t draw(uint64_t stream, uint64_t position, uint32_t modulus)
 /* A plain bfloat16 value of -2 .. 2 in quarters: products and sums stay exact enough to be any order's. */
 static uint16_t plain_value(uint64_t stream, uint64_t position)
 {
-	const float value = (float)((int32_t)draw(stream, position, 17u) - 8) * 0.25f;
+	const float value = (float)((int32_t)draw(stream, position, PLAIN_STEPS) - PLAIN_CENTRE) * PLAIN_STEP;
 	uint32_t bits;
 	memcpy(&bits, &value, sizeof(bits));
-	return (uint16_t)(bits >> 16u);
+	return (uint16_t)(bits >> BF16_SHIFT);
 }
 
 struct trial {
@@ -110,7 +135,7 @@ struct trial {
 static void trial_make(uint32_t index, struct trial *trial)
 {
 	memset(trial, 0, sizeof(*trial));
-	const uint64_t stream = (uint64_t)STREAM_STEP << 32u | index;
+	const uint64_t stream = (uint64_t)STREAM_STEP << STREAM_SHIFT | index;
 	trial->session_count = 1u + draw(stream, 0, SLOTS);
 	uint32_t slots[SLOTS];
 	for (uint32_t slot = 0; slot < SLOTS; slot++)
@@ -123,18 +148,18 @@ static void trial_make(uint32_t index, struct trial *trial)
 	}
 	uint32_t row = 0;
 	for (uint32_t session = 0; session < trial->session_count; session++) {
-		const uint64_t key = (uint64_t)session << 8u;
-		const bool drafts = draw(stream, 100u + key, 4u) != 0;
-		const uint32_t proposals = drafts ? draw(stream, 101u + key, POSITIONS + 1u) : 0u;
-		const uint32_t mismatch = 1u + draw(stream, 102u + key, proposals + 1u);
-		const uint32_t end_index = draw(stream, 103u + key, proposals + 2u);
-		const int32_t position = 100 + (int32_t)draw(stream, 104u + key, 4000u);
+		const uint64_t key = (uint64_t)session << SESSION_KEY_SHIFT;
+		const bool drafts = draw(stream, DRAW_DRAFTS + key, DRAFT_ODDS) != 0;
+		const uint32_t proposals = drafts ? draw(stream, DRAW_PROPOSALS + key, POSITIONS + 1u) : 0u;
+		const uint32_t mismatch = 1u + draw(stream, DRAW_MISMATCH + key, proposals + 1u);
+		const uint32_t end_index = draw(stream, DRAW_END + key, proposals + END_PLACES_MORE);
+		const int32_t position = FIRST_POSITION + (int32_t)draw(stream, DRAW_POSITION + key, POSITION_SPREAD);
 		trial->slot_of[session] = slots[session];
 		trial->first_row[session] = row;
 		trial->rows_of[session] = proposals + 1u;
 		trial->drafts[session] = drafts;
 		for (uint32_t place = 0; place <= proposals; place++, row++) {
-			const int32_t token = TOKEN_BASE + (int32_t)(session * 16u + place);
+			const int32_t token = TOKEN_BASE + (int32_t)(session * SESSION_TOKEN_STRIDE + place);
 			trial->rows[row] = (struct step_row_record){
 				position + (int32_t)place, token,
 				slots[session],
@@ -159,11 +184,12 @@ static void inputs_make(void)
 {
 	for (uint32_t verifier = 0; verifier < VERIFIERS; verifier++) {
 		for (uint32_t position = 0; position < POSITIONS; position++) {
-			const uint64_t at = ((uint64_t)verifier * POSITIONS + position) << 16u;
+			const uint64_t at = ((uint64_t)verifier * POSITIONS + position) << INPUT_SHIFT;
 			for (uint32_t input = 0; input < HIDDEN; input++)
 				collapse_rows[verifier][position][input] = plain_value(STREAM_INPUTS, at + input);
 			for (uint32_t input = 0; input < RANK; input++)
-				markov_rows[verifier][position][input] = plain_value(STREAM_INPUTS, at + HIDDEN + input);
+				markov_rows[verifier][position][input] =
+					plain_value(STREAM_INPUTS, at + HIDDEN + input);
 		}
 	}
 	for (uint32_t input = 0; input < CONFIDENCE_INPUTS; input++)
@@ -175,10 +201,11 @@ static void inputs_make(void)
 			for (uint32_t entry = 0; entry < MARKOV_VOCABULARY; entry++)
 				logits_in[position][slot][entry] =
 					(float)((double)draw(STREAM_LOGITS,
-							     ((uint64_t)position * BATCH_SLOTS + slot) << 20u | entry,
+							     ((uint64_t)position * BATCH_SLOTS + slot) << LOGIT_SHIFT |
+								     entry,
 							     LOGIT_STEPS) /
 							(double)LOGIT_STEPS * LOGIT_SPAN -
-						LOGIT_SPAN / 2.0);
+						LOGIT_SPAN / LOGIT_SPAN_HALVES);
 }
 
 static void fail(const char *what, uint32_t trial, uint32_t verifier)
@@ -200,9 +227,9 @@ static void trial_run(struct test_linear_card *card,
 	memset(slab_results, 0, sizeof(slab_results));
 	for (uint32_t row = 0; row < trial.row_count; row++) /* the slabs' result areas, each with its header */
 		memcpy(slab_results +
-			       (row / SLAB_ROWS) * DRAFT_SLAB_RESULT_BYTES +
+			       (size_t)((row / SLAB_ROWS) * DRAFT_SLAB_RESULT_BYTES) +
 			       STEP_RESULT_BYTES +
-			       (row % SLAB_ROWS) * STEP_ROW_RESULT_BYTES,
+			       (size_t)((row % SLAB_ROWS) * STEP_ROW_RESULT_BYTES),
 		       &trial.results[row], sizeof(trial.results[row]));
 	test_linear_card_clear(card);
 	const struct linear_range step = test_linear_card_work(
@@ -217,7 +244,7 @@ static void trial_run(struct test_linear_card *card,
 	struct linear_range draft_step[VERIFIERS], views[VERIFIERS],
 		collapse[VERIFIERS], markov[VERIFIERS],
 		draft_results[VERIFIERS];
-	struct kernel_launch launches[2u * VERIFIERS];
+	struct kernel_launch launches[LAUNCHES_A_VERIFIER * VERIFIERS];
 	bool is_run = test_linear_card_put(card, step, 0, &trial.block,
 					   sizeof(trial.block)) &&
 		      test_linear_card_put(card, step, STEP_BLOCK_BYTES_VALUE,
@@ -271,10 +298,10 @@ static void trial_run(struct test_linear_card *card,
 		for (uint32_t position = 0; position < POSITIONS; position++) {
 			const struct step_row_result drawn = {
 				TOKEN_BASE +
-					(int32_t)(verifier * 64u + position),
+					(int32_t)(verifier * TOKEN_STRIDE + position),
 				0.0f
 			};
-			memcpy(tokens + position * STEP_DRAFT_RESULT_BYTES +
+			memcpy(tokens + (size_t)(position * STEP_DRAFT_RESULT_BYTES) +
 				       STEP_RESULT_BYTES,
 			       &drawn, sizeof(drawn));
 		}
@@ -300,8 +327,8 @@ static void trial_run(struct test_linear_card *card,
 					&launches[VERIFIERS + verifier]),
 				STATUS_OK, "a confidence is prepared");
 	}
-	is_run = is_run && test_linear_card_load(card) && test_linear_card_run(card, launches, 2u * VERIFIERS) &&
-		 test_linear_card_fetch(card);
+	is_run = is_run && test_linear_card_load(card) &&
+		 test_linear_card_run(card, launches, LAUNCHES_A_VERIFIER * VERIFIERS) && test_linear_card_fetch(card);
 	if (!is_run) {
 		fail("the run did not finish", index, 0);
 		return;
@@ -325,7 +352,7 @@ static void trial_run(struct test_linear_card *card,
 		unsigned char view_bytes[POSITIONS * STEP_DRAFT_VIEW_BYTES];
 		memcpy(&round,
 		       expected_table +
-			       trial.slot_of[session] * STEP_ROUND_BYTES,
+			       (size_t)(trial.slot_of[session] * STEP_ROUND_BYTES),
 		       sizeof(round));
 		memset(&draft_block, 0, sizeof(draft_block));
 		memset(draft_rows, 0, sizeof(draft_rows));
@@ -335,12 +362,12 @@ static void trial_run(struct test_linear_card *card,
 				  MODEL_DRAFT_NOISE_TOKEN, &round, &draft_block,
 				  draft_rows, view_bytes);
 		for (uint32_t position = 0; position < POSITIONS; position++) {
-			round.proposals[position] = TOKEN_BASE + (int32_t)(verifier * 64u + position);
+			round.proposals[position] = TOKEN_BASE + (int32_t)(verifier * TOKEN_STRIDE + position);
 			round.confidence_logits[position] = test_draft_confidence(
 				collapse_rows[verifier][position], markov_rows[verifier][position], confidence_weights);
 		}
 		memcpy(expected_table +
-			       trial.slot_of[session] * STEP_ROUND_BYTES,
+			       (size_t)(trial.slot_of[session] * STEP_ROUND_BYTES),
 		       &round, sizeof(round));
 		if (!test_linear_card_expect_bytes(
 			    card, draft_step[verifier], 0, &draft_block,
@@ -359,13 +386,14 @@ static void trial_run(struct test_linear_card *card,
 		const struct step_block empty = { trial.block.sequence, 0, 0 };
 		bool is_empty = test_linear_card_expect_bytes(card, draft_step[verifier], 0, &empty, sizeof(empty),
 							      "an empty draft block");
-		for (uint32_t position = 0; position < POSITIONS; position++)
+		for (uint32_t position = 0; position < POSITIONS; position++) {
+			const uint32_t offset = position * STEP_DRAFT_VIEW_BYTES;
 			is_empty = is_empty &&
 				   test_linear_card_expect_bytes(
-					   card, views[verifier],
-					   position * STEP_DRAFT_VIEW_BYTES,
+					   card, views[verifier], offset,
 					   &empty, sizeof(empty),
 					   "an empty view");
+		}
 		if (!is_empty)
 			fail("a verifier without a DRAFTS row wrote a draft", index, verifier);
 	}
@@ -392,21 +420,21 @@ static void trial_run_batched(struct test_linear_card *card,
 	memset(position_results, 0, sizeof(position_results));
 	for (uint32_t row = 0; row < trial.row_count; row++)
 		memcpy(slab_results +
-			       (row / SLAB_ROWS) * DRAFT_SLAB_RESULT_BYTES +
+			       (size_t)((row / SLAB_ROWS) * DRAFT_SLAB_RESULT_BYTES) +
 			       STEP_RESULT_BYTES +
-			       (row % SLAB_ROWS) * STEP_ROW_RESULT_BYTES,
+			       (size_t)((row % SLAB_ROWS) * STEP_ROW_RESULT_BYTES),
 		       &trial.results[row], sizeof(trial.results[row]));
 	/* the draws of each position's sampler: slot v's token of position j, as a sampler over view j writes them */
 	for (uint32_t position = 0; position < POSITIONS; position++) {
 		for (uint32_t slot = 0; slot < BATCH_SLOTS; slot++) {
 			const struct step_row_result drawn = {
-				TOKEN_BASE + (int32_t)(slot * 64u + position),
+				TOKEN_BASE + (int32_t)(slot * TOKEN_STRIDE + position),
 				0.0f
 			};
 			memcpy(position_results +
-				       position * DRAFT_SLAB_RESULT_BYTES +
+				       (size_t)(position * DRAFT_SLAB_RESULT_BYTES) +
 				       STEP_RESULT_BYTES +
-				       slot * STEP_ROW_RESULT_BYTES,
+				       (size_t)(slot * STEP_ROW_RESULT_BYTES),
 			       &drawn, sizeof(drawn));
 		}
 	}
@@ -438,7 +466,7 @@ static void trial_run_batched(struct test_linear_card *card,
 		test_linear_card_weights(card, sizeof(w2));
 	const struct linear_range view0 = { views.byte_offset,
 					    DRAFT_SLAB_STEP_BYTES };
-	struct kernel_launch launches[2u * VERIFIERS + POSITIONS];
+	struct kernel_launch launches[LAUNCHES_A_VERIFIER * VERIFIERS + POSITIONS];
 	bool is_run =
 		test_linear_card_has_room(card) &&
 		test_linear_card_put(card, step, 0, &trial.block,
@@ -516,7 +544,8 @@ static void trial_run_batched(struct test_linear_card *card,
 			STATUS_OK, "a batched Markov bias is prepared");
 	}
 	is_run = is_run && test_linear_card_load(card) &&
-		 test_linear_card_run(card, launches, 2u * VERIFIERS + POSITIONS) && test_linear_card_fetch(card) &&
+		 test_linear_card_run(card, launches, LAUNCHES_A_VERIFIER * VERIFIERS + POSITIONS) &&
+		 test_linear_card_fetch(card) &&
 		 test_linear_card_get(card, logits, 0, logits_back, sizeof(logits_back)) &&
 		 test_linear_card_get(card, markov, 0, markov_back, sizeof(markov_back));
 	if (!is_run) {
@@ -542,7 +571,7 @@ static void trial_run_batched(struct test_linear_card *card,
 		unsigned char view_bytes[POSITIONS * STEP_DRAFT_VIEW_BYTES];
 		memcpy(&round,
 		       expected_table +
-			       trial.slot_of[session] * STEP_ROUND_BYTES,
+			       (size_t)(trial.slot_of[session] * STEP_ROUND_BYTES),
 		       sizeof(round));
 		memset(view_bytes, 0, sizeof(view_bytes));
 		test_draft_verify(&alone, &trial.rows[row], &trial.results[row],
@@ -551,16 +580,19 @@ static void trial_run_batched(struct test_linear_card *card,
 				  draft_rows, view_bytes);
 		for (uint32_t position = 0; position < POSITIONS; position++) {
 			const uint32_t place = verifier * POSITIONS + position;
-			/* the Markov bias: the anchor's token at position 0, else the slot's draw of the position before */
+			/* the Markov bias: the anchor's token at position 0, else the slot's draw of the position
+			 * before */
 			const uint32_t token =
 				position == 0 ? (uint32_t)draft_rows[0].token_id :
-						(uint32_t)(TOKEN_BASE + (int32_t)(verifier * 64u + position - 1u));
+						(uint32_t)(TOKEN_BASE +
+							   (int32_t)(verifier * TOKEN_STRIDE + position - 1u));
 			uint16_t markov_expected[RANK];
 			test_draft_markov_bias(w1, w2, MARKOV_VOCABULARY, token, logits_expected[position][verifier],
 					       markov_expected);
-			round.proposals[position] = TOKEN_BASE + (int32_t)(verifier * 64u + position);
+			round.proposals[position] = TOKEN_BASE + (int32_t)(verifier * TOKEN_STRIDE + position);
 			round.confidence_logits[position] =
-				test_draft_confidence(collapse_rows[verifier][position], markov_expected, confidence_weights);
+				test_draft_confidence(collapse_rows[verifier][position], markov_expected,
+						      confidence_weights);
 			if (memcmp(markov_back[position][verifier], markov_expected, sizeof(markov_expected)) != 0)
 				fail("a batched Markov row is not the reference's", index, verifier);
 			if (!test_linear_card_expect_bytes(
@@ -585,13 +617,14 @@ static void trial_run_batched(struct test_linear_card *card,
 				fail("a batched verifier's rows or views are not the reference's", index, verifier);
 		}
 		memcpy(expected_table +
-			       trial.slot_of[session] * STEP_ROUND_BYTES,
+			       (size_t)(trial.slot_of[session] * STEP_ROUND_BYTES),
 		       &round, sizeof(round));
 		verifier++;
 	}
 	const uint32_t drafting = verifier;
-	if (memcmp(logits_back, logits_expected, sizeof(logits_back)) != 0)
-		fail("the batched Markov logits are not the reference's (slots of no verifier untouched)", index, drafting);
+	if (!bytes_identical(logits_back, logits_expected, sizeof(logits_back)))
+		fail("the batched Markov logits are not the reference's (slots of no verifier untouched)",
+		     index, drafting);
 	for (uint32_t position = 0; position < POSITIONS; position++) {
 		const struct step_block header = { trial.block.sequence,
 						   drafting, 0 };
@@ -624,8 +657,9 @@ static void trial_run_batched(struct test_linear_card *card,
 int main(int argument_count, char **arguments)
 {
 	uint32_t trials = DEFAULT_TRIALS, card_count = 0;
-	if (argument_count > 2 || (argument_count == 2 && (sscanf(arguments[1], "%" SCNu32, &trials) != 1 ||
-							   trials == 0 || trials > MOST_TRIALS))) {
+	if (argument_count > MOST_ARGUMENTS ||
+	    (argument_count == MOST_ARGUMENTS && (sscanf(arguments[1], "%" SCNu32, &trials) != 1 ||
+						  trials == 0 || trials > MOST_TRIALS))) {
 		(void)fprintf(stderr, "usage: draft_batch_card_test [TRIALS 1..%u]\n", MOST_TRIALS);
 		return TEST_WRONG_USAGE;
 	}

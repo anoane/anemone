@@ -11,8 +11,16 @@ path = [
     "docs/user/model-data/*.sha256",
     "tools/cli/*.json",
     "tools/measure/prefix_stable_references.json",
+    "tools/metrics/vllm_contract.json",
     "tools/vision/fixtures/**",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Fabiano Anemone <fabiano.anemone@gmail.com>"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# The pinned vLLM example dashboard's PromQL expressions, verbatim (the file's url and sha256).
+[[annotations]]
+path = "tools/metrics/vllm_dashboard_queries.json"
+precedence = "closest"
+SPDX-FileCopyrightText = "Copyright contributors to the vLLM project"
+SPDX-License-Identifier = "Apache-2.0"

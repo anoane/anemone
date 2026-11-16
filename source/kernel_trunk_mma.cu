@@ -55,6 +55,67 @@
 #define TRUNK_MMA_SIGN_MASK 0x80008000u
 #define TRUNK_MMA_HALF_EXPONENT \
 	0x00800080u /* times an exponent field: that field in both bfloat16 halves */
+/* the m16n8k16 instruction's lanes: lane = 4 g + t (g its column, t its quad); its results d0, d1: output g, rows
+ * 2 t and 2 t + 1 of a row group, d2, d3: output g + 8 */
+#define TRUNK_MMA_LANES 32
+#define TRUNK_MMA_LANE_MASK (TRUNK_MMA_LANES - 1)
+#define TRUNK_MMA_WARP_SHIFT 5
+#define TRUNK_MMA_QUAD_MASK 3
+#define TRUNK_MMA_COLUMN_SHIFT 2
+#define TRUNK_MMA_RESULTS 4
+#define TRUNK_MMA_LANE_ROWS 2 /* a half's results: rows 2 t and 2 t + 1 */
+#define TRUNK_MMA_HALVES 2 /* outputs g and g + 8 */
+#define TRUNK_MMA_HALF_OUTPUTS 8u
+#define TRUNK_MMA_GROUP_ROWS 8u /* an n8 row group's */
+#define TRUNK_MMA_VALUE_BYTES 2u /* a bfloat16 value's */
+#define TRUNK_MMA_WORD_VALUES 2u /* bfloat16 values a 32-bit word */
+#define TRUNK_MMA_GROUP_LOADS \
+	32u /* the store's uint4 of a tile's input group: one a lane */
+#define TRUNK_MMA_PLACE_SHIFT \
+	4 /* an E4M3 byte's exponent and mantissa, bits 8 to 14 of a half, to bits 4 to 10 */
+#define TRUNK_MMA_BYTE_SHIFT \
+	8 /* a word's even bytes to its odd bytes' places */
+/* a 32-input group's two instructions (inputs 0 to 15, then 16 to 31): a lane's A operand words a0 to a3 of each, and
+ * its B operand words b0, b1 of each, as 32-bit words of a row's values (the pairs at inputs 2 t, 2 t + 8, 2 t + 16
+ * and 2 t + 24) */
+enum trunk_mma_a_words {
+	FIRST_HALF_A0,
+	FIRST_HALF_A1,
+	FIRST_HALF_A2,
+	FIRST_HALF_A3,
+	SECOND_HALF_A0,
+	SECOND_HALF_A1,
+	SECOND_HALF_A2,
+	SECOND_HALF_A3,
+	GROUP_A_WORDS
+};
+enum trunk_mma_b_words {
+	FIRST_HALF_B0 = 0,
+	FIRST_HALF_B1 = 4,
+	SECOND_HALF_B0 = 8,
+	SECOND_HALF_B1 = 12
+};
+/* the forms' template arguments: a warp's tiles, the warps a tile's input groups are split over, a block's warps and
+ * the row groups of 8 rows (also the _64 form's case labels) */
+enum trunk_mma_tiles { ONE_TILE = 1, TWO_TILES };
+enum trunk_mma_split {
+	UNSPLIT = 1,
+	TWO_WAY_SPLIT = 2,
+	FOUR_WAY_SPLIT = 4,
+	EIGHT_WAY_SPLIT = 8,
+	SIXTEEN_WAY_SPLIT = 16
+};
+enum trunk_mma_warps { EIGHT_WARPS = 8, SIXTEEN_WARPS = 16 };
+enum trunk_mma_row_groups {
+	ONE_ROW_GROUP = 1,
+	TWO_ROW_GROUPS,
+	THREE_ROW_GROUPS,
+	FOUR_ROW_GROUPS,
+	FIVE_ROW_GROUPS,
+	SIX_ROW_GROUPS,
+	SEVEN_ROW_GROUPS,
+	EIGHT_ROW_GROUPS
+};
 
 __device__ __forceinline__ uint4 trunk_mma_weights(const uint4 *source)
 {
@@ -79,24 +140,27 @@ __device__ __forceinline__ uint32_t trunk_mma_multiply(uint32_t a, uint32_t b)
 __device__ __forceinline__ void trunk_mma_decode(uint32_t word, uint32_t scale,
 						 uint32_t &low, uint32_t &high)
 {
-	const uint32_t odd = ((word & TRUNK_MMA_PLACED_MASK) >> 4) |
-			     (word & TRUNK_MMA_SIGN_MASK);
-	const uint32_t shifted = word << 8;
-	const uint32_t even = ((shifted & TRUNK_MMA_PLACED_MASK) >> 4) |
-			      (shifted & TRUNK_MMA_SIGN_MASK);
+	const uint32_t odd =
+		((word & TRUNK_MMA_PLACED_MASK) >> TRUNK_MMA_PLACE_SHIFT) |
+		(word & TRUNK_MMA_SIGN_MASK);
+	const uint32_t shifted = word << TRUNK_MMA_BYTE_SHIFT;
+	const uint32_t even =
+		((shifted & TRUNK_MMA_PLACED_MASK) >> TRUNK_MMA_PLACE_SHIFT) |
+		(shifted & TRUNK_MMA_SIGN_MASK);
 	low = trunk_mma_multiply(even, scale);
 	high = trunk_mma_multiply(odd, scale);
 }
 
-__device__ __forceinline__ void trunk_mma_step(float (&d)[4], uint32_t a0,
-					       uint32_t a1, uint32_t a2,
-					       uint32_t a3, uint32_t b0,
-					       uint32_t b1)
+__device__ __forceinline__ void trunk_mma_step(float (&d)[TRUNK_MMA_RESULTS],
+					       uint32_t a0, uint32_t a1,
+					       uint32_t a2, uint32_t a3,
+					       uint32_t b0, uint32_t b1)
 {
 	asm volatile(
 		"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, "
 		"{%0,%1,%2,%3};"
-		: "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
+		: "+f"(d[0]), "+f"(d[1]), "+f"(d[TRUNK_MMA_LANE_ROWS]),
+		  "+f"(d[TRUNK_MMA_LANE_ROWS + 1])
 		: "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
 }
 
@@ -107,9 +171,12 @@ __device__ __forceinline__ void
 trunk_mma_sums(const struct trunk_linear_bfloat16_arguments &arguments,
 	       const unsigned char *arena, uint32_t first_tile,
 	       uint32_t first_group, uint32_t end_group,
-	       float (&sums)[tiles][row_groups][4], uint32_t first_row)
+	       float (&sums)[tiles][row_groups][TRUNK_MMA_RESULTS],
+	       uint32_t first_row)
 {
-	const int lane = threadIdx.x & 31, quad = lane & 3, column = lane >> 2;
+	const int lane = threadIdx.x & TRUNK_MMA_LANE_MASK,
+		  quad = lane & TRUNK_MMA_QUAD_MASK,
+		  column = lane >> TRUNK_MMA_COLUMN_SHIFT;
 	const uint32_t groups = arguments.input_size / TRUNK_MMA_GROUP_INPUTS;
 	const uint32_t tile_count =
 		arguments.output_size / TRUNK_MMA_TILE_OUTPUTS;
@@ -124,7 +191,8 @@ trunk_mma_sums(const struct trunk_linear_bfloat16_arguments &arguments,
 	for (int tile = 0; tile < tiles; tile++) {
 		const uint32_t at = min(first_tile + tile, tile_count - 1u);
 		weights[tile] = (const uint4 *)matrix +
-				(uint64_t)at * groups * 32u + lane;
+				(uint64_t)at * groups * TRUNK_MMA_GROUP_LOADS +
+				lane;
 		scales[tile] = scale_codes +
 			       (uint64_t)(at / TRUNK_MMA_SCALE_TILES) * groups;
 #pragma unroll
@@ -135,14 +203,13 @@ trunk_mma_sums(const struct trunk_linear_bfloat16_arguments &arguments,
 							   column),
 				    arguments.row_count - 1u);
 			values[tile][group] =
-				(const uint32_t *)(arena +
-						   arguments.values_offset +
-						   ((uint64_t)row *
-							    arguments
-								    .segment_count +
-						    at / segment_tiles) *
-							   arguments.input_size *
-							   2u) +
+				(const uint32_t
+					 *)(arena + arguments.values_offset +
+					    ((uint64_t)row *
+						     arguments.segment_count +
+					     at / segment_tiles) *
+						    arguments.input_size *
+						    TRUNK_MMA_VALUE_BYTES) +
 				quad;
 		}
 	}
@@ -151,7 +218,7 @@ trunk_mma_sums(const struct trunk_linear_bfloat16_arguments &arguments,
 #pragma unroll
 		for (int group = 0; group < row_groups; group++)
 #pragma unroll
-			for (int index = 0; index < 4; index++)
+			for (int index = 0; index < TRUNK_MMA_RESULTS; index++)
 				sums[tile][group][index] = 0.0f;
 	if (first_group >= end_group)
 		return;
@@ -161,8 +228,8 @@ trunk_mma_sums(const struct trunk_linear_bfloat16_arguments &arguments,
 		const uint32_t group = min(first_group + ahead, end_group - 1u);
 #pragma unroll
 		for (int tile = 0; tile < tiles; tile++)
-			ring[ahead][tile] =
-				trunk_mma_weights(weights[tile] + group * 32u);
+			ring[ahead][tile] = trunk_mma_weights(
+				weights[tile] + group * TRUNK_MMA_GROUP_LOADS);
 	}
 #pragma unroll 1
 	for (uint32_t group = first_group; group < end_group;
@@ -179,7 +246,8 @@ trunk_mma_sums(const struct trunk_linear_bfloat16_arguments &arguments,
 			for (int tile = 0; tile < tiles; tile++) {
 				stored[tile] = ring[slot][tile];
 				ring[slot][tile] = trunk_mma_weights(
-					weights[tile] + next * 32u);
+					weights[tile] +
+					next * TRUNK_MMA_GROUP_LOADS);
 			}
 #pragma unroll
 			for (int tile = 0; tile < tiles; tile++) {
@@ -189,15 +257,19 @@ trunk_mma_sums(const struct trunk_linear_bfloat16_arguments &arguments,
 				const uint32_t scale =
 					(code + TRUNK_MMA_SCALE_SHIFT) *
 					TRUNK_MMA_HALF_EXPONENT;
-				uint32_t a[8];
-				trunk_mma_decode(stored[tile].x, scale, a[0],
-						 a[1]);
-				trunk_mma_decode(stored[tile].y, scale, a[2],
-						 a[3]);
-				trunk_mma_decode(stored[tile].z, scale, a[4],
-						 a[5]);
-				trunk_mma_decode(stored[tile].w, scale, a[6],
-						 a[7]);
+				uint32_t a[GROUP_A_WORDS];
+				trunk_mma_decode(stored[tile].x, scale,
+						 a[FIRST_HALF_A0],
+						 a[FIRST_HALF_A1]);
+				trunk_mma_decode(stored[tile].y, scale,
+						 a[FIRST_HALF_A2],
+						 a[FIRST_HALF_A3]);
+				trunk_mma_decode(stored[tile].z, scale,
+						 a[SECOND_HALF_A0],
+						 a[SECOND_HALF_A1]);
+				trunk_mma_decode(stored[tile].w, scale,
+						 a[SECOND_HALF_A2],
+						 a[SECOND_HALF_A3]);
 #pragma unroll
 				for (int group = 0; group < row_groups;
 				     group++) {
@@ -205,16 +277,25 @@ trunk_mma_sums(const struct trunk_linear_bfloat16_arguments &arguments,
 					const uint32_t *const fed =
 						values[tile][group] +
 						at * (TRUNK_MMA_GROUP_INPUTS /
-						      2u);
-					const uint32_t b0 = __ldg(fed),
-						       b1 = __ldg(fed + 4),
-						       b2 = __ldg(fed + 8),
-						       b3 = __ldg(fed + 12);
-					trunk_mma_step(sums[tile][group], a[0],
-						       a[1], a[2], a[3], b0,
+						      TRUNK_MMA_WORD_VALUES);
+					const uint32_t
+						b0 = __ldg(fed),
+						b1 = __ldg(fed + FIRST_HALF_B1),
+						b2 = __ldg(fed +
+							   SECOND_HALF_B0),
+						b3 = __ldg(fed +
+							   SECOND_HALF_B1);
+					trunk_mma_step(sums[tile][group],
+						       a[FIRST_HALF_A0],
+						       a[FIRST_HALF_A1],
+						       a[FIRST_HALF_A2],
+						       a[FIRST_HALF_A3], b0,
 						       b1);
-					trunk_mma_step(sums[tile][group], a[4],
-						       a[5], a[6], a[7], b2,
+					trunk_mma_step(sums[tile][group],
+						       a[SECOND_HALF_A0],
+						       a[SECOND_HALF_A1],
+						       a[SECOND_HALF_A2],
+						       a[SECOND_HALF_A3], b2,
 						       b3);
 				}
 			}
@@ -229,13 +310,17 @@ __device__ __forceinline__ void
 trunk_mma_launch(const struct trunk_linear_bfloat16_arguments &arguments,
 		 unsigned char *arena, uint32_t block, uint32_t first_row = 0)
 {
-	__shared__ float partials[warps][4 * tiles * row_groups][32];
-	const int lane = threadIdx.x & 31, quad = lane & 3, column = lane >> 2;
-	const uint32_t warp = threadIdx.x >> 5, part = warp % split;
+	__shared__ float partials[warps][TRUNK_MMA_RESULTS * tiles * row_groups]
+				 [TRUNK_MMA_LANES];
+	const int lane = threadIdx.x & TRUNK_MMA_LANE_MASK,
+		  quad = lane & TRUNK_MMA_QUAD_MASK,
+		  column = lane >> TRUNK_MMA_COLUMN_SHIFT;
+	const uint32_t warp = threadIdx.x >> TRUNK_MMA_WARP_SHIFT,
+		       part = warp % split;
 	const uint32_t first_tile =
 		(block * (warps / split) + warp / split) * tiles;
 	const uint32_t groups = arguments.input_size / TRUNK_MMA_GROUP_INPUTS;
-	float sums[tiles][row_groups][4];
+	float sums[tiles][row_groups][TRUNK_MMA_RESULTS];
 	trunk_mma_sums<tiles, row_groups>(arguments, arena, first_tile,
 					  groups * part / split,
 					  groups * (part + 1u) / split, sums,
@@ -247,10 +332,12 @@ trunk_mma_launch(const struct trunk_linear_bfloat16_arguments &arguments,
 #pragma unroll
 				for (int group = 0; group < row_groups; group++)
 #pragma unroll
-					for (int index = 0; index < 4; index++)
+					for (int index = 0;
+					     index < TRUNK_MMA_RESULTS; index++)
 						partials[warp]
-							[4 * (tile * row_groups +
-							      group) +
+							[TRUNK_MMA_RESULTS *
+								 (tile * row_groups +
+								  group) +
 							 index][lane] =
 								sums[tile][group]
 								    [index];
@@ -264,12 +351,14 @@ trunk_mma_launch(const struct trunk_linear_bfloat16_arguments &arguments,
 #pragma unroll
 				for (int group = 0; group < row_groups; group++)
 #pragma unroll
-					for (int index = 0; index < 4; index++)
+					for (int index = 0;
+					     index < TRUNK_MMA_RESULTS; index++)
 						sums[tile][group][index] = __fadd_rn(
 							sums[tile][group][index],
 							partials[warp + other]
-								[4 * (tile * row_groups +
-								      group) +
+								[TRUNK_MMA_RESULTS *
+									 (tile * row_groups +
+									  group) +
 								 index][lane]);
 	}
 	/* d0, d1: output g, rows 2 quad and 2 quad + 1; d2, d3: output g + 8 */
@@ -284,22 +373,28 @@ trunk_mma_launch(const struct trunk_linear_bfloat16_arguments &arguments,
 #pragma unroll
 		for (int group = 0; group < row_groups; group++)
 #pragma unroll
-			for (int pair = 0; pair < 2; pair++) {
-				const uint32_t row = first_row +
-						     TRUNK_MMA_MOST_ROWS * group +
-						     2u * quad + pair;
+			for (int pair = 0; pair < TRUNK_MMA_LANE_ROWS; pair++) {
+				const uint32_t row =
+					first_row +
+					TRUNK_MMA_MOST_ROWS * group +
+					(uint32_t)TRUNK_MMA_LANE_ROWS * quad +
+					pair;
 				if (row >= arguments.row_count)
 					continue;
 #pragma unroll
-				for (int half = 0; half < 2; half++)
+				for (int half = 0; half < TRUNK_MMA_HALVES;
+				     half++)
 					output[(uint64_t)row *
 						       arguments.output_size +
 					       (first_tile + tile) *
 						       TRUNK_MMA_TILE_OUTPUTS +
-					       column + 8u * half] =
+					       column +
+					       TRUNK_MMA_HALF_OUTPUTS * half] =
 						__float2bfloat16_rn(
 							sums[tile][group]
-							    [2 * half + pair]);
+							    [TRUNK_MMA_LANE_ROWS *
+								     half +
+							     pair]);
 			}
 	}
 }
@@ -307,59 +402,69 @@ trunk_mma_launch(const struct trunk_linear_bfloat16_arguments &arguments,
 /* grid ceil(output_size / 16 / (tiles * warps / split)), 32 warps threads; rows 1 to 8, input_size a multiple of 32.
  * Forms of 8 warps: trunk_mma_8_t<T>_s<S>; of 16: _t1_s16, _t1_s8_w16, _t1_s4_w16. Row sets: gridDim.y sets
  * of 8 x row_groups rows (a set past the rows returns at once, a whole block). */
-#define TRUNK_MMA_ROWS_FORM(name, tiles, split, warps, row_groups)           \
-	extern "C" __global__ void __launch_bounds__(32 * (warps))           \
-		name(const struct trunk_linear_bfloat16_arguments arguments, \
-		     unsigned char *arena)                                   \
-	{                                                                    \
-		const uint32_t first_row =                                   \
-			blockIdx.y * TRUNK_MMA_MOST_ROWS * (row_groups);     \
-		if (arguments.row_count == 0 ||                              \
-		    first_row >= arguments.row_count ||                      \
-		    (gridDim.y == 1u &&                                      \
-		     arguments.row_count >                                   \
-			     TRUNK_MMA_MOST_ROWS * (row_groups)))            \
-			return;                                              \
-		trunk_mma_launch<tiles, split, warps, row_groups>(           \
-			arguments, arena, blockIdx.x, first_row);            \
+#define TRUNK_MMA_ROWS_FORM(name, tiles, split, warps, row_groups)             \
+	extern "C" __global__ void __launch_bounds__(TRUNK_MMA_LANES *(warps)) \
+		name(const struct trunk_linear_bfloat16_arguments arguments,   \
+		     unsigned char *arena)                                     \
+	{                                                                      \
+		const uint32_t first_row =                                     \
+			blockIdx.y * TRUNK_MMA_MOST_ROWS * (row_groups);       \
+		if (arguments.row_count == 0 ||                                \
+		    first_row >= arguments.row_count ||                        \
+		    (gridDim.y == 1u &&                                        \
+		     arguments.row_count >                                     \
+			     TRUNK_MMA_MOST_ROWS * (row_groups)))              \
+			return;                                                \
+		trunk_mma_launch<tiles, split, warps, row_groups>(             \
+			arguments, arena, blockIdx.x, first_row);              \
 	}
 #define TRUNK_MMA_FORM(name, tiles, split, warps) \
 	TRUNK_MMA_ROWS_FORM(name, tiles, split, warps, 1)
-TRUNK_MMA_FORM(trunk_mma_8_t1_s1, 1, 1, 8)
-TRUNK_MMA_FORM(trunk_mma_8_t1_s2, 1, 2, 8)
-TRUNK_MMA_FORM(trunk_mma_8_t1_s4, 1, 4, 8)
-TRUNK_MMA_FORM(trunk_mma_8_t1_s8, 1, 8, 8)
-TRUNK_MMA_FORM(trunk_mma_8_t2_s1, 2, 1, 8)
-TRUNK_MMA_FORM(trunk_mma_8_t2_s2, 2, 2, 8)
-TRUNK_MMA_FORM(trunk_mma_8_t2_s4, 2, 4, 8)
-TRUNK_MMA_FORM(trunk_mma_8_t2_s8, 2, 8, 8)
-TRUNK_MMA_FORM(trunk_mma_8_t1_s16, 1, 16, 16)
-TRUNK_MMA_FORM(trunk_mma_8_t1_s8_w16, 1, 8, 16)
-TRUNK_MMA_FORM(trunk_mma_8_t1_s4_w16, 1, 4, 16)
+TRUNK_MMA_FORM(trunk_mma_8_t1_s1, ONE_TILE, UNSPLIT, EIGHT_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t1_s2, ONE_TILE, TWO_WAY_SPLIT, EIGHT_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t1_s4, ONE_TILE, FOUR_WAY_SPLIT, EIGHT_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t1_s8, ONE_TILE, EIGHT_WAY_SPLIT, EIGHT_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t2_s1, TWO_TILES, UNSPLIT, EIGHT_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t2_s2, TWO_TILES, TWO_WAY_SPLIT, EIGHT_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t2_s4, TWO_TILES, FOUR_WAY_SPLIT, EIGHT_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t2_s8, TWO_TILES, EIGHT_WAY_SPLIT, EIGHT_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t1_s16, ONE_TILE, SIXTEEN_WAY_SPLIT, SIXTEEN_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t1_s8_w16, ONE_TILE, EIGHT_WAY_SPLIT, SIXTEEN_WARPS)
+TRUNK_MMA_FORM(trunk_mma_8_t1_s4_w16, ONE_TILE, FOUR_WAY_SPLIT, SIXTEEN_WARPS)
 /* the grouped forms: the 1-8-row forms' geometry over 2 to 6 row groups (9 to 48 rows; batch_thin_bits) */
-#define TRUNK_MMA_GROUPED_FORMS(rows, row_groups)                             \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t1_s1, 1, 1, 8, row_groups)    \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t1_s2, 1, 2, 8, row_groups)    \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t1_s4, 1, 4, 8, row_groups)    \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t1_s8, 1, 8, 8, row_groups)    \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t2_s1, 2, 1, 8, row_groups)    \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t2_s2, 2, 2, 8, row_groups)    \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t2_s4, 2, 4, 8, row_groups)    \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t2_s8, 2, 8, 8, row_groups)    \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t1_s16, 1, 16, 16, row_groups) \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t1_s8_w16, 1, 8, 16,           \
-			    row_groups)                                       \
-	TRUNK_MMA_ROWS_FORM(trunk_mma_##rows##_t1_s4_w16, 1, 4, 16, row_groups)
-TRUNK_MMA_GROUPED_FORMS(16, 2)
-TRUNK_MMA_GROUPED_FORMS(24, 3)
-TRUNK_MMA_GROUPED_FORMS(32, 4)
-TRUNK_MMA_GROUPED_FORMS(40, 5)
-TRUNK_MMA_GROUPED_FORMS(48, 6)
+#define TRUNK_MMA_GROUPED_FORMS(name, row_groups)                          \
+	TRUNK_MMA_ROWS_FORM(name##_t1_s1, ONE_TILE, UNSPLIT, EIGHT_WARPS,  \
+			    row_groups)                                    \
+	TRUNK_MMA_ROWS_FORM(name##_t1_s2, ONE_TILE, TWO_WAY_SPLIT,         \
+			    EIGHT_WARPS, row_groups)                       \
+	TRUNK_MMA_ROWS_FORM(name##_t1_s4, ONE_TILE, FOUR_WAY_SPLIT,        \
+			    EIGHT_WARPS, row_groups)                       \
+	TRUNK_MMA_ROWS_FORM(name##_t1_s8, ONE_TILE, EIGHT_WAY_SPLIT,       \
+			    EIGHT_WARPS, row_groups)                       \
+	TRUNK_MMA_ROWS_FORM(name##_t2_s1, TWO_TILES, UNSPLIT, EIGHT_WARPS, \
+			    row_groups)                                    \
+	TRUNK_MMA_ROWS_FORM(name##_t2_s2, TWO_TILES, TWO_WAY_SPLIT,        \
+			    EIGHT_WARPS, row_groups)                       \
+	TRUNK_MMA_ROWS_FORM(name##_t2_s4, TWO_TILES, FOUR_WAY_SPLIT,       \
+			    EIGHT_WARPS, row_groups)                       \
+	TRUNK_MMA_ROWS_FORM(name##_t2_s8, TWO_TILES, EIGHT_WAY_SPLIT,      \
+			    EIGHT_WARPS, row_groups)                       \
+	TRUNK_MMA_ROWS_FORM(name##_t1_s16, ONE_TILE, SIXTEEN_WAY_SPLIT,    \
+			    SIXTEEN_WARPS, row_groups)                     \
+	TRUNK_MMA_ROWS_FORM(name##_t1_s8_w16, ONE_TILE, EIGHT_WAY_SPLIT,   \
+			    SIXTEEN_WARPS, row_groups)                     \
+	TRUNK_MMA_ROWS_FORM(name##_t1_s4_w16, ONE_TILE, FOUR_WAY_SPLIT,    \
+			    SIXTEEN_WARPS, row_groups)
+TRUNK_MMA_GROUPED_FORMS(trunk_mma_16, TWO_ROW_GROUPS)
+TRUNK_MMA_GROUPED_FORMS(trunk_mma_24, THREE_ROW_GROUPS)
+TRUNK_MMA_GROUPED_FORMS(trunk_mma_32, FOUR_ROW_GROUPS)
+TRUNK_MMA_GROUPED_FORMS(trunk_mma_40, FIVE_ROW_GROUPS)
+TRUNK_MMA_GROUPED_FORMS(trunk_mma_48, SIX_ROW_GROUPS)
 /* The pair forms (--tp_launch_trims): two products of a form in one launch, trunk_mma_pair_arguments (a
  * layer's wq_a and wkv, its shared expert's gate and up): a block runs its product's record as that product's own
  * launch runs its block (the record's fields selected one by one, so no local copy) */
 #define TRUNK_MMA_PAIR_FORM(name, tiles, split, warps, row_groups)                                    \
-	extern "C" __global__ void __launch_bounds__(32 * (warps))                                    \
+	extern "C" __global__ void __launch_bounds__(TRUNK_MMA_LANES *(warps))                        \
 		name(const struct trunk_mma_pair_arguments arguments,                                 \
 		     unsigned char *arena)                                                            \
 	{                                                                                             \
@@ -393,12 +498,18 @@ TRUNK_MMA_GROUPED_FORMS(48, 6)
 				 blockIdx.x,                                                          \
 			first_row);                                                                   \
 	}
-TRUNK_MMA_PAIR_FORM(trunk_mma_8_t1_s16_pair, 1, 16, 16, 1)
-TRUNK_MMA_PAIR_FORM(trunk_mma_16_t1_s16_pair, 1, 16, 16, 2)
-TRUNK_MMA_PAIR_FORM(trunk_mma_24_t1_s16_pair, 1, 16, 16, 3)
-TRUNK_MMA_PAIR_FORM(trunk_mma_32_t1_s16_pair, 1, 16, 16, 4)
-TRUNK_MMA_PAIR_FORM(trunk_mma_40_t1_s16_pair, 1, 16, 16, 5)
-TRUNK_MMA_PAIR_FORM(trunk_mma_48_t1_s16_pair, 1, 16, 16, 6)
+TRUNK_MMA_PAIR_FORM(trunk_mma_8_t1_s16_pair, ONE_TILE, SIXTEEN_WAY_SPLIT,
+		    SIXTEEN_WARPS, ONE_ROW_GROUP)
+TRUNK_MMA_PAIR_FORM(trunk_mma_16_t1_s16_pair, ONE_TILE, SIXTEEN_WAY_SPLIT,
+		    SIXTEEN_WARPS, TWO_ROW_GROUPS)
+TRUNK_MMA_PAIR_FORM(trunk_mma_24_t1_s16_pair, ONE_TILE, SIXTEEN_WAY_SPLIT,
+		    SIXTEEN_WARPS, THREE_ROW_GROUPS)
+TRUNK_MMA_PAIR_FORM(trunk_mma_32_t1_s16_pair, ONE_TILE, SIXTEEN_WAY_SPLIT,
+		    SIXTEEN_WARPS, FOUR_ROW_GROUPS)
+TRUNK_MMA_PAIR_FORM(trunk_mma_40_t1_s16_pair, ONE_TILE, SIXTEEN_WAY_SPLIT,
+		    SIXTEEN_WARPS, FIVE_ROW_GROUPS)
+TRUNK_MMA_PAIR_FORM(trunk_mma_48_t1_s16_pair, ONE_TILE, SIXTEEN_WAY_SPLIT,
+		    SIXTEEN_WARPS, SIX_ROW_GROUPS)
 
 /* ------------------------------------------------------------------------------------------- 9 to 64 rows (_64) */
 
@@ -413,13 +524,22 @@ TRUNK_MMA_PAIR_FORM(trunk_mma_48_t1_s16_pair, 1, 16, 16, 6)
 #define TRUNK_MMA_MAGNITUDE_MASK 0x7FFFFFFFu
 #define TRUNK_MMA_INFINITY_BITS 0x7F800000u
 #define TRUNK_MMA_NOT_A_NUMBER 0x7FC0u
+#define TRUNK_MMA_BFLOAT16_SHIFT 16 /* a float32's bfloat16: its high half */
+#define TRUNK_MMA_GROUP_PIECES 4u /* 16-byte pieces of a row's input group */
+#define TRUNK_MMA_PIECE_WORDS 4u
+#define TRUNK_MMA_PIECE_BYTES 16u
+#define TRUNK_MMA_GROUP_WORDS \
+	16 /* 32-bit words of a staged row's input group */
+#define TRUNK_MMA_STAGE_ALIGNMENT 16 /* a cp.async piece's */
+#define TRUNK_MMA_WIDE_BLOCKS_PER_MULTIPROCESSOR 2
 
 __device__ __forceinline__ uint16_t
 trunk_mma_bfloat16_bits(float value) /* linear_bfloat16_bits */
 {
 	const uint32_t bits = __float_as_uint(value);
-	const uint32_t rounded =
-		(bits + TRUNK_MMA_ROUNDING_BIAS + ((bits >> 16) & 1u)) >> 16;
+	const uint32_t rounded = (bits + TRUNK_MMA_ROUNDING_BIAS +
+				  ((bits >> TRUNK_MMA_BFLOAT16_SHIFT) & 1u)) >>
+				 TRUNK_MMA_BFLOAT16_SHIFT;
 	return (uint16_t)((bits & TRUNK_MMA_MAGNITUDE_MASK) >
 					  TRUNK_MMA_INFINITY_BITS ?
 				  TRUNK_MMA_NOT_A_NUMBER :
@@ -440,18 +560,21 @@ trunk_mma_stage(const struct trunk_relaxed_bfloat16_arguments &arguments,
 		const unsigned char *values, uint32_t first, uint32_t count,
 		uint32_t *buffer)
 {
-	const uint32_t per_row = count * 4u; /* 16-byte pieces: 4 a group */
-	const uint64_t row_bytes =
-		(uint64_t)arguments.segment_count * arguments.input_size * 2u;
+	const uint32_t per_row =
+		count * TRUNK_MMA_GROUP_PIECES; /* 16-byte pieces: 4 a group */
+	const uint64_t row_bytes = (uint64_t)arguments.segment_count *
+				   arguments.input_size * TRUNK_MMA_VALUE_BYTES;
 	for (uint32_t piece = threadIdx.x;
 	     piece < arguments.row_count * per_row;
 	     piece += TRUNK_MMA_THREADS) {
 		const uint32_t row = piece / per_row, at = piece % per_row;
-		trunk_mma_copy(buffer + row * TRUNK_MMA_PITCH + at * 4u,
+		trunk_mma_copy(buffer + row * TRUNK_MMA_PITCH +
+				       at * TRUNK_MMA_PIECE_WORDS,
 			       values + row * row_bytes +
 				       (uint64_t)first *
-					       TRUNK_MMA_GROUP_INPUTS * 2u +
-				       at * 16u);
+					       TRUNK_MMA_GROUP_INPUTS *
+					       TRUNK_MMA_VALUE_BYTES +
+				       at * TRUNK_MMA_PIECE_BYTES);
 	}
 	asm volatile("cp.async.commit_group;");
 }
@@ -461,8 +584,10 @@ __device__ __forceinline__ void
 trunk_mma_wide(const struct trunk_relaxed_bfloat16_arguments &arguments,
 	       unsigned char *arena, uint32_t *stage, uint64_t counters_offset)
 {
-	const int lane = threadIdx.x & 31, quad = lane & 3, column = lane >> 2;
-	const uint32_t warp = threadIdx.x >> 5;
+	const int lane = threadIdx.x & TRUNK_MMA_LANE_MASK,
+		  quad = lane & TRUNK_MMA_QUAD_MASK,
+		  column = lane >> TRUNK_MMA_COLUMN_SHIFT;
+	const uint32_t warp = threadIdx.x >> TRUNK_MMA_WARP_SHIFT;
 	const uint32_t tile_count =
 		arguments.output_size / TRUNK_MMA_TILE_OUTPUTS;
 	const uint32_t segment_tiles = tile_count / arguments.segment_count;
@@ -480,28 +605,30 @@ trunk_mma_wide(const struct trunk_relaxed_bfloat16_arguments &arguments,
 		       end_group = groups * (split + 1u) / splits;
 	const unsigned char *const matrix = arena + arguments.weights_offset;
 	const uint4 *const weights =
-		(const uint4 *)matrix + (uint64_t)at_tile * groups * 32u + lane;
+		(const uint4 *)matrix +
+		(uint64_t)at_tile * groups * TRUNK_MMA_GROUP_LOADS + lane;
 	const unsigned char *const scales =
 		matrix +
 		(uint64_t)arguments.output_size * arguments.input_size +
 		(uint64_t)(at_tile / TRUNK_MMA_SCALE_TILES) * groups;
 	const unsigned char *const values =
 		arena + arguments.values_offset +
-		set_rows * arguments.segment_count * arguments.input_size * 2u +
+		set_rows * arguments.segment_count * arguments.input_size *
+			TRUNK_MMA_VALUE_BYTES +
 		(uint64_t)(block * TRUNK_MMA_WARPS / segment_tiles) *
-			arguments.input_size * 2u;
-	float sums[row_groups][4];
+			arguments.input_size * TRUNK_MMA_VALUE_BYTES;
+	float sums[row_groups][TRUNK_MMA_RESULTS];
 #pragma unroll
 	for (int group = 0; group < row_groups; group++)
 #pragma unroll
-		for (int index = 0; index < 4; index++)
+		for (int index = 0; index < TRUNK_MMA_RESULTS; index++)
 			sums[group][index] = 0.0f;
 	uint4 ring[TRUNK_MMA_PHASE];
 #pragma unroll
 	for (int ahead = 0; ahead < TRUNK_MMA_PHASE; ahead++)
 		ring[ahead] = trunk_mma_weights(
-			weights +
-			min(first_group + ahead, end_group - 1u) * 32u);
+			weights + min(first_group + ahead, end_group - 1u) *
+					  TRUNK_MMA_GROUP_LOADS);
 	trunk_mma_stage(arguments, values, first_group,
 			min((uint32_t)TRUNK_MMA_PHASE, end_group - first_group),
 			stage);
@@ -534,27 +661,40 @@ trunk_mma_wide(const struct trunk_relaxed_bfloat16_arguments &arguments,
 			ring[slot] = trunk_mma_weights(
 				weights +
 				min(at + TRUNK_MMA_PHASE, end_group - 1u) *
-					32u);
+					TRUNK_MMA_GROUP_LOADS);
 			const uint32_t code = min((uint32_t)__ldg(scales + at),
 						  TRUNK_MMA_LARGEST_SCALE);
 			const uint32_t scale = (code + TRUNK_MMA_SCALE_SHIFT) *
 					       TRUNK_MMA_HALF_EXPONENT;
-			uint32_t a[8];
-			trunk_mma_decode(stored.x, scale, a[0], a[1]);
-			trunk_mma_decode(stored.y, scale, a[2], a[3]);
-			trunk_mma_decode(stored.z, scale, a[4], a[5]);
-			trunk_mma_decode(stored.w, scale, a[6], a[7]);
+			uint32_t a[GROUP_A_WORDS];
+			trunk_mma_decode(stored.x, scale, a[FIRST_HALF_A0],
+					 a[FIRST_HALF_A1]);
+			trunk_mma_decode(stored.y, scale, a[FIRST_HALF_A2],
+					 a[FIRST_HALF_A3]);
+			trunk_mma_decode(stored.z, scale, a[SECOND_HALF_A0],
+					 a[SECOND_HALF_A1]);
+			trunk_mma_decode(stored.w, scale, a[SECOND_HALF_A2],
+					 a[SECOND_HALF_A3]);
 #pragma unroll
 			for (int group = 0; group < row_groups; group++) {
 				const uint32_t *const fed =
 					buffer +
-					(8u * group + column) *
+					(TRUNK_MMA_GROUP_ROWS * group +
+					 column) *
 						TRUNK_MMA_PITCH +
-					slot * 16 + quad;
-				trunk_mma_step(sums[group], a[0], a[1], a[2],
-					       a[3], fed[0], fed[4]);
-				trunk_mma_step(sums[group], a[4], a[5], a[6],
-					       a[7], fed[8], fed[12]);
+					slot * TRUNK_MMA_GROUP_WORDS + quad;
+				trunk_mma_step(sums[group], a[FIRST_HALF_A0],
+					       a[FIRST_HALF_A1],
+					       a[FIRST_HALF_A2],
+					       a[FIRST_HALF_A3],
+					       fed[FIRST_HALF_B0],
+					       fed[FIRST_HALF_B1]);
+				trunk_mma_step(sums[group], a[SECOND_HALF_A0],
+					       a[SECOND_HALF_A1],
+					       a[SECOND_HALF_A2],
+					       a[SECOND_HALF_A3],
+					       fed[SECOND_HALF_B0],
+					       fed[SECOND_HALF_B1]);
 			}
 		}
 		__syncthreads(); /* the buffer is staged again two phases on */
@@ -563,17 +703,22 @@ trunk_mma_wide(const struct trunk_relaxed_bfloat16_arguments &arguments,
 #pragma unroll
 	for (int group = 0; group < row_groups && tile < tile_count; group++)
 #pragma unroll
-		for (int pair = 0; pair < 2; pair++) {
-			const uint32_t row = 8u * group + 2u * quad + pair;
+		for (int pair = 0; pair < TRUNK_MMA_LANE_ROWS; pair++) {
+			const uint32_t row =
+				TRUNK_MMA_GROUP_ROWS * group +
+				(uint32_t)TRUNK_MMA_LANE_ROWS * quad + pair;
 			if (row >= arguments.row_count)
 				continue;
 #pragma unroll
-			for (int half = 0; half < 2; half++) {
+			for (int half = 0; half < TRUNK_MMA_HALVES; half++) {
 				const uint64_t at =
-					(set_rows + row) * arguments.output_size +
+					(set_rows + row) *
+						arguments.output_size +
 					tile * TRUNK_MMA_TILE_OUTPUTS + column +
-					8u * half;
-				const float sum = sums[group][2 * half + pair];
+					TRUNK_MMA_HALF_OUTPUTS * half;
+				const float sum =
+					sums[group]
+					    [TRUNK_MMA_LANE_ROWS * half + pair];
 				if (splits == 1u)
 					((uint16_t *)(arena +
 						      arguments.output_offset))
@@ -589,7 +734,8 @@ trunk_mma_wide(const struct trunk_relaxed_bfloat16_arguments &arguments,
 		}
 	if (!fused || splits == 1u || sets != 1u)
 		return;
-	/* fused: the block's last split adds its 128 outputs' partials from +0 in ascending split order (the reduce's) */
+	/* fused: the block's last split adds its 128 outputs' partials from +0 in ascending split order (the
+	 * reduce's) */
 	__shared__ uint32_t arrived;
 	__threadfence();
 	__syncthreads();
@@ -619,44 +765,50 @@ trunk_mma_wide(const struct trunk_relaxed_bfloat16_arguments &arguments,
 
 /* grid ceil(output_size / 128) * k_split_count, 256 threads, rows 9 to 64; a segment a whole number of blocks of 128
  * outputs, input_size a multiple of 32, values and partials 16-byte aligned. */
-extern "C" __global__ void __launch_bounds__(TRUNK_MMA_THREADS, 2)
+extern "C" __global__ void
+__launch_bounds__(TRUNK_MMA_THREADS, TRUNK_MMA_WIDE_BLOCKS_PER_MULTIPROCESSOR)
 	trunk_mma_64(const struct trunk_relaxed_bfloat16_arguments arguments,
 		     unsigned char *arena)
 {
-	__shared__ __align__(16) uint32_t stage[TRUNK_MMA_STAGE_WORDS];
-	switch ((arguments.row_count + 7u) / 8u) {
+	__shared__ __align__(TRUNK_MMA_STAGE_ALIGNMENT)
+		uint32_t stage[TRUNK_MMA_STAGE_WORDS];
+	switch ((arguments.row_count + TRUNK_MMA_GROUP_ROWS - 1u) /
+		TRUNK_MMA_GROUP_ROWS) {
 #define TRUNK_MMA_ROW_GROUPS(count)                             \
 	case count:                                             \
 		trunk_mma_wide<count, false>(arguments, arena, stage, 0); \
 		break;
-		TRUNK_MMA_ROW_GROUPS(2)
-		TRUNK_MMA_ROW_GROUPS(3)
-		TRUNK_MMA_ROW_GROUPS(4) TRUNK_MMA_ROW_GROUPS(5)
-			TRUNK_MMA_ROW_GROUPS(6) TRUNK_MMA_ROW_GROUPS(7)
-				TRUNK_MMA_ROW_GROUPS(8)
+		TRUNK_MMA_ROW_GROUPS(TWO_ROW_GROUPS)
+		TRUNK_MMA_ROW_GROUPS(THREE_ROW_GROUPS)
+		TRUNK_MMA_ROW_GROUPS(FOUR_ROW_GROUPS) TRUNK_MMA_ROW_GROUPS(FIVE_ROW_GROUPS)
+			TRUNK_MMA_ROW_GROUPS(SIX_ROW_GROUPS) TRUNK_MMA_ROW_GROUPS(SEVEN_ROW_GROUPS)
+				TRUNK_MMA_ROW_GROUPS(EIGHT_ROW_GROUPS)
 #undef TRUNK_MMA_ROW_GROUPS
 					default : break;
 	}
 }
 
 /* the _64 form with its own reduce (relaxed_linear_records.h's trunk_mma_fused_arguments): the same grid */
-extern "C" __global__ void __launch_bounds__(TRUNK_MMA_THREADS, 2)
+extern "C" __global__ void
+__launch_bounds__(TRUNK_MMA_THREADS, TRUNK_MMA_WIDE_BLOCKS_PER_MULTIPROCESSOR)
 	trunk_mma_64_fused(const struct trunk_mma_fused_arguments arguments,
 			   unsigned char *arena)
 {
-	__shared__ __align__(16) uint32_t stage[TRUNK_MMA_STAGE_WORDS];
-	switch ((arguments.wide.row_count + 7u) / 8u) {
+	__shared__ __align__(TRUNK_MMA_STAGE_ALIGNMENT)
+		uint32_t stage[TRUNK_MMA_STAGE_WORDS];
+	switch ((arguments.wide.row_count + TRUNK_MMA_GROUP_ROWS - 1u) /
+		TRUNK_MMA_GROUP_ROWS) {
 #define TRUNK_MMA_ROW_GROUPS(count) \
 	case count: \
 		trunk_mma_wide<count, true>(arguments.wide, arena, stage, arguments.counters_offset); \
 		break;
-		TRUNK_MMA_ROW_GROUPS(2)
-		TRUNK_MMA_ROW_GROUPS(3)
-		TRUNK_MMA_ROW_GROUPS(4)
-		TRUNK_MMA_ROW_GROUPS(5)
-		TRUNK_MMA_ROW_GROUPS(6)
-		TRUNK_MMA_ROW_GROUPS(7)
-		TRUNK_MMA_ROW_GROUPS(8)
+		TRUNK_MMA_ROW_GROUPS(TWO_ROW_GROUPS)
+		TRUNK_MMA_ROW_GROUPS(THREE_ROW_GROUPS)
+		TRUNK_MMA_ROW_GROUPS(FOUR_ROW_GROUPS)
+		TRUNK_MMA_ROW_GROUPS(FIVE_ROW_GROUPS)
+		TRUNK_MMA_ROW_GROUPS(SIX_ROW_GROUPS)
+		TRUNK_MMA_ROW_GROUPS(SEVEN_ROW_GROUPS)
+		TRUNK_MMA_ROW_GROUPS(EIGHT_ROW_GROUPS)
 #undef TRUNK_MMA_ROW_GROUPS
 	default:
 		break;

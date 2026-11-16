@@ -852,7 +852,7 @@ static void card_run(uint32_t card_index)
 
 int main(int argument_count, char **arguments)
 {
-	struct storage_description description = { 0, 0, 0 };
+	struct storage_description description = { 0 };
 	uint32_t card_count = 0;
 	const bool has_break = argument_count > ARGUMENTS_OF_A_BREAK &&
 			       strcmp(arguments[1], BREAK_FLAG) == 0;

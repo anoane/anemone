@@ -10,16 +10,16 @@
  *         [--draft_positions=0] [--layout=<layout text>] <pack copy> [<pack copy> ...]
  *
  *   - --card_free_mib: each card's free memory as the CUDA backend finds it, in MiB, in the order the stages fill
- *     them (main.c's --card_order); the last card is the RTX PRO 6000 (sm_120), every other a CMP 170HX (sm_80), as
+ *     them (commands.c's --card_order); the last card is the RTX PRO 6000 (sm_120), every other a CMP 170HX (sm_80), as
  *     the batches order them. --card_memory_kept_free_mib, --rows, --wide_rows, --context_tokens, --session_slots and
- *     --linear_order are main.c's (the kept free memory also the teacher-forced card test's, which holds its state);
- *     --draft_positions is the plan's draft (model_seam.h: MODEL_DRAFT_BLOCK, or 0 for none).
- *   - As main.c places: a card's budget is its free memory less the backend's reserve and what is kept free, then
+ *     --linear_order are commands.c's (the kept free memory also the teacher-forced card test's, which holds its
+ *     state); --draft_positions is the plan's draft (model_seam.h: MODEL_DRAFT_BLOCK, or 0 for none).
+ *   - As commands.c places: a card's budget is its free memory less the backend's reserve and what is kept free, then
  *     the passes of placement_fill_in_order, each in the budgets less the state the pass before gives each
- *     card, for main.c's limits (the context, the rows of the wider of --rows and --wide_rows, the sessions, 16-bit
+ *     card, for commands.c's limits (the context, the rows of the wider of --rows and --wide_rows, the sessions, 16-bit
  *     state, the precision profile, the order, the draft). The reserve and the count of passes are the constants
- *     backend_cuda.c and main.c use
- *     (BACKEND_CUDA_MEMORY_RESERVED_BYTES, PLACEMENT_STATE_PASSES); the loop is main.c's, copied.
+ *     backend_cuda.c and commands.c use
+ *     (BACKEND_CUDA_MEMORY_RESERVED_BYTES, PLACEMENT_STATE_PASSES); the loop is commands.c's, copied.
  *     The teacher-forced placement is the card test's: every layer, each card's room its free memory less the
  *     reserve, its budget the room less what is kept free.
  *   - --layout: the placement a layout text states (placement.h) in place of the fill, its budgets checked by the same
@@ -32,7 +32,7 @@
  *     bytes, no layer of the plan with experts in host memory, no expert pause or paused segment in either program,
  *     every arena within its budget) and the teacher-forced placement of every layer fits; with --layout, where the
  *     text's placement, its plan and both programs are made, every arena is within its budget and at most
- *     STEP_MOST_PINNED_EXPERT_BYTES of routed experts stay in host memory, as main.c refuses more. Else 1,
+ *     STEP_MOST_PINNED_EXPERT_BYTES of routed experts stay in host memory, as commands.c refuses more. Else 1,
  *     and 2 with the usage for a command line it does not describe.
  *   - Without arguments, as `make check` runs every test, the same on the pack of the model's tables
  *     (model_v41_pack.h) with five cards of the free memory batch p2p_gate measured (2026-10-18): every expert on a
@@ -47,7 +47,9 @@
  *     order, no memory kept free): the fill in card order with the PRO last places layers 37 to 39, the head and the
  *     draft head on the PRO, every expert on a card and every arena in budget, unit for unit as without the draft;
  *     layout D (the PRO third, the draft head on the first card, the head on the last) is refused with the draft, in
- *     one line that names --layout and --card_order, and fits without it. Then the refusals of the options.
+ *     one line that names --layout and --card_order, and fits without it. Then serve's --session_slots=max on the
+ *     same budgets, through the engine's own fit (session_fit.h): its count fits, one more does not, half the PRO's
+ *     budget holds no more, cards of a MiB hold none. Then the refusals of the options.
  * A failure is one line on the standard output: the case, and what was expected of it.
  */
 #include <errno.h>
@@ -63,12 +65,14 @@
 #include "log_expectation.h"
 #include "anemone/pack.h"
 #include "anemone/placement.h"
+#include "anemone/session_fit.h"
 #include "anemone/step.h"
 #include "anemone/storage_seam.h"
 #include "host_memory_backend.h"
 #include "memory_storage.h"
 #include "model_v41.h"
 #include "model_v41_pack.h"
+#include "serving_cursor.h"
 #include "subset_placement.h"
 
 #define DEFAULT_KEPT_FREE_MIB 1024u                 /* first_token_plan.md 1.3, as the batches keep */
@@ -94,6 +98,13 @@
 #define PRODUCTION_ROWS 8u                          /* --rows */
 #define PRODUCTION_WIDE_ROWS 1024u                  /* --wide_rows */
 #define PRODUCTION_SESSIONS 4u
+#define SESSION_FIT_PRO_SHARE 2u /* the PRO's budget is halved to see that less memory holds no more sessions */
+/* a layout the placement refuses at its first statement, whatever the count: no such card */
+#define SESSION_FIT_REFUSED_LAYOUT "layers 0..39: card 9"
+#define HEAD_FIT_CONTEXT_TOKENS \
+	65536u /* the head offload's fit: F2's short context, where a session is small */
+#define HEAD_FIT_BANKS \
+	5u /* PP5's multi-session pipeline depth: a head flight bank each */
 #define LAYOUT_D_PRO_CARD 2u                        /* --card_order=1,2,0,3,4: the PRO third */
 #define MOST_SESSIONS 64u                           /* of --session_slots: far above a serving engine's */
 #define COUNT_OF(table) ((uint32_t)(sizeof(table) / sizeof((table)[0])))
@@ -192,7 +203,10 @@ static void capture_end_expecting(const char *words)
 {
     char text[CAPTURE_CAPACITY];
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, sizeof(text) - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    sizeof(text)) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the error stream is restored");
     text[byte_count > 0 ? (size_t)byte_count : 0] = '\0';
@@ -321,8 +335,8 @@ static bool options_parse(int argument_count, const char *const *arguments, stru
 	   options->copy_count <= STORAGE_MAXIMUM_COPIES;
 }
 
-/* main.c's placement, or the layout text's: the budgets less what each card's state takes under the placement of the
- * pass before. */
+/* commands.c's placement, or the layout text's: the budgets less what each card's state takes under the placement of
+ * the pass before. */
 MUST_CHECK static result_status default_place(const struct pack_record *pack,
 					      const struct model_limits *limits,
 					      const struct options *options,
@@ -400,8 +414,8 @@ static void units_count(const struct pack_record *pack,
 	}
 }
 
-/* The programs of one row and, above one, of --rows rows (as main.c makes them) on the backend in host memory: their
- * expert pauses and paused segments, and with is_printing their lines. */
+/* The programs of one row and, above one, of --rows rows (as commands.c makes them) on the backend in host memory:
+ * their expert pauses and paused segments, and with is_printing their lines. */
 MUST_CHECK static result_status
 programs_check(const struct model_plan_record *plan,
 	       const struct options *options, bool is_printing,
@@ -674,7 +688,8 @@ static bool teacher_forced_fits(const struct findings *found)
     return found->is_teacher_forced_placed && found->teacher_forced_over_room == 0;
 }
 
-/* A layout text's placement as generate takes it: made, in budget, and no more host experts than main.c may lock. */
+/* A layout text's placement as generate takes it: made, in budget, and no more host experts than commands.c may
+ * lock. */
 static bool layout_fits(const struct findings *found)
 {
 	return found->is_placed && found->over_budget == 0 &&
@@ -846,7 +861,7 @@ static void test_layout_texts(const struct pack_record *pack)
 
 /* Production's budgets and limits on five cards in stage order, the PRO at pro_card: a CMP 170HX's free memory and
  * the PRO's, no memory kept free, --rows 8 and --wide_rows 1,024, four sessions of the most context, the reference
- * order (main.c's default), the draft and the layout text given. */
+ * order (commands.c's default), the draft and the layout text given. */
 static struct options production_options(uint32_t pro_card, uint32_t draft_positions, const char *layout)
 {
     struct options options = options_default();
@@ -912,6 +927,207 @@ static void test_draft_placement(const struct pack_record *pack)
 		   found.result_card == FIVE_CARDS - 1u &&
 		   found.embedding_card == 0,
 	   "layout D fits without the draft");
+}
+
+/* serve's --session_slots=max (session_fit.h), the engine's own fit, on production's budgets with the draft: the
+ * most sessions of the full context the five cards hold is at least production's four; that count fits and one
+ * more does not fit for memory (STATUS_OUT_OF_MEMORY); half the PRO's budget holds no more; cards of a MiB hold none
+ * (the fill refuses with one line, for memory); a layout text the placement refuses is that refusal, found at one
+ * session with one line, not "no session fits" (stage 3 review D2). */
+static void test_session_fit(const struct pack_record *pack)
+{
+	const uint32_t pro_card = FIVE_CARDS - 1u;
+	const struct options options =
+		production_options(pro_card, MODEL_DRAFT_BLOCK, NULL);
+	const uint32_t unit_count = pack_header_of(pack)->unit_count;
+	uint32_t *const card_of_unit =
+		calloc(unit_count, sizeof(*card_of_unit));
+	uint64_t budget[BACKEND_MAXIMUM_CARDS] = { 0 };
+	for (uint32_t card = 0; card < options.card_count; card++)
+		budget[card] =
+			options.free_bytes[card] >
+					BACKEND_CUDA_MEMORY_RESERVED_BYTES ?
+				options.free_bytes[card] -
+					BACKEND_CUDA_MEMORY_RESERVED_BYTES :
+				0;
+	const struct model_limits limits = {
+		.context_token_limit = options.context_tokens,
+		.row_capacity = options.wide_rows > options.rows ?
+					options.wide_rows :
+					options.rows,
+		.session_capacity = 1u,
+		.state_width = STATE_WIDTH_16,
+		.linear_profile = LINEAR_PROFILE_PRECISION,
+		.linear_order = (enum linear_order_code)options.order,
+		.cmp_order = CMP_ORDER_REFERENCE,
+		.draft_positions = options.draft_positions
+	};
+	const struct session_fit_cards cards = {
+		.model = model_operations_of(pack_header_of(pack)->model_name),
+		.pack = pack,
+		.layout_text = NULL,
+		.budget_bytes_of_card = budget,
+		.card_count = options.card_count,
+		.unit_count = unit_count,
+		.card_of_unit = card_of_unit
+	};
+	context_text = "--session_slots=max on production's budgets";
+	result_status refusal = STATUS_INVALID_ARGUMENT;
+	const uint32_t most = card_of_unit != NULL ?
+				      session_fit_most(&cards, &limits,
+						       SERVING_SLOTS_MOST,
+						       &refusal) :
+				      0;
+	struct model_limits trial = limits;
+	trial.session_capacity = most;
+	bool is_boundary = most >= PRODUCTION_SESSIONS &&
+			   refusal == STATUS_OK &&
+			   session_fit(&cards, &trial) == STATUS_OK;
+	trial.session_capacity = most + 1u;
+	is_boundary = is_boundary &&
+		      (most == SERVING_SLOTS_MOST ||
+		       session_fit(&cards, &trial) == STATUS_OUT_OF_MEMORY);
+	expect(is_boundary,
+	       "the most sessions that fit (production's four at least) fit, and one more does not fit for memory");
+	(void)printf("SESSIONS max=%" PRIu32 " of %" PRIu32
+		     " tokens on production's five cards\n",
+		     most, limits.context_token_limit);
+	budget[pro_card] /= SESSION_FIT_PRO_SHARE;
+	expect(card_of_unit != NULL &&
+		       session_fit_most(&cards, &limits, SERVING_SLOTS_MOST,
+					&refusal) <= most &&
+		       refusal == STATUS_OK,
+	       "half the PRO's budget holds no more sessions");
+	budget[pro_card] *= SESSION_FIT_PRO_SHARE;
+	const struct session_fit_cards refused_text = {
+		.model = cards.model,
+		.pack = pack,
+		.layout_text = SESSION_FIT_REFUSED_LAYOUT,
+		.budget_bytes_of_card = budget,
+		.card_count = options.card_count,
+		.unit_count = unit_count,
+		.card_of_unit = card_of_unit
+	};
+	capture_begin();
+	const uint32_t refused =
+		card_of_unit != NULL ?
+			session_fit_most(&refused_text, &limits,
+					 SERVING_SLOTS_MOST, &refusal) :
+			1u;
+	capture_end_expecting("layout text: statement 1");
+	expect(refused == 0 && refusal == STATUS_INVALID_ARGUMENT,
+	       "a layout text the placement refuses is its refusal, found at one session");
+	for (uint32_t card = 0; card < options.card_count; card++)
+		budget[card] = BYTES_PER_MIB;
+	capture_begin();
+	const uint32_t none =
+		card_of_unit != NULL ?
+			session_fit_most(&cards, &limits, 1u, &refusal) :
+			1u;
+	capture_end_expecting("the stage units do not fit");
+	expect(none == 0 && refusal == STATUS_OK,
+	       "cards of a MiB hold no session (memory, not a refusal)");
+	free(card_of_unit);
+}
+
+/* Stage 3 review D3: the original head offload grows every card's arena after plan_create (its shard, hidden
+ * rows, logits and controls on each CMP, and a flight bank per pipeline step), and the fit grows its probe plans the
+ * same way (session_fit's plan_grown). On production's budgets at 64K in PP5's 8/7/7/7/11 layout (the head
+ * offload's), the most sessions max finds is a count whose grown arenas open, one more is out of memory, and it is
+ * no more than the fit without the head's growth finds (which the open would refuse where they differ). */
+static const char *const head_layout_text =
+	"embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; "
+	"layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; "
+	"head: card 4; draft head: card 4";
+static const struct card_description_record head_cards[FIVE_CARDS] = {
+	{ .name = "NVIDIA CMP 170HX",
+	  .arithmetic_class = ARITHMETIC_CLASS_SM_80 },
+	{ .name = "NVIDIA CMP 170HX",
+	  .arithmetic_class = ARITHMETIC_CLASS_SM_80 },
+	{ .name = "NVIDIA CMP 170HX",
+	  .arithmetic_class = ARITHMETIC_CLASS_SM_80 },
+	{ .name = "NVIDIA CMP 170HX",
+	  .arithmetic_class = ARITHMETIC_CLASS_SM_80 },
+	{ .name = "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+	  .arithmetic_class = ARITHMETIC_CLASS_SM_120_NATIVE }
+};
+
+MUST_CHECK static result_status
+head_offload_grown(struct model_plan_record *plan)
+{
+	const result_status status = v41_original_head_plan(plan, head_cards);
+	return status == STATUS_OK ?
+		       v41_original_head_banks_plan(plan, HEAD_FIT_BANKS) :
+		       status;
+}
+
+static void test_session_fit_head_offload(const struct pack_record *pack)
+{
+	const uint32_t pro_card = FIVE_CARDS - 1u;
+	const struct options options =
+		production_options(pro_card, MODEL_DRAFT_BLOCK, NULL);
+	const uint32_t unit_count = pack_header_of(pack)->unit_count;
+	uint32_t *const card_of_unit =
+		calloc(unit_count, sizeof(*card_of_unit));
+	uint64_t budget[BACKEND_MAXIMUM_CARDS] = { 0 };
+	for (uint32_t card = 0; card < options.card_count; card++)
+		budget[card] =
+			options.free_bytes[card] >
+					BACKEND_CUDA_MEMORY_RESERVED_BYTES ?
+				options.free_bytes[card] -
+					BACKEND_CUDA_MEMORY_RESERVED_BYTES :
+				0;
+	const struct model_limits limits = {
+		.context_token_limit = HEAD_FIT_CONTEXT_TOKENS,
+		.row_capacity = options.wide_rows > options.rows ?
+					options.wide_rows :
+					options.rows,
+		.session_capacity = 1u,
+		.state_width = STATE_WIDTH_16,
+		.linear_profile = LINEAR_PROFILE_PRECISION,
+		.linear_order = (enum linear_order_code)options.order,
+		.cmp_order = CMP_ORDER_REFERENCE,
+		.draft_positions = options.draft_positions
+	};
+	struct session_fit_cards cards = {
+		.model = model_operations_of(pack_header_of(pack)->model_name),
+		.pack = pack,
+		.layout_text = head_layout_text,
+		.budget_bytes_of_card = budget,
+		.card_count = options.card_count,
+		.unit_count = unit_count,
+		.card_of_unit = card_of_unit
+	};
+	context_text =
+		"--session_slots=max with the original head offload at 64K";
+	result_status refusal = STATUS_INVALID_ARGUMENT;
+	const uint32_t plain = card_of_unit != NULL ?
+				       session_fit_most(&cards, &limits,
+							SERVING_SLOTS_MOST,
+							&refusal) :
+				       0;
+	expect(plain != 0 && refusal == STATUS_OK,
+	       "sessions fit the head offload's layout");
+	cards.plan_grown = head_offload_grown;
+	const uint32_t grown = card_of_unit != NULL ?
+				       session_fit_most(&cards, &limits,
+							SERVING_SLOTS_MOST,
+							&refusal) :
+				       0;
+	struct model_limits trial = limits;
+	trial.session_capacity = grown;
+	bool opens = grown != 0 && grown <= plain && refusal == STATUS_OK &&
+		     session_fit(&cards, &trial) == STATUS_OK;
+	trial.session_capacity = grown + 1u;
+	opens = opens && (grown == SERVING_SLOTS_MOST ||
+			  session_fit(&cards, &trial) == STATUS_OUT_OF_MEMORY);
+	expect(opens,
+	       "max with the head offload is a count whose grown arenas open, one more is out of memory");
+	(void)printf("SESSIONS head offload max=%" PRIu32 " (%" PRIu32
+		     " without its growth) of %" PRIu32
+		     " tokens on production's five cards\n",
+		     grown, plain, limits.context_token_limit);
+	free(card_of_unit);
 }
 
 /* Every refusal of the options, and the command lines it takes. */
@@ -1011,6 +1227,8 @@ int main(int argument_count, char **arguments)
 	   "the pack with a draft head opens from its tables");
     if (pack != NULL) {
         test_draft_placement(pack);
+        test_session_fit(pack);
+	test_session_fit_head_offload(pack);
     }
     test_options();
     pack_close(pack);

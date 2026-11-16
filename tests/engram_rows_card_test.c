@@ -491,6 +491,10 @@ static bool table_row_read(const struct replay *replay, uint32_t table, uint64_t
 {
 	const struct engram_description *const description =
 		engram_description_of(replay->engram);
+	if (description == NULL) {
+		test_linear_fail("the replay holds no Engram description");
+		return false;
+	}
 	const struct pack_unit_record_2 *const unit = &pack_units_of(
 		replay->pack)[description->table_unit_index[table]];
 	const struct pack_extent *const extent =
@@ -521,6 +525,10 @@ static bool replay_rows_gather(struct replay *replay)
 {
 	const struct engram_description *const description =
 		engram_description_of(replay->engram);
+	if (description == NULL) {
+		test_linear_fail("the replay holds no Engram description");
+		return false;
+	}
 	uint64_t row_ids[ENGRAM_LAYER_COUNT * TABLE_ROWS];
 	int64_t captured[TABLE_ROWS];
 	uint64_t differing = 0;
@@ -577,7 +585,7 @@ static bool replay_rows_gather(struct replay *replay)
 static bool replay_open(struct replay *replay, const char *capture_folder, const char *const *copy_paths,
                         uint32_t copy_count)
 {
-	struct storage_description storage = { 0, 0, 0 };
+	struct storage_description storage = { 0 };
 	int64_t token_id = 0;
 	if (!test_linear_expect_status(test_capture_open(capture_folder,
 							 &replay->capture),
@@ -625,8 +633,13 @@ static bool replay_open(struct replay *replay, const char *capture_folder, const
 		"the reader's blocks divide a pack block and a staging page")) {
 	    return false;
     }
-    const uint32_t vocabulary_size =
-	    engram_description_of(replay->engram)->vocabulary_size;
+    const struct engram_description *const description =
+	    engram_description_of(replay->engram);
+    if (description == NULL) {
+	    test_linear_fail("the replay holds no Engram description");
+	    return false;
+    }
+    const uint32_t vocabulary_size = description->vocabulary_size;
     for (uint32_t position = 0; position < replay->position_count; position++) {
         const uint64_t dimensions[TOKENS_DIMENSIONS] = {1, replay->position_count};
 	if (!test_linear_expect_status(

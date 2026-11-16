@@ -386,8 +386,10 @@ engram_attach(struct load *load, struct test_teacher_forced_run *run)
 	const struct pack_unit_record_2 *const units =
 		pack_units_of(load->pack);
 	result_status status =
-		engram->table_count == (uint32_t)__builtin_popcountll(
-					       V41_DATA_ENGRAM_LAYERS) &&
+		engram != NULL &&
+				engram->table_count ==
+					(uint32_t)__builtin_popcountll(
+						V41_DATA_ENGRAM_LAYERS) &&
 				engram->rows_per_token ==
 					V41_DATA_ENGRAM_ROWS_PER_TOKEN &&
 				load->result.host_arena != NULL ?

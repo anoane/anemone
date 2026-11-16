@@ -42,7 +42,7 @@
 #include "anemone/pack.h"
 #include "anemone/status.h"
 
-/* generate's placement (main.c) is this many fills, each in the budgets less the state the fill before gives each
+/* generate's placement (commands.c) is this many fills, each in the budgets less the state the fill before gives each
  * card: the third for a second that is the first to leave experts in host memory, and so to need slots. */
 #define PLACEMENT_STATE_PASSES 3u
 #define PLACEMENT_MOST_TEXT_BYTES \

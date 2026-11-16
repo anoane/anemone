@@ -16,10 +16,11 @@
 #define TP2_JOIN_FLOAT32_TO_BFLOAT16 1u
 #define TP2_JOIN_BFLOAT16_COPY 2u
 #define TP2_JOIN_FLOAT32_COPY 3u
-/* BFLOAT16_TO_FLOAT32 then FLOAT32_TO_BFLOAT16 in one pass (tp4_v3_claude): the same add and round, no FP32 store */
+/* BFLOAT16_TO_FLOAT32 then FLOAT32_TO_BFLOAT16 in one pass (tp4_v3_b): the same add and round, no FP32 store */
 #define TP2_JOIN_BFLOAT16_SUM_TO_BFLOAT16 4u
-/* the copy-engine owner ring sums (tp_exchange.h): BFLOAT16_SUM_TO_BFLOAT16 into the ring's owner-major order (owner o's
- * quarter of each slab of 8 rows, slab after slab; owner after owner), and its owner-major BF16 rows back in place */
+/* the copy-engine owner ring sums (tp_exchange.h): BFLOAT16_SUM_TO_BFLOAT16 into the ring's owner-major order (owner
+ * o's quarter of each slab of 8 rows, slab after slab; owner after owner), and its owner-major BF16 rows back in
+ * place */
 #define TP2_JOIN_RING_PACK 5u
 #define TP2_JOIN_RING_UNPACK 6u
 #define TP2_JOIN_RING_OWNERS 4u

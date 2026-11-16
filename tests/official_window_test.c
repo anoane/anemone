@@ -38,9 +38,9 @@ static struct official_window_description description_of(uint32_t rows)
 						  sizeof(float) },
 			  .width = MODEL_HEAD_DIMS,
 			  .row_count = rows },
-		.rotation = { ROTATION_OFFSET, (uint64_t)rows *
-						       OFFICIAL_ROPE_WIDTH *
-						       sizeof(float) }
+		.rotation = { ROTATION_OFFSET,
+			      (uint64_t)rows * (uint64_t)OFFICIAL_ROPE_WIDTH *
+				      sizeof(float) }
 	};
 }
 

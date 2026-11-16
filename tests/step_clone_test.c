@@ -10,6 +10,7 @@
 #include "anemone/model_layout.h"
 #include "host_memory_backend.h"
 #include "step_driver.h"
+#include "byte_identity.h"
 
 #define CARDS 2u
 #define SESSIONS 2u
@@ -310,21 +311,23 @@ static void source_unchanged(const struct fixture *fixture)
 			      RING_BYTES) == 0 &&
 			       memcmp(arena + POOL_OFFSET,
 				      fixture->before[card] + POOL_OFFSET,
-				      POOL_UNITS * POOL_UNIT_BYTES) == 0 &&
+				      (size_t)(POOL_UNITS * POOL_UNIT_BYTES)) ==
+				       0 &&
 			       memcmp(arena + COMPRESSOR_OFFSET,
 				      fixture->before[card] + COMPRESSOR_OFFSET,
-				      COMPRESSOR_BYTES) == 0 &&
+				      (size_t)COMPRESSOR_BYTES) == 0 &&
 			       memcmp(arena + CHECKPOINT_OFFSET,
 				      fixture->before[card] + CHECKPOINT_OFFSET,
-				      CHECKPOINT_STRIDE) == 0,
+				      (size_t)CHECKPOINT_STRIDE) == 0,
 		       "every donor range and checkpoint remains unchanged");
 		expect(memcmp(arena + SAMPLER_OFFSET,
 			      fixture->before[card] + SAMPLER_OFFSET,
-			      SESSIONS * STEP_SESSION_BYTES) == 0 &&
+			      (size_t)(SESSIONS * STEP_SESSION_BYTES)) == 0 &&
 			       memcmp(arena + DEVICE_ROUND_OFFSET,
 				      fixture->before[card] +
 					      DEVICE_ROUND_OFFSET,
-				      SESSIONS * STEP_ROUND_BYTES) == 0,
+				      (size_t)(SESSIONS * STEP_ROUND_BYTES)) ==
+				       0,
 		       "source and destination sampler settings and device draft descriptors stay distinct");
 	}
 	for (uint32_t position = 0; position < CONTEXT_TOKENS; position++) {
@@ -342,8 +345,8 @@ static void source_unchanged(const struct fixture *fixture)
 	struct step_round expected;
 	memset(&expected, SOURCE_ROUND_PATTERN, sizeof(expected));
 	expected.session_slot = SOURCE_SLOT;
-	expect(memcmp(&fixture->driver.last_rounds.rounds[SOURCE_SLOT],
-		      &expected, sizeof(expected)) == 0 &&
+	expect(bytes_identical(&fixture->driver.last_rounds.rounds[SOURCE_SLOT],
+			       &expected, sizeof(expected)) &&
 		       (fixture->driver.last_rounds.valid_mask &
 			(1u << SOURCE_SLOT)) != 0,
 	       "donor draft descriptor is not consumed or replaced");
@@ -380,9 +383,10 @@ static void successful_clone(uint32_t tokens, bool checkpoint)
 		memcpy(expected + POOL_OFFSET + POOL_STRIDE,
 		       expected + POOL_OFFSET, pool_bytes);
 		memcpy(expected + COMPRESSOR_OFFSET + COMPRESSOR_STRIDE,
-		       expected + COMPRESSOR_OFFSET, COMPRESSOR_BYTES);
+		       expected + COMPRESSOR_OFFSET, (size_t)COMPRESSOR_BYTES);
 		if (checkpoint) {
-			memcpy(expected + CHECKPOINT_OFFSET + CHECKPOINT_STRIDE,
+			memcpy(expected + CHECKPOINT_OFFSET +
+				       (size_t)CHECKPOINT_STRIDE,
 			       expected + CHECKPOINT_OFFSET, checkpoint_bytes);
 		}
 		expect(memcmp(test_host_memory_backend_arena_of(
@@ -425,8 +429,9 @@ static void refused_clone(struct fixture *fixture, uint32_t source,
 				  checkpoint,
 				  output ? &bytes : NULL) == expected_status,
 	       "invalid or ineligible clone is refused");
-	expect(bytes == OUTPUT_SENTINEL && memcmp(before_fixture, fixture,
-						  sizeof(before_fixture)) == 0,
+	expect(bytes == OUTPUT_SENTINEL &&
+		       bytes_identical(before_fixture, fixture,
+				       sizeof(before_fixture)),
 	       "refusal leaves output, history and driver metadata untouched");
 	for (uint32_t card = 0; card < CARDS; card++) {
 		expect(fixture->launches[card] == 0 &&

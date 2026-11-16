@@ -9,6 +9,8 @@
 
 #define NOWHERE PROGRAM_NOWHERE
 #define TAG_BYTES LINEAR_OFFSET_ALIGNMENT_BYTES
+/* a program's views tile its rows twice at most: by slabs, then again by halves */
+#define VIEW_TILINGS 2u
 #define CARD_AREA_BYTES                                       \
 	(offsetof(struct program_card_record, launch_count) - \
 	 offsetof(struct program_card_record, arena_byte_count))
@@ -184,7 +186,7 @@ static uint32_t hand_offs_before(const struct execution_program *program,
 }
 
 /* True where the thin first program's segments from `from` up to its draft tail are its head's, at least one, none
- * of a layer: one segment, or one a card of a head cut over several cards (tp4_v3_claude). */
+ * of a layer: one segment, or one a card of a head cut over several cards (tp4_v3_b). */
 static bool head_segments_only(const struct execution_program *first,
 			       uint32_t from)
 {
@@ -243,7 +245,7 @@ static const char *views_problem(const struct execution_program *program)
 				own->block_offset == block &&
 				own->first_row == first_row &&
 				own->first_row < program->row_count &&
-				tiling < 2u &&
+				tiling < VIEW_TILINGS &&
 				(tiling == 0 ||
 				 program->kind != PROGRAM_BATCH) &&
 				own->row_limit - 1u <

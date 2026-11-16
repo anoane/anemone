@@ -1234,7 +1234,7 @@ static bool replay_runs(struct test_linear_card *card, const struct layout *layo
 
 static bool replay_open(char **paths, uint32_t path_count, struct replay_sources *sources)
 {
-	struct storage_description description = { 0, 0, 0 };
+	struct storage_description description = { 0 };
 	result_status status = test_capture_open(paths[0], &sources->capture);
 	status = status == STATUS_OK ?
 			 storage_direct.reader_open(

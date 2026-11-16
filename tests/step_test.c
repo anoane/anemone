@@ -431,8 +431,9 @@ static void test_row_refusals(void)
 	expect_status(step_run_entry(driver, &first, 1, NULL),
 		      STATUS_INVALID_ARGUMENT, "no results");
 	const struct step_session sessions[] = {
-		{ 0, -1.0f, 1.0f }, { 0, NAN, 1.0f }, { 0, INFINITY, 1.0f },
-		{ 0, 0.0f, 0.0f },  { 0, 0.0f, NAN }, { 0, 0.0f, -1.0f }
+		{ { 0, 0 }, -1.0f, 1.0f, 0 },	 { { 0, 0 }, NAN, 1.0f, 0 },
+		{ { 0, 0 }, INFINITY, 1.0f, 0 }, { { 0, 0 }, 0.0f, 0.0f, 0 },
+		{ { 0, 0 }, 0.0f, NAN, 0 },	 { { 0, 0 }, 0.0f, -1.0f, 0 }
 	};
 	for (uint32_t index = 0; index < sizeof(sessions) / sizeof(sessions[0]);
 	     index++) {
@@ -488,7 +489,8 @@ static void failing_step(struct step_driver *driver, result_status expected,
 {
 	struct step_row_result results[ROW_CAPACITY];
 	const struct step_row_record row = { 0, 1, 0, flags };
-	const struct step_session settings = { 0, 0.0f, 1.0f };
+	const struct step_session settings =
+		step_session_make(0, 0.0f, 1.0f, 0);
 	const uint32_t staging_before =
 		test_host_memory_backend_staging_block_count();
 	context_text = what;
@@ -952,10 +954,10 @@ static void test_front_steps(void)
 		"a driver on the backend itself: the pipeline's workers copy at once");
 	expect_status(step_pipeline_start(driver, FRONT_DEPTH), STATUS_OK,
 		      "a pipeline starts");
-	const struct step_session later = { .seed = LATER_SEED,
+	const struct step_session later = { .seed = { (uint32_t)LATER_SEED, 0 },
 					    .temperature = LATER_TEMPERATURE,
 					    .top_p = LATER_TOP_P };
-	const struct step_session first_settings = { .seed = 0,
+	const struct step_session first_settings = { .seed = { 0 },
 						     .temperature = 0.0f,
 						     .top_p = 1.0f };
 	expect_status(step_session_set(driver, 0, &later), STATUS_OK,

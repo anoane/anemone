@@ -3,7 +3,8 @@
  * exl3_rotation_card_test.c: --exl3_expert_rotation's mixed-width tensor-core MoE forms (exl3_tc_records.h) against
  * the base forms, bit for bit, on one card. Rotation 2: the even experts are 512 columns wide, the odd ones 640. The
  * even rows pick six even (narrow) experts, the odd rows six odd (wide) ones. The mixed call (intermediate 640,
- * rotation 2; then rotation 3, the three-way form, the experts e % 3 == 0 narrow) takes every row; two base calls (i512 with the narrow rows routed, i640 with the wide rows; the other
+ * rotation 2; then rotation 3, the three-way form, the experts e % 3 == 0 narrow) takes every row; two base calls
+ * (i512 with the narrow rows routed, i640 with the wide rows; the other
  * rows unrouted) give each row's reference: a row never depends on another, so every row of the mixed call must equal
  * its base call's bit for bit. Decode form (exl3_tc, from job tables): rows 8 (6 live), 48 and 64; prefill form
  * (exl3_tcp, from the router's picks): rows 65 and 1,024 (gate and up in one launch), 1,500 and 2,048 (gate, then up);
@@ -24,6 +25,7 @@
 #include "anemone/model_layout.h"
 #include "anemone/router_records.h"
 #include "linear_card_fixture.h"
+#include "byte_identity.h"
 
 #define HIDDEN EXL3_TC_HIDDEN
 #define EXPERTS EXL3_TCP_EXPERTS
@@ -55,6 +57,11 @@
 #define DRAW_STRIDE 1000u
 #define CALLS 3u /* mixed, narrow base, wide base */
 #define NO_EXPERT EXPERTS
+#define SIGN_SHIFT 16 /* the hash bit that signs a scale */
+#define DOWN_MATRIX \
+	2u /* an expert's down matrix, after gate and up: its place and its stream */
+#define BITS_X2_SCALE 2u /* bits_x2 counts half bits */
+#define FIRST_STREAM 23u
 
 enum test_form { FORM_DECODE, FORM_PREFILL };
 struct test_case {
@@ -73,7 +80,8 @@ static uint64_t matrix_bytes(uint64_t input, uint64_t output, uint32_t bits)
 }
 static uint64_t expert_bytes(uint32_t width, uint32_t bits)
 {
-	return 2u * matrix_bytes(HIDDEN, width, bits) + matrix_bytes(width, HIDDEN, bits);
+	return DOWN_MATRIX * matrix_bytes(HIDDEN, width, bits) +
+	       matrix_bytes(width, HIDDEN, bits);
 }
 
 /* random trellis words; suh and svh FP16 of magnitude 1 to 2 and either sign */
@@ -87,7 +95,9 @@ static void matrix_fill(unsigned char *stored, uint64_t input, uint64_t output, 
 	for (uint64_t value = 0; value < input + output; value++) {
 		const uint64_t hash = test_linear_hash(stream ^ SCALE_STREAM, value);
 		const uint16_t half =
-			(uint16_t)(HALF_ONE | (hash & HALF_MANTISSA_MASK) | ((hash >> 16) & 1u ? HALF_SIGN : 0u));
+			(uint16_t)(HALF_ONE | (hash & HALF_MANTISSA_MASK) |
+				   ((hash >> SIGN_SHIFT) & 1u ? HALF_SIGN :
+								0u));
 		memcpy(stored + trellis + HALF_BYTES * value, &half, HALF_BYTES);
 	}
 }
@@ -106,7 +116,7 @@ static void picks_fill(struct router_pick *picks, uint32_t rows, uint32_t live,
 		uint32_t count = 0;
 		for (uint64_t draw = 0; row < live && count < PAIRS; draw++) {
 			const uint32_t expert =
-				(uint32_t)(test_linear_hash(stream, row * DRAW_STRIDE + draw) % EXPERTS);
+				(uint32_t)(test_linear_hash(stream, (uint64_t)(row * DRAW_STRIDE) + draw) % EXPERTS);
 			if (class_of(rotation, expert) != row % CLASSES)
 				continue;
 			bool taken = false;
@@ -150,7 +160,7 @@ static uint32_t jobs_fill(struct expert_job_record *jobs, uint32_t capacity,
 			struct expert_job_record *const at = &jobs[job];
 			at->gate_offset = offsets[expert][0];
 			at->up_offset = offsets[expert][1];
-			at->down_offset = offsets[expert][2];
+			at->down_offset = offsets[expert][DOWN_MATRIX];
 			at->expert = expert;
 			at->pair_index[at->row_count] = pair;
 			at->route_weight[at->row_count] = picks[pair].route_weight;
@@ -181,15 +191,17 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 				return test_linear_expect(false, "room for the experts");
 			sets[width][set] = range.byte_offset;
 			const uint64_t base = stream * STREAM_STRIDE +
-					      (width * DISTINCT + set) *
-						      MODEL_EXPERT_MATRICES;
+					      (uint64_t)((width * DISTINCT + set) *
+						      MODEL_EXPERT_MATRICES);
 			const uint64_t gate_up = matrix_bytes(HIDDEN, columns, test->bits);
 			matrix_fill(stored, HIDDEN, columns, test->bits, base);
 			matrix_fill(stored + gate_up, HIDDEN, columns, test->bits, base + 1u);
-			matrix_fill(stored + 2u * gate_up, columns, HIDDEN, test->bits, base + 2u);
+			matrix_fill(stored + DOWN_MATRIX * gate_up, columns,
+				    HIDDEN, test->bits, base + DOWN_MATRIX);
 		}
 	}
-	/* the calls' expert tables: [expert][gate, up, down]; the mixed one each expert at its width, the base ones every
+	/* the calls' expert tables: [expert][gate, up, down]; the mixed one each expert at its width, the base ones
+	 * every
 	 * expert at the call's width (the other class is never routed there) */
 	static uint64_t offsets[CALLS][EXPERTS][MODEL_EXPERT_MATRICES];
 	for (uint32_t call = 0; call < CALLS; call++)
@@ -199,7 +211,8 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 			const uint64_t at = sets[width][expert % DISTINCT];
 			offsets[call][expert][0] = at;
 			offsets[call][expert][1] = at + gate_up;
-			offsets[call][expert][2] = at + 2u * gate_up;
+			offsets[call][expert][DOWN_MATRIX] =
+				at + DOWN_MATRIX * gate_up;
 		}
 	const uint32_t pairs = test->rows * PAIRS;
 	struct router_pick *const picks =
@@ -208,20 +221,27 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 		malloc(sizeof(*tables) * pairs * CALLS);
 	uint16_t *const rows = malloc((size_t)test->rows * HIDDEN * HALF_BYTES);
 	float *const outputs = malloc((size_t)test->rows * HIDDEN * FLOAT_BYTES * CALLS);
-	bool passed =
-		test_linear_expect(picks != NULL && tables != NULL && rows != NULL && outputs != NULL, "host memory");
-	if (passed) {
-		picks_fill(picks, test->rows, test->live, rotation, stream);
-		for (uint32_t call = 1; call < CALLS; call++) /* base call c routes the rows of class c - 1 */
-			for (uint32_t pair = 0; pair < pairs; pair++) {
-				picks[call * pairs + pair] = picks[pair];
-				if (pair / PAIRS % CLASSES != call - 1u)
-					picks[call * pairs + pair].expert = NO_EXPERT;
-			}
-		for (uint32_t row = 0; row < test->rows; row++)
-			test_linear_values(rows + (size_t)row * HIDDEN, HIDDEN, stream * ROW_STREAM_STRIDE + row,
-					   TEST_LINEAR_VALUES_PLAIN);
+	if (picks == NULL || tables == NULL || rows == NULL ||
+	    outputs == NULL) {
+		free(picks);
+		free(tables);
+		free(rows);
+		free(outputs);
+		return test_linear_expect(false, "host memory");
 	}
+	bool passed = true;
+	picks_fill(picks, test->rows, test->live, rotation, stream);
+	/* base call c routes the rows of class c - 1 */
+	for (uint32_t call = 1; call < CALLS; call++)
+		for (uint32_t pair = 0; pair < pairs; pair++) {
+			picks[call * pairs + pair] = picks[pair];
+			if (pair / PAIRS % CLASSES != call - 1u)
+				picks[call * pairs + pair].expert = NO_EXPERT;
+		}
+	for (uint32_t row = 0; row < test->rows; row++)
+		test_linear_values(rows + (size_t)row * HIDDEN, HIDDEN,
+				   stream * ROW_STREAM_STRIDE + row,
+				   TEST_LINEAR_VALUES_PLAIN);
 	struct linear_range table_ranges[CALLS], pick_ranges[CALLS],
 		output_ranges[CALLS];
 	for (uint32_t call = 0; call < CALLS; call++) {
@@ -244,11 +264,13 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 		 test_linear_card_put(card, offset_range, 0, offsets, sizeof(offsets));
 	for (uint32_t call = 0; call < CALLS && passed; call++) {
 		const uint32_t job_count =
-			jobs_fill(tables + call * pairs, pairs, picks + call * pairs, test->rows, offsets[call]);
+			jobs_fill(tables + (size_t)(call * pairs), pairs, picks + (size_t)(call * pairs), test->rows,
+				  offsets[call]);
 		passed = test_linear_expect(job_count < pairs || call != 0, "the table holds the jobs") &&
-			 test_linear_card_put(card, table_ranges[call], 0, tables + call * pairs,
+			 test_linear_card_put(card, table_ranges[call], 0, tables + (size_t)(call * pairs),
 					      sizeof(*tables) * pairs) &&
-			 test_linear_card_put(card, pick_ranges[call], 0, picks + call * pairs, sizeof(*picks) * pairs);
+			 test_linear_card_put(card, pick_ranges[call], 0, picks + (size_t)(call * pairs),
+					      sizeof(*picks) * pairs);
 	}
 	passed = passed && test_linear_card_load(card);
 	for (uint32_t call = 0; call < CALLS && passed; call++) {
@@ -266,7 +288,7 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 				.row_count = test->rows,
 				.job_capacity = pairs,
 				.intermediate = intermediate,
-				.bits_x2 = 2u * test->bits,
+				.bits_x2 = BITS_X2_SCALE * test->bits,
 				.activation_limit = ACTIVATION_LIMIT,
 				.rotation = record_rotation
 			};
@@ -288,7 +310,7 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 					output_ranges[call].byte_offset,
 				.row_count = test->rows,
 				.intermediate = intermediate,
-				.bits_x2 = 2u * test->bits,
+				.bits_x2 = BITS_X2_SCALE * test->bits,
 				.activation_limit = ACTIVATION_LIMIT,
 				.rotation = record_rotation
 			};
@@ -311,7 +333,7 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 		for (uint32_t row = 0; row < test->rows; row++) {
 			const float *const mixed = outputs + (size_t)row * HIDDEN;
 			const float *const base = outputs + ((size_t)(1u + row % CLASSES) * test->rows + row) * HIDDEN;
-			if (memcmp(mixed, base, HIDDEN * FLOAT_BYTES) != 0) {
+			if (!bytes_identical(mixed, base, (size_t)(HIDDEN * FLOAT_BYTES))) {
 				differing_rows++;
 				first_differing = first_differing == UINT32_MAX ? row : first_differing;
 			}
@@ -336,7 +358,8 @@ int main(void)
 	static const uint32_t rotations[] = { ROTATION, THREE_WAY_ROTATION };
 	for (uint32_t form = 0; form < sizeof(rotations) / sizeof(rotations[0]); form++)
 		for (uint32_t index = 0; index < sizeof(cases) / sizeof(cases[0]); index++)
-			(void)case_run(&card, &cases[index], rotations[form], 23u + index);
+			(void)case_run(&card, &cases[index], rotations[form],
+				       FIRST_STREAM + index);
 	test_linear_card_close(&card);
 	(void)printf("exl3_rotation_card_test: %d failures\n", test_linear_failures());
 	return test_linear_failures() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

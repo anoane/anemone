@@ -26,10 +26,12 @@ static const struct official_hc_kernels official = { DOT_HANDLE, SPLIT_HANDLE };
 static struct dense_linear_description description_of(uint32_t rows)
 {
 	return (struct dense_linear_description){
-		.weights = { WEIGHTS_OFFSET, (uint64_t)MODEL_MIXES *
-						     OFFICIAL_HC_INPUTS *
-						     sizeof(float) },
-		.rows = { ROWS_OFFSET, (uint64_t)rows * OFFICIAL_HC_INPUTS *
+		.weights = { WEIGHTS_OFFSET,
+			     (uint64_t)MODEL_MIXES *
+				     (uint64_t)OFFICIAL_HC_INPUTS *
+				     sizeof(float) },
+		.rows = { ROWS_OFFSET, (uint64_t)rows *
+					       (uint64_t)OFFICIAL_HC_INPUTS *
 					       sizeof(uint16_t) },
 		.output = { OUTPUT_OFFSET,
 			    (uint64_t)rows * MODEL_MIXES * sizeof(float) },

@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include "anemone/storage_exl3.h"
 #include "anemone/pack.h"
+#include "anemone/hooks.h"
 
 #define MAP_MAGIC_BYTES 8u
 #define MAP_RESERVED_BYTES 40u
@@ -17,6 +18,8 @@
 #define BLOCK EXL3_MAP_BLOCK_BYTES
 #define INPUT_PATTERN 0x5Au
 #define FILE_MODE 0600
+#define COPIES 2 /* the manifest and the flat copy */
+#define IMAGES 2u /* the buffer holds two: the read image and the copied one */
 
 struct test_header {
 	unsigned char magic[MAP_MAGIC_BYTES];
@@ -54,23 +57,24 @@ static bool flat_copy_reads(const char *manifest_path, unsigned char *buffer)
 	storage_exl3.reader_close(reader);
 	reader = NULL;
 	passed = passed &&
-		 storage_exl3.reader_open(copy_paths, 2, &reader) ==
+		 storage_exl3.reader_open(copy_paths, COPIES, &reader) ==
 			 STATUS_OK &&
 		 storage_exl3.reader_describe(reader, &description) ==
 			 STATUS_OK &&
-		 description.copy_count == 2;
+		 description.copy_count == COPIES;
 	for (uint32_t block = 0; passed && block < VIRTUAL_BLOCKS; block++) {
 		unsigned char *const copied = buffer + VIRTUAL_BLOCKS * BLOCK;
-		passed = storage_exl3.reader_read(reader, 0, block * BLOCK,
-						  buffer, BLOCK) == STATUS_OK &&
-			 storage_exl3.reader_read(reader, 1, block * BLOCK,
-						  copied, BLOCK) == STATUS_OK &&
+		const uint32_t offset = block * BLOCK;
+		passed = storage_exl3.reader_read(reader, 0, offset, buffer,
+						  BLOCK) == STATUS_OK &&
+			 storage_exl3.reader_read(reader, 1, offset, copied,
+						  BLOCK) == STATUS_OK &&
 			 memcmp(buffer, copied, BLOCK) == 0;
 	}
 	storage_exl3.reader_close(reader);
 	reader = NULL;
 	passed = passed && ftruncate(flat, BLOCK) == 0 &&
-		 storage_exl3.reader_open(copy_paths, 2, &reader) ==
+		 storage_exl3.reader_open(copy_paths, COPIES, &reader) ==
 			 STATUS_CORRUPT_PACK &&
 		 reader == NULL;
 	if (flat >= 0) {
@@ -103,6 +107,27 @@ static bool read_modes_agree(const char *manifest_path, unsigned char *buffer)
 	return passed;
 }
 
+#if CHECKING_HOOKS_ENABLED
+/* The direct descriptor reads the file the checked one does: a direct open that meets another file (the fault point
+ * opens the map in the source's place) is dropped, and the checked descriptor serves the source's bytes. */
+static bool other_direct_file_reads(const char *map_path, void *buffer)
+{
+	storage_exl3_read_mode(EXL3_READS_DIRECT);
+	const char *paths[] = { map_path };
+	struct storage_reader *reader = NULL;
+	bool passed = fault_arm("exl3_direct_other_file", 1) &&
+		      storage_exl3.reader_open(paths, 1, &reader) == STATUS_OK;
+	passed = fault_disarm() == 1 && passed &&
+		 storage_exl3.reader_read(reader, 0, BLOCK, buffer, BLOCK) ==
+			 STATUS_OK;
+	const unsigned char *const bytes = buffer;
+	for (uint32_t byte = 0; passed && byte < BLOCK; byte++)
+		passed = bytes[byte] == INPUT_PATTERN;
+	storage_exl3.reader_close(reader);
+	return passed;
+}
+#endif
+
 int main(int argument_count, char **arguments)
 {
 	if (storage_for_path("weights.exl3map") != &storage_exl3 ||
@@ -134,7 +159,7 @@ int main(int argument_count, char **arguments)
 	void *buffer = NULL;
 	bool passed = manifest >= 0 && source >= 0 &&
 		      posix_memalign(&buffer, BLOCK,
-				     2u * VIRTUAL_BLOCKS * BLOCK) == 0;
+				     IMAGES * VIRTUAL_BLOCKS * BLOCK) == 0;
 	struct test_header header = { { 'A', 'N', 'E', 'X', 'L', '3', 0, 0 },
 				      VIRTUAL_BLOCKS * BLOCK,
 				      SOURCES,
@@ -197,6 +222,10 @@ int main(int argument_count, char **arguments)
 			 passed;
 		passed = flat_copy_reads(manifest_path, buffer) && passed;
 		passed = read_modes_agree(manifest_path, buffer) && passed;
+#if CHECKING_HOOKS_ENABLED
+		passed = other_direct_file_reads(manifest_path, buffer) &&
+			 passed;
+#endif
 		header.reserved[0] = 1;
 		passed = written(manifest, &header, sizeof(header), 0) &&
 			 storage_exl3.reader_open(copy_paths, 1, &untouched) ==

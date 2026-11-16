@@ -15,7 +15,7 @@
 #define SENTINEL 0xBA5Eull
 #define K2 2u
 #define K3 3u
-#define BAD_BITS 4u
+#define BAD_BITS 5u
 #define CODEBOOK_STATES 65536u
 #define SCALE_BITS 0x1EEEu
 #define BIAS_BITS 0xC931u
@@ -56,7 +56,7 @@ int main(void)
 	shape.bits_per_weight = BAD_BITS;
 	count = SENTINEL;
 	passed = expect(format->stored_byte_count(&shape, &count) ==
-					STATUS_INVALID_ARGUMENT &&
+					STATUS_UNSUPPORTED &&
 				count == SENTINEL,
 			"unsupported bitrate preserves output") &&
 		 passed;

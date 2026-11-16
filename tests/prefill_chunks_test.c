@@ -15,13 +15,13 @@
 #define MOST_PROGRAMS 32u
 #define MOST_TAIL_STEPS 16u
 #define TAIL_FROM (GRANULE * 2u)
-#define REQUIRE(condition)                                                 \
-	do {                                                               \
-		if (!(condition)) {                                        \
-			fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, \
-				#condition);                               \
-			exit(1);                                           \
-		}                                                          \
+#define REQUIRE(condition)                                             \
+	do {                                                           \
+		if (!(condition)) {                                    \
+			(void)fprintf(stderr, "%s:%d: %s\n", __FILE__, \
+				      __LINE__, #condition);           \
+			exit(1);                                       \
+		}                                                      \
 	} while (0)
 
 struct tail_plan {

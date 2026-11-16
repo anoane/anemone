@@ -520,8 +520,8 @@ MUST_CHECK result_status cuda_graph_capture(
 						 LAUNCH_CHAIN :
 						 launches[launch_index - 1u]
 							 .branch;
-			/* the side run begins behind the fork, SIDE_MORE runs too; RESUME takes the fork; JOIN the previous and
-             * every side run (a run's first launch forks at the graph's root: behind none) */
+			/* the side run begins behind the fork, SIDE_MORE runs too; RESUME takes the fork; JOIN the
+             * previous and every side run (a run's first launch forks at the graph's root: behind none) */
 			const bool after_side = before == LAUNCH_SIDE ||
 						before == LAUNCH_SIDE_MORE;
 			if (branch == LAUNCH_SIDE && !after_side) {

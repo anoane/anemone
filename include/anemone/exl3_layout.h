@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-/* Load-time EXL3 mul1 K2/K3 slices. Uses the engine's existing storage ABI. */
+/* Load-time EXL3 mul1 slices (EXL3_SUPPORTED_BITS_X2). Uses the engine's existing storage ABI. */
 #ifndef BB_EXL3_LAYOUT_H
 #define BB_EXL3_LAYOUT_H
 
@@ -32,7 +32,7 @@ struct bb_exl3_slice_sizes {
 };
 
 /* Validate before allocation. Refusal leaves sizes_out unchanged. Input shapes
- * must be positive, transform-aligned K2/K3. Both origins/counts must fit their
+ * must be positive, transform-aligned, a supported width. Both origins/counts must fit their
  * full dimensions; zero counts and nonzero reserved fields are refused. */
 MUST_CHECK result_status
 bb_exl3_matrix_slice_prepare(const struct bb_exl3_matrix_slice *slice,

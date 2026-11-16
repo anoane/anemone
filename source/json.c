@@ -2,7 +2,7 @@
 /*
  * json.c: JSON as Python's json module reads and writes it. Contract: json.h.
  *
- * The check is a recursive descent bounded by its depth; the readings of checked JSON find the end of a value by
+ * The check uses a fixed stack bounded by its depth; the readings of checked JSON find the end of a value by
  * what follows it inside its array or object (a scalar ends before ",]}" or a space), so they need no bound but
  * their container's. The canonical writer and the search for a key twice go forward once through the text: in
  * checked JSON a string is a key when ':' follows it. A float is written as Python's repr: the closest decimal of
@@ -54,7 +54,8 @@ void json_write_bytes(struct json_writer *writer, const void *bytes,
     if (count > 0 && writer->length <= writer->capacity && count <= writer->capacity - writer->length) {
         memcpy(writer->bytes + writer->length, bytes, count);
     }
-    writer->length += count;
+    writer->length = count > SIZE_MAX - writer->length ? SIZE_MAX :
+							 writer->length + count;
 }
 
 static void write_code_point(struct json_writer *writer, uint32_t code_point)
@@ -179,64 +180,108 @@ static size_t valid_number_end(const char *text, size_t position, size_t end)
 		   number_end;
 }
 
-/* The end of the JSON value at text[position], as json.loads reads one, or 0 when there is none. */
-static size_t valid_value_end(const char *text, size_t position, size_t end, unsigned depth,
-                              struct document_check *check)
+/* The first value after an object key and colon, or zero for malformed input. */
+static size_t member_value_begin(const char *text, size_t position, size_t end,
+				 struct document_check *check)
 {
-    static const char *const words[] = {"true", "false", "null", "NaN", "Infinity", "-Infinity"};
-    if (position >= end) {
-        return 0;
-    }
-    if (text[position] == '"') {
-        return valid_string_end(text, position, end, check);
-    }
-    check->is_too_deep = check->is_too_deep ||
-			 ((text[position] == '[' || text[position] == '{') &&
-			  depth == JSON_MAXIMUM_DEPTH);
-    if ((text[position] == '[' || text[position] == '{') &&
-	depth < JSON_MAXIMUM_DEPTH) {
-	    const bool is_object = text[position] == '{';
-	    const char closing = is_object ? '}' : ']';
-	    position = skip_space(text, position + 1, end);
-	    if (position < end && text[position] == closing) {
-		    return position + 1;
-	    }
-	    for (;;) {
-		    if (is_object) {
-			    position = position < end && text[position] == '"' ?
-					       valid_string_end(text, position,
-								end, check) :
-					       0;
-			    position = position == 0 ?
-					       0 :
-					       skip_space(text, position, end);
-			    if (position == 0 || position >= end ||
-				text[position] != ':') {
-				    return 0;
-			    }
-			    position = skip_space(text, position + 1, end);
-		    }
-		    position = valid_value_end(text, position, end, depth + 1,
-					       check);
-		    position = position == 0 ? 0 :
-					       skip_space(text, position, end);
-		    if (position == 0 || position >= end ||
-			(text[position] != ',' && text[position] != closing)) {
-			    return 0;
-		    }
-		    if (text[position] == closing) {
-			    return position + 1;
-		    }
-		    position = skip_space(text, position + 1, end);
-	    }
-    }
-    for (size_t index = 0; index < sizeof(words) / sizeof(words[0]); index++) {
-        const size_t length = strlen(words[index]);
-        if (end - position >= length && memcmp(text + position, words[index], length) == 0) {
-            return position + length;
-        }
-    }
-    return valid_number_end(text, position, end);
+	position = position < end && text[position] == '"' ?
+			   valid_string_end(text, position, end, check) :
+			   0;
+	position = position == 0 ? 0 : skip_space(text, position, end);
+	if (position == 0 || position >= end || text[position] != ':') {
+		return 0;
+	}
+	return skip_space(text, position + 1u, end);
+}
+
+/* End of one value, using at most JSON_MAXIMUM_DEPTH bytes of container state. */
+static size_t valid_value_end(const char *text, size_t position, size_t end,
+			      struct document_check *check)
+{
+	static const char *const words[] = { "true", "false",	 "null",
+					     "NaN",  "Infinity", "-Infinity" };
+	char closing[JSON_MAXIMUM_DEPTH];
+	unsigned depth = 0;
+	for (;;) {
+		if (position >= end) {
+			return 0;
+		}
+		const char byte = text[position];
+		if (byte == '[' || byte == '{') {
+			if (depth == JSON_MAXIMUM_DEPTH) {
+				check->is_too_deep = true;
+				return 0;
+			}
+			closing[depth] = byte == '{' ? '}' : ']';
+			depth++;
+			position = skip_space(text, position + 1u, end);
+			if (position < end &&
+			    text[position] == closing[depth - 1u]) {
+				depth--;
+				position++;
+			} else {
+				if (byte == '{') {
+					position = member_value_begin(
+						text, position, end, check);
+					if (position == 0) {
+						return 0;
+					}
+				}
+				continue;
+			}
+		} else if (byte == '"') {
+			position = valid_string_end(text, position, end, check);
+			if (position == 0) {
+				return 0;
+			}
+		} else {
+			size_t value_end = 0;
+			for (size_t index = 0;
+			     index < sizeof(words) / sizeof(words[0]);
+			     index++) {
+				const size_t length = strlen(words[index]);
+				if (end - position >= length &&
+				    memcmp(text + position, words[index],
+					   length) == 0) {
+					value_end = position + length;
+					break;
+				}
+			}
+			position =
+				value_end != 0 ?
+					value_end :
+					valid_number_end(text, position, end);
+			if (position == 0) {
+				return 0;
+			}
+		}
+		while (depth != 0) {
+			position = skip_space(text, position, end);
+			if (position >= end) {
+				return 0;
+			}
+			if (text[position] == closing[depth - 1u]) {
+				depth--;
+				position++;
+				continue;
+			}
+			if (text[position] != ',') {
+				return 0;
+			}
+			position = skip_space(text, position + 1u, end);
+			if (closing[depth - 1u] == '}') {
+				position = member_value_begin(text, position,
+							      end, check);
+				if (position == 0) {
+					return 0;
+				}
+			}
+			break;
+		}
+		if (depth == 0) {
+			return position;
+		}
+	}
 }
 
 enum json_document json_read_document(const char *text, size_t length,
@@ -244,7 +289,7 @@ enum json_document json_read_document(const char *text, size_t length,
 {
     struct document_check check = {false, false};
     const size_t begin = skip_space(text, 0, length);
-    size_t end = valid_value_end(text, begin, length, 0, &check);
+    size_t end = valid_value_end(text, begin, length, &check);
     end = end != 0 && skip_space(text, end, length) == length ? end : 0;
     *value_out = (struct json_value){text, begin, end};
     return check.is_too_deep ? JSON_DOCUMENT_BEYOND_THIS_READER : end == 0 ? JSON_DOCUMENT_NOT_JSON
@@ -465,7 +510,8 @@ void json_write_string(struct json_writer *writer, struct json_bytes bytes)
 			 short_escape != NULL ? SHORT_ESCAPE_BYTES :
 						UNICODE_ESCAPE_BYTES);
     }
-    json_write_bytes(writer, bytes.data + run_begin, bytes.count - run_begin);
+    if (run_begin < bytes.count) /* a string of no bytes may have no data: no pointer is formed from it */
+	json_write_bytes(writer, bytes.data + run_begin, bytes.count - run_begin);
     json_write_bytes(writer, "\"", 1);
 }
 
@@ -564,4 +610,23 @@ void json_write_canonical(struct json_writer *writer,
         position = next;
         scratch->used = mark;
     }
+}
+
+/* Quoted/escaped bytes are payload; every unquoted byte belongs to a JSON token. */
+bool json_has_unquoted(struct json_value value, const char *searched)
+{
+	bool quoted = false;
+	for (size_t position = value.begin;
+	     value.text != NULL && position < value.end; position++) {
+		const char byte = value.text[position];
+		if (quoted && byte == '\\') {
+			position++;
+		} else if (byte == '"') {
+			quoted = !quoted;
+		} else if (!quoted && byte != '\0' &&
+			   strchr(searched, byte) != NULL) {
+			return true;
+		}
+	}
+	return false;
 }

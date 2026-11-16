@@ -111,6 +111,9 @@
 #define FILLER_NAME_CAPACITY 32u
 #define ORDER_BEYOND 2u
 #define ARITHMETIC_CLASS_PAIR 2u
+#define CASE_HEAD_BLOCKS 2u /* the heads of two blocks: a grid of two in y */
+#define HALF_BLOCK 2u /* at most half a block's heads */
+#define NOT_A_FLAG 2 /* output_compact is 0 or 1 */
 
 enum launch_dimension { DIMENSION_X, DIMENSION_Y, DIMENSION_Z };
 
@@ -140,7 +143,10 @@ static void capture_begin(void)
 static void capture_end(char *text, size_t text_capacity)
 {
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, text_capacity - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    text_capacity) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';
@@ -547,7 +553,7 @@ static void test_most_heads(void)
 	struct attention_core_description description = model_description();
 	context_text = "the most heads a block";
 	description.order = LINEAR_ORDER_REFERENCE;
-	description.head_count = 2u * ATTENTION_CORE_HEADS_PER_BLOCK;
+	description.head_count = CASE_HEAD_BLOCKS * ATTENTION_CORE_HEADS_PER_BLOCK;
 	expect(launches_of(&description, launches) ==
 			       ATTENTION_CORE_MOST_LAUNCHES &&
 		       launches[0].grid[DIMENSION_Y] == 1u &&
@@ -557,8 +563,8 @@ static void test_most_heads(void)
 	struct attention_core_arguments_record scores_record, values_record;
 	expect(launches_of(&description, launches) ==
 			       ATTENTION_CORE_MOST_LAUNCHES &&
-		       launches[0].grid[DIMENSION_Y] == 2u &&
-		       launches[1].grid[DIMENSION_Y] == 2u &&
+		       launches[0].grid[DIMENSION_Y] == CASE_HEAD_BLOCKS &&
+		       launches[1].grid[DIMENSION_Y] == CASE_HEAD_BLOCKS &&
 		       launches[0].dynamic_shared_byte_count ==
 			       ATTENTION_CORE_SCORES_SHARED_BYTES(1u) &&
 		       launches[1].dynamic_shared_byte_count ==
@@ -571,7 +577,7 @@ static void test_most_heads(void)
 		       values_record.heads_per_block ==
 			       ATTENTION_CORE_HEADS_PER_BLOCK,
 	       "at most 8: each record names 8 heads a block");
-	description.most_heads_per_block = ATTENTION_CORE_HEADS_PER_BLOCK / 2u;
+	description.most_heads_per_block = ATTENTION_CORE_HEADS_PER_BLOCK / HALF_BLOCK;
 	struct kernel_launch untouched;
 	memset(&untouched, UNTOUCHED_BYTE, sizeof(untouched));
 	expect(launches_of(&description, launches) == 0u &&
@@ -721,7 +727,7 @@ static void test_model_launches(void)
     description.output.byte_count -= 1u;
     expect_refused(&description, ARENA_BYTES, &made_up_kernels, "the output", "compact rows one byte short refused");
     description.output.byte_count += 1u;
-    description.output_compact = 2;
+    description.output_compact = NOT_A_FLAG;
     expect_refused(&description, ARENA_BYTES, &made_up_kernels, "output_compact 2: 0 or 1", "output_compact 2 refused");
     description = model_description();
     description.pool_ratio = 0;
@@ -1136,7 +1142,8 @@ static void test_kernels_prepare(void)
 			       every_kernel_asked(&kernels, file_name) &&
 			       kernels.attention_core_block ==
 				       BACKEND_NO_KERNEL,
-		       "every kernel is asked of a card of each class by its file (120 native: the native build), name and the "
+		       "every kernel is asked of a card of each class by its file (120 native: the native build), "
+		       "name and the "
 		       "size of its record");
 		test_host_memory_backend.card_close(card, 0);
 	}

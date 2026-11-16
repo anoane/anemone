@@ -164,7 +164,8 @@ static void test_rectangles(enum weight_format_code format)
 							struct test_weight_format_weight
 								original,
 								shard;
-							const result_status original_status = test_weight_format_read_weight(
+							const result_status original_status =
+								test_weight_format_read_weight(
 								format,
 								&description
 									 .source_shape,
@@ -427,7 +428,7 @@ static void test_refusals(void)
 #define EXL3_TEST_BITS_PER_BYTE 8u
 #define EXL3_TEST_MIN_BITS 2u
 #define EXL3_TEST_MAX_BITS 3u
-#define EXL3_TEST_BAD_BITS 4u
+#define EXL3_TEST_BAD_BITS 9u /* no EXL3 width */
 #define EXL3_TEST_GUARD_BYTES 32u
 #define EXL3_TEST_STORED_BYTES 75520u
 #define EXL3_TEST_BUFFER_BYTES \
@@ -793,13 +794,19 @@ static void test_exl3_refusals(void)
 	       "EXL3 raw transport preserves nonfinite scale bits without selecting them for a model");
 }
 
+/* the plain source's bytes index * PLAIN_PATTERN_STRIDE + PLAIN_PATTERN_OFFSET, the destination's poison, and the
+ * first input of a range that cuts the inputs */
+#define PLAIN_PATTERN_STRIDE 7u
+#define PLAIN_PATTERN_OFFSET 3u
+#define PLAIN_POISON 0xA5
+#define PLAIN_CUT_INPUT 2
 /* Plain 16-bit matrices: every row range of a small matrix is its source bytes; inputs are never cut. */
 static void test_plain_rows(void)
 {
 	enum { PLAIN_OUTPUTS = 12, PLAIN_INPUTS = 6, PLAIN_ROW_BYTES = PLAIN_INPUTS * 2 };
 	uint8_t source[PLAIN_OUTPUTS * PLAIN_ROW_BYTES], destination[PLAIN_OUTPUTS * PLAIN_ROW_BYTES + 1];
 	for (uint32_t index = 0; index < sizeof(source); index++)
-		source[index] = (uint8_t)(index * 7u + 3u);
+		source[index] = (uint8_t)(index * PLAIN_PATTERN_STRIDE + PLAIN_PATTERN_OFFSET);
 	for (uint32_t first = 0; first < PLAIN_OUTPUTS; first++) {
 		for (uint32_t count = 1; first + count <= PLAIN_OUTPUTS; count++) {
 			const struct tensor_shard_description description = {
@@ -812,7 +819,7 @@ static void test_plain_rows(void)
 				.input_count = PLAIN_INPUTS
 			};
 			struct tensor_shard_plan plan;
-			memset(destination, 0xA5, sizeof(destination));
+			memset(destination, PLAIN_POISON, sizeof(destination));
 			const bool done =
 				tensor_shard_prepare(&description, &plan) ==
 					STATUS_OK &&
@@ -824,9 +831,9 @@ static void test_plain_rows(void)
 						     destination,
 						     sizeof(destination)) ==
 					STATUS_OK;
-			expect(done && memcmp(destination, source + first * PLAIN_ROW_BYTES,
+			expect(done && memcmp(destination, source + (size_t)(first * PLAIN_ROW_BYTES),
 					      (size_t)count * PLAIN_ROW_BYTES) == 0 &&
-				       destination[count * PLAIN_ROW_BYTES] == 0xA5,
+				       destination[(size_t)(count * PLAIN_ROW_BYTES)] == PLAIN_POISON,
 			       "a plain row range copies its source rows and nothing behind");
 			rectangles++;
 		}
@@ -837,8 +844,8 @@ static void test_plain_rows(void)
 				  TENSOR_SHARD_PLAIN_BITS, 0 },
 		.first_output = 0,
 		.output_count = 1,
-		.first_input = 2,
-		.input_count = PLAIN_INPUTS - 2
+		.first_input = PLAIN_CUT_INPUT,
+		.input_count = PLAIN_INPUTS - PLAIN_CUT_INPUT
 	};
 	struct tensor_shard_plan plan;
 	expect(tensor_shard_prepare(&bad, &plan) == STATUS_INVALID_ARGUMENT,

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
- * kernel_draft_share.cu (tp4_v3_claude): the draft's rows to the other ranks (include/anemone/draft_share_records.h).
+ * kernel_draft_share.cu (tp4_v3_b): the draft's rows to the other ranks (include/anemone/draft_share_records.h).
  * Device code only, built once per architecture into the module "kernel_draft_share". Here:
  *   - A copy moves 16-byte words, a thread a word at a time; every copying thread fences at system scope before the
  *     block's barrier; thread 0 takes a ticket of the receiver's counter; the block with the last ticket sets the
@@ -21,13 +21,14 @@ static_assert(DRAFT_SHARE_STEP % SHARE_WORD_BYTES == 0 &&
 	      "16-byte parts; the step area's copy fits its part");
 
 #define SHARE_MOST_ROWS 64u /* a step's rows: a BATCH step's most (model_seam.h) */
+#define SHARE_VALUE_SPACING 2u /* a word's values are odd (draft_share_records.h): a fresh area's zero never matches */
 
 __device__ static __forceinline__ uint32_t share_value(const unsigned char *arena, uint64_t step_offset,
                                                        uint32_t verifier)
 {
 	const uint64_t sequence =
 		((const struct step_block *)(arena + step_offset))->sequence;
-	return (uint32_t)((sequence * DRAFT_SHARE_VERIFIERS + verifier) * 2u) +
+	return (uint32_t)((sequence * DRAFT_SHARE_VERIFIERS + verifier) * SHARE_VALUE_SPACING) +
 	       1u;
 }
 

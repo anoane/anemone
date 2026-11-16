@@ -128,7 +128,8 @@ static void test_words(const char *folder)
 					      reference_bits);
 				differing++;
 			}
-			/* a break is shown only as that word differing by that bit; anything else is a failure of the gate */
+			/* a break is shown only as that word differing by that bit; anything else is a failure of the
+			 * gate */
 			reported += is_broken && (host_bits ^ reference_bits) ==
 							    WORD_BITS_FLIP ?
 					    1 :

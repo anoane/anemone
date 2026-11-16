@@ -13,6 +13,7 @@
 #include "batch_fixture.h"
 #include "step_driver.h"
 #include "step_validation.h"
+#include "byte_identity.h"
 
 #define OWNERS 8u
 #define DRAFTS 5u
@@ -29,13 +30,52 @@
 #define COST_GENERATED_TOKENS 32u
 #define COST_ORDINARY_PRICE_US 1000u
 #define COST_SPECULATIVE_PRICE_US 10000u
-#define REQUIRE(condition)                                                 \
-	do {                                                               \
-		if (!(condition)) {                                        \
-			fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, \
-				#condition);                               \
-			exit(1);                                           \
-		}                                                          \
+#define STEP_DELAY_NS 1000000u
+#define TEMPERATURE 0.7f
+#define SHORT_CONTEXT 48
+#define LAST_OWNER 7
+/* A prompt token of each slot: (slot * PROMPT_SLOT_STRIDE + token * PROMPT_TOKEN_STRIDE) % PROMPT_TOKEN_RANGE. */
+#define PROMPT_SLOT_STRIDE 31u
+#define PROMPT_TOKEN_STRIDE 13u
+#define PROMPT_TOKEN_RANGE 256u
+/* Row 1 at position 2 of three rows: a gap in the positions. */
+#define GAP_POSITION 2
+#define GAP_ROWS 3
+/* A round offset this far past the result: the legacy 88 B result fits, a 64-row BATCH result does not. */
+#define LEGACY_ROUND_OFFSET 256u
+/* The prepared row buckets, and the owner counts whose DRAFTS anchors need the small and middle one. */
+enum program_bucket {
+	BUCKET_SMALL,
+	BUCKET_MIDDLE,
+	BUCKET_BATCH,
+	BUCKET_FULL,
+	BUCKETS
+};
+#define SMALL_BUCKET_ROWS 12
+#define MIDDLE_BUCKET_ROWS 24
+#define LARGE_BUCKET_ROWS 64
+#define SMALL_BUCKET_OWNERS 2
+#define MIDDLE_BUCKET_OWNERS 3
+#define PIPELINE_TOO_DEEP 2
+/* The snapshot saves session SAVED_SLOT and loads it into LOADED_SLOT; both continue with one more token. */
+#define SAVED_SLOT 3u
+#define LOADED_SLOT 4u
+#define SNAPSHOT_TAG 99
+#define CONTINUED_SESSIONS 2
+#define CONTINUED_TOKEN 11
+#define CONTINUED_SEED 19
+#define CONTINUED_LIMIT 40
+/* Two owners on two prompts' rows; the first is cancelled, the second (request tag 2) survives. */
+#define CANCEL_OWNERS 2
+#define CANCEL_ROWS 12
+#define SURVIVOR_TAG 2
+#define REQUIRE(condition)                                             \
+	do {                                                           \
+		if (!(condition)) {                                    \
+			(void)fprintf(stderr, "%s:%d: %s\n", __FILE__, \
+				      __LINE__, #condition);           \
+			exit(1);                                       \
+		}                                                      \
 	} while (0)
 
 struct trace {
@@ -62,7 +102,7 @@ static struct inference_engine *open_engine(uint32_t owners, uint32_t rows,
 	test_batch_set_device_draft(drafts != 0, DRAFTS);
 	test_batch_set_draft_policy(&policy, 0);
 	REQUIRE(test_batch_open(context, scripts, 1, &engine) == STATUS_OK);
-	test_batch_set_step_delay(1000000u);
+	test_batch_set_step_delay(STEP_DELAY_NS);
 	return engine;
 }
 
@@ -115,19 +155,23 @@ static void same(const struct trace *first, const struct trace *second,
 		 const char *phase, uint32_t owner)
 {
 	if (first->count != second->count)
-		fprintf(stderr,
+		(void)fprintf(
+			stderr,
 			"BATCH identity phase=%s owner=%u reference_count=%u candidate_count=%u\n",
 			phase, owner, first->count, second->count);
 	const uint32_t count = first->count < second->count ? first->count :
 							      second->count;
 	for (uint32_t index = 0; index < count; index++) {
-		if (memcmp(&first->events[index], &second->events[index],
-			   sizeof(first->events[index])) != 0) {
+		if (!bytes_identical(&first->events[index],
+				     &second->events[index],
+				     sizeof(first->events[index]))) {
 			const struct generation_event
 				*const a = &first->events[index],
 				       *const b = &second->events[index];
-			fprintf(stderr,
-				"BATCH identity phase=%s owner=%u event=%u ref(kind=%u token=%u pos=%u status=%u) candidate(kind=%u token=%u pos=%u status=%u)\n",
+			(void)fprintf(
+				stderr,
+				"BATCH identity phase=%s owner=%u event=%u ref(kind=%u token=%u pos=%u status=%u) "
+				"candidate(kind=%u token=%u pos=%u status=%u)\n",
 				phase, owner, index, a->event_kind, a->token_id,
 				a->session_token_count, a->status,
 				b->event_kind, b->token_id,
@@ -156,8 +200,8 @@ static void driver_admission(void)
 		STATUS_INVALID_ARGUMENT);
 	REQUIRE(step_rounds_domain_attach(driver, TEST_BATCH_VOCABULARY,
 					  TEST_BATCH_END_TOKEN) == STATUS_OK);
-	rows[1].position = 2;
-	REQUIRE(step_rows_check(driver, rows, 3, true) ==
+	rows[1].position = GAP_POSITION;
+	REQUIRE(step_rows_check(driver, rows, GAP_ROWS, true) ==
 		STATUS_INVALID_ARGUMENT);
 	rows[1].position = 1;
 	for (uint32_t row = 0; row < ROWS; row++)
@@ -181,9 +225,7 @@ static void driver_admission(void)
 	bool unsupported = false;
 	REQUIRE(step_program_problem(&program, &program, driver->cards, NULL,
 				     &unsupported) == NULL);
-	card.round_offset =
-		card.result_offset +
-		256u; /* legacy88B fits here; a64-row BATCH result does not */
+	card.round_offset = card.result_offset + LEGACY_ROUND_OFFSET;
 	REQUIRE(step_program_problem(&program, &program, driver->cards, NULL,
 				     &unsupported) != NULL);
 	card = original->cards[0];
@@ -191,34 +233,37 @@ static void driver_admission(void)
 	REQUIRE(step_program_problem(&program, &program, driver->cards, NULL,
 				     &unsupported) != NULL);
 	/* Different prepared row buckets must have enough walks for cold DRAFTS anchors too. */
-	struct execution_program buckets[4] = { *original, *original, *original,
-						*original };
-	buckets[0].row_count = 12;
-	buckets[1].row_count = 24;
-	buckets[2].row_count = 64;
-	buckets[3].row_count = 64;
-	buckets[3].kind = PROGRAM_FULL;
+	struct execution_program buckets[BUCKETS] = { *original, *original,
+						      *original, *original };
+	buckets[BUCKET_SMALL].row_count = SMALL_BUCKET_ROWS;
+	buckets[BUCKET_MIDDLE].row_count = MIDDLE_BUCKET_ROWS;
+	buckets[BUCKET_BATCH].row_count = LARGE_BUCKET_ROWS;
+	buckets[BUCKET_FULL].row_count = LARGE_BUCKET_ROWS;
+	buckets[BUCKET_FULL].kind = PROGRAM_FULL;
 	const struct execution_program *bucket_pointers[] = {
-		&buckets[0], &buckets[1], &buckets[2], &buckets[3]
+		&buckets[BUCKET_SMALL], &buckets[BUCKET_MIDDLE],
+		&buckets[BUCKET_BATCH], &buckets[BUCKET_FULL]
 	};
 	const struct execution_program **const retained = driver->programs;
 	const uint32_t retained_count = driver->program_count;
 	driver->programs = bucket_pointers;
-	driver->program_count = 4;
+	driver->program_count = BUCKETS;
 	const uint32_t *graphs = NULL;
 	for (uint32_t row = 0; row < OWNERS; row++)
 		rows[row] = (struct step_row_record){
 			0, 1, row, STEP_ROW_LOGITS | STEP_ROW_DRAFTS
 		};
 	REQUIRE(step_program_for_rows(driver, rows, OWNERS, &graphs) ==
-		&buckets[2]);
-	REQUIRE(step_program_for_rows(driver, rows, 3, &graphs) == &buckets[1]);
-	REQUIRE(step_program_for_rows(driver, rows, 2, &graphs) == &buckets[0]);
+		&buckets[BUCKET_BATCH]);
+	REQUIRE(step_program_for_rows(driver, rows, MIDDLE_BUCKET_OWNERS,
+				      &graphs) == &buckets[BUCKET_MIDDLE]);
+	REQUIRE(step_program_for_rows(driver, rows, SMALL_BUCKET_OWNERS,
+				      &graphs) == &buckets[BUCKET_SMALL]);
 	for (uint32_t row = 0; row < STEP_BATCH_MAXIMUM_ROWS; row++)
 		rows[row] = (struct step_row_record){ (int32_t)(row % OWNERS),
 						      1, row / OWNERS, 0 };
 	REQUIRE(step_program_for_rows(driver, rows, STEP_BATCH_MAXIMUM_ROWS,
-				      &graphs) == &buckets[3]);
+				      &graphs) == &buckets[BUCKET_FULL]);
 	driver->programs = retained;
 	driver->program_count = retained_count;
 	struct inference_engine *unchanged = engine;
@@ -245,7 +290,7 @@ static void paired_runs(float temperature, uint32_t context)
 	}
 	struct inference_engine *const engine =
 		open_engine(OWNERS, ROWS, DRAFTS, context);
-	REQUIRE(step_pipeline_start(test_batch_driver(), 2) ==
+	REQUIRE(step_pipeline_start(test_batch_driver(), PIPELINE_TOO_DEEP) ==
 		STATUS_INVALID_ARGUMENT);
 	REQUIRE(step_pipeline_start(test_batch_driver(), 1) == STATUS_OK);
 	REQUIRE(step_pipeline_start(test_batch_driver(), 1) ==
@@ -257,7 +302,8 @@ static void paired_runs(float temperature, uint32_t context)
 	}
 	collect(engine, OWNERS, batched);
 	for (uint32_t slot = 0; slot < OWNERS; slot++) {
-		fprintf(stderr,
+		(void)fprintf(
+			stderr,
 			"BATCH paired context=%u temperature=%g owner=%u\n",
 			context, (double)temperature, slot);
 		same(&reference[slot], &batched[slot], "paired", slot);
@@ -270,7 +316,9 @@ static void paired_runs(float temperature, uint32_t context)
 	}
 	if (context == CONTEXT) {
 		REQUIRE(test_batch_maximum_rows() == ROWS);
-		REQUIRE(batched[7].events[batched[7].count - 1u].event_kind ==
+		REQUIRE(batched[LAST_OWNER]
+				.events[batched[LAST_OWNER].count - 1u]
+				.event_kind ==
 			GENERATION_EVENT_FINISHED_AT_END_TOKEN);
 		REQUIRE(test_batch_device_rejections() == (1u << DRAFTS) - 1u);
 	}
@@ -285,7 +333,7 @@ static void late_corruption(void)
 	test_batch_set_batch_fault(OWNERS - 1u);
 	for (uint32_t slot = 0; slot < OWNERS; slot++) {
 		const struct generation_command_record current =
-			command(slot, slot, 0.7f);
+			command(slot, slot, TEMPERATURE);
 		REQUIRE(engine_submit(engine, &current) == STATUS_OK);
 	}
 	collect(engine, OWNERS, traces);
@@ -331,74 +379,77 @@ static void snapshots_and_cancel(void)
 		open_engine(OWNERS, ROWS, DRAFTS, CONTEXT);
 	for (uint32_t slot = 0; slot < OWNERS; slot++) {
 		const struct generation_command_record current =
-			command(slot, slot, 0.7f);
+			command(slot, slot, TEMPERATURE);
 		REQUIRE(engine_submit(engine, &current) == STATUS_OK);
 	}
 	collect(engine, OWNERS, traces);
 	uint32_t prefix[SNAPSHOT_TOKENS];
-	memcpy(prefix, prompt[3], sizeof(prompt[3]));
+	memcpy(prefix, prompt[SAVED_SLOT], sizeof(prompt[SAVED_SLOT]));
 	for (uint32_t token = PROMPT; token < SNAPSHOT_TOKENS; token++)
-		prefix[token] = traces[3].events[token - PROMPT].token_id;
+		prefix[token] =
+			traces[SAVED_SLOT].events[token - PROMPT].token_id;
 	char path[] = "/tmp/anemone_batch_snapshot_XXXXXX";
 	const int descriptor = mkstemp(path);
 	REQUIRE(descriptor >= 0 && unlink(path) == 0);
 	struct session_state state = { 0 };
-	REQUIRE(engine_session_state(engine, 3, &state) == STATUS_OK);
+	REQUIRE(engine_session_state(engine, SAVED_SLOT, &state) == STATUS_OK);
 	const struct session_command save = { .descriptor = descriptor,
-					      .session_slot = 3,
+					      .session_slot = SAVED_SLOT,
 					      .token_count = SNAPSHOT_TOKENS,
 					      .operation = SESSION_SAVE,
-					      .request_tag = 99 };
+					      .request_tag = SNAPSHOT_TAG };
 	(void)session(engine, &save);
 	unsigned char saved[SNAPSHOT_TOKENS];
-	memcpy(saved, test_batch_slot_state(3), sizeof(saved));
+	memcpy(saved, test_batch_slot_state(SAVED_SLOT), sizeof(saved));
 	REQUIRE(lseek(descriptor, 0, SEEK_SET) == 0);
 	const struct session_command load = { .token_ids = prefix,
 					      .descriptor = descriptor,
-					      .session_slot = 4,
+					      .session_slot = LOADED_SLOT,
 					      .token_count = SNAPSHOT_TOKENS,
 					      .operation = SESSION_LOAD,
-					      .request_tag = 99,
+					      .request_tag = SNAPSHOT_TAG,
 					      .reach_count = state.reach_count,
 					      .decoder_from =
 						      state.decoder_from };
 	(void)session(engine, &load);
-	REQUIRE(memcmp(saved, test_batch_slot_state(4), sizeof(saved)) == 0);
+	REQUIRE(memcmp(saved, test_batch_slot_state(LOADED_SLOT),
+		       sizeof(saved)) == 0);
 	REQUIRE(close(descriptor) == 0);
 	struct trace continued[OWNERS] = { 0 };
-	const uint32_t new_token = 11;
-	for (uint32_t index = 0; index < 2; index++) {
+	const uint32_t new_token = CONTINUED_TOKEN;
+	for (uint32_t index = 0; index < CONTINUED_SESSIONS; index++) {
 		const struct generation_command_record next = {
 			.new_token_ids = &new_token,
-			.sampler_seed = 19,
-			.session_slot = index + 3u,
+			.sampler_seed = CONTINUED_SEED,
+			.session_slot = index + SAVED_SLOT,
 			.kept_token_count = SNAPSHOT_TOKENS,
 			.new_token_count = 1,
-			.generated_token_limit = 40,
-			.sampler_temperature = 0.7f,
+			.generated_token_limit = CONTINUED_LIMIT,
+			.sampler_temperature = TEMPERATURE,
 			.sampler_top_p = 1.0f,
 			.request_tag = index + 1u
 		};
 		REQUIRE(engine_submit(engine, &next) == STATUS_OK);
 	}
-	collect(engine, 2, continued);
+	collect(engine, CONTINUED_SESSIONS, continued);
 	for (uint32_t index = 0; index < continued[1].count; index++)
 		continued[1].events[index].request_tag = 1;
-	same(&continued[0], &continued[1], "snapshot", 4);
+	same(&continued[0], &continued[1], "snapshot", LOADED_SLOT);
 	test_batch_close();
 
 	memset(traces, 0, sizeof(traces));
-	engine = open_engine(2, 12, DRAFTS, CONTEXT);
-	for (uint32_t slot = 0; slot < 2; slot++) {
+	engine = open_engine(CANCEL_OWNERS, CANCEL_ROWS, DRAFTS, CONTEXT);
+	for (uint32_t slot = 0; slot < CANCEL_OWNERS; slot++) {
 		const struct generation_command_record current =
-			command(slot, slot, 0.7f);
+			command(slot, slot, TEMPERATURE);
 		REQUIRE(engine_submit(engine, &current) == STATUS_OK);
 	}
 	bool cancelled = false;
 	uint32_t finals = 0;
-	while (finals != 2) {
+	while (finals != CANCEL_OWNERS) {
 		const struct generation_event event = next_event(engine);
-		REQUIRE(event.request_tag == 1 || event.request_tag == 2);
+		REQUIRE(event.request_tag == 1 ||
+			event.request_tag == SURVIVOR_TAG);
 		struct trace *const trace = &traces[event.request_tag - 1u];
 		REQUIRE(trace->count < EVENTS);
 		trace->events[trace->count++] = event;
@@ -416,7 +467,8 @@ static void snapshots_and_cancel(void)
 	test_batch_close();
 	memset(traces, 0, sizeof(traces));
 	engine = open_engine(1, 1, 0, CONTEXT);
-	const struct generation_command_record current = command(0, 1, 0.7f);
+	const struct generation_command_record current =
+		command(0, 1, TEMPERATURE);
 	REQUIRE(engine_submit(engine, &current) == STATUS_OK);
 	collect(engine, 1, traces);
 	same(&survivor, &traces[1], "cancel-survivor", 1);
@@ -442,7 +494,7 @@ static uint64_t shared_cost_observations(const struct inference_engine *engine)
 {
 	uint64_t observations = 0;
 	for (uint32_t rows = 0; rows <= SERVING_BATCH_COST_ROWS; rows++)
-		for (uint32_t tails = 0; tails <= SERVING_SESSION_CAPACITY;
+		for (uint32_t tails = 0; tails <= STEP_BATCH_MAXIMUM_SESSIONS;
 		     tails++) {
 			REQUIRE(engine->batch_shape_costs[rows][tails]
 						.observations == 0 ||
@@ -461,7 +513,7 @@ static void measured_cost_integration(void)
 		COST_ORDINARY_PRICE_US, COST_SPECULATIVE_PRICE_US
 	};
 	static struct draft_cost_cell retained[SERVING_BATCH_COST_ROWS + 1u]
-					      [SERVING_SESSION_CAPACITY + 1u];
+					      [STEP_BATCH_MAXIMUM_SESSIONS + 1u];
 	const struct draft_policy_record saved_policy = policy;
 	policy.depth_policy = DRAFT_DEPTH_RATE;
 	test_batch_set_draft_costs(COST_SESSION_MODE, step_costs);
@@ -544,7 +596,8 @@ static void measured_cost_integration(void)
 	REQUIRE(shared != 0 && personal_total == singletons &&
 		shared_cost_observations(engine) == singletons + shared &&
 		singletons + COST_SHARED_OWNERS * shared <=
-			COST_SHARED_OWNERS * (COST_GENERATED_TOKENS - 1u));
+			(uint64_t)(COST_SHARED_OWNERS *
+				   (COST_GENERATED_TOKENS - 1u)));
 	test_batch_close();
 	test_batch_set_draft_costs(0, NULL);
 	policy = saved_policy;
@@ -556,14 +609,17 @@ int main(void)
 	policy.depth_policy = DRAFT_DEPTH_FIXED;
 	for (uint32_t slot = 0; slot < OWNERS; slot++)
 		for (uint32_t token = 0; token < PROMPT; token++)
-			prompt[slot][token] = (slot * 31u + token * 13u) % 256u;
+			prompt[slot][token] = (slot * PROMPT_SLOT_STRIDE +
+					       token * PROMPT_TOKEN_STRIDE) %
+					      PROMPT_TOKEN_RANGE;
 	driver_admission();
 	paired_runs(0.0f, CONTEXT);
-	paired_runs(0.7f, CONTEXT);
-	paired_runs(0.7f, 48);
+	paired_runs(TEMPERATURE, CONTEXT);
+	paired_runs(TEMPERATURE, SHORT_CONTEXT);
 	late_corruption();
 	snapshots_and_cancel();
 	measured_cost_integration();
-	puts("BATCH host scheduling: eight K5 owners, counter keys, EOS, rejection, late corruption, snapshot and cancel");
+	puts("BATCH host scheduling: eight K5 owners, counter keys, EOS, rejection, late corruption, "
+	     "snapshot and cancel");
 	return 0;
 }

@@ -93,6 +93,7 @@
 /* the reference's whole numbers: Markov weights and embeddings of -2 .. 2, sums of at most 256 * 4 */
 #define WHOLE_SPAN 5u
 #define WHOLE_LOWEST 2
+#define TABLE_VERIFIER 3 /* the round table's verifier */
 #define DOUBLE_TOLERANCE \
 	1e-5 /* of the float32 orders against the double sums, relative */
 
@@ -129,9 +130,10 @@ static void capture_end(char *text, size_t text_capacity)
 	const bool is_open = capture_descriptor >= 0 &&
 			     error_stream_descriptor >= 0 &&
 			     fflush(stderr) == 0;
-	const ssize_t byte_count = is_open ? pread(capture_descriptor, text,
-						   text_capacity - 1, 0) :
-					     -1;
+	const ssize_t byte_count =
+		is_open ? test_log_capture_read(capture_descriptor, text,
+						text_capacity) :
+			  -1;
 	expect(is_open &&
 		       dup2(error_stream_descriptor, STDERR_FILENO) ==
 			       STDERR_FILENO &&
@@ -519,11 +521,11 @@ static void test_accepted(void)
 		"one warp, the record of every range, the rows, R, the end and noise tokens");
 	struct described table = verify;
 	table.verify.flags = DRAFT_ROUND_TABLE;
-	table.verify.verifier = 3;
+	table.verify.verifier = TABLE_VERIFIER;
 	table.verify.round_capacity = 1;
 	struct verify_matches_arguments table_record = verify_record;
 	table_record.flags = DRAFT_ROUND_TABLE;
-	table_record.verifier = 3;
+	table_record.verifier = TABLE_VERIFIER;
 	table_record.round_capacity = 1;
 	expect(prepare(&table, ARENA_BYTES, &made_up_kernels, &launch) ==
 		       STATUS_OK,

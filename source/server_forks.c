@@ -86,6 +86,7 @@ uint32_t server_fork_destination(const struct http_server *server,
 	const uint32_t count = server->description.session_slot_count;
 	if (!forks_enabled(server, connection) || proposed >= count)
 		return proposed;
+	ASSERT(server_tables_present(server));
 	const struct fork_donor donor = donor_chosen(server, connection, count);
 	if (donor.kept == 0 || donor.slot != proposed)
 		return proposed;
@@ -131,6 +132,7 @@ bool server_fork_before(struct http_server *server, uint32_t destination,
 {
 	if (!forks_enabled(server, connection))
 		return false;
+	ASSERT(server_tables_present(server));
 	connection->fork_attempted = true;
 	connection->fork_prepared = false;
 	if (destination >= server->description.session_slot_count ||
@@ -208,6 +210,7 @@ bool server_fork_before(struct http_server *server, uint32_t destination,
 bool server_fork_final(struct http_server *server, uint32_t destination,
 		       const struct generation_event *event, double now)
 {
+	ASSERT(server_tables_present(server));
 	struct active_command *const active = &server->active[destination];
 	const uint32_t source_slot = active->fork_source_slot;
 	struct session_state source = { 0 }, target = { 0 };
@@ -272,7 +275,7 @@ bool server_fork_final(struct http_server *server, uint32_t destination,
 	}
 	if (source_slot < server->description.session_slot_count)
 		server->slot_read_leased[source_slot] = false;
-	if (active->connection < SERVER_MOST_CONNECTIONS) {
+	if (active->connection < server->connection_limit) {
 		struct connection *const connection =
 			&server->connections[active->connection];
 		if (connection->waiting_snapshot_slot == destination &&

@@ -15,7 +15,6 @@
 #define TP2_MODEL_MINIMUM_DRAFT 5u
 #define TP2_MODEL_MAXIMUM_DRAFT 7u
 #define TP2_FRONT_END_NAME "front_end.tables"
-#define HOST_HUGE_PAGE_BYTES 2097152ull /* 2 MiB: the host arena is allocated as a whole number of them */
 
 struct initialise_workspace {
 	void *memory;
@@ -289,7 +288,8 @@ MUST_CHECK static result_status stages_create(const struct pack_record *pack,
 			.chunk_core = model->description.chunk_core,
 			.wire_format = model->description.wire_format
 		};
-		if (card != model_result_card(&model->description) && !model->description.draft_layers)
+		if (card != model_result_card(&model->description) &&
+		    !model->description.draft_layers)
 			description.limits.draft_positions = 0;
 		result_status status = v41_tp2_stage_plan_create(
 			pack, &description, &model->stages[card]);
@@ -374,11 +374,14 @@ MUST_CHECK static result_status metadata_merge(struct v41_tp2_model *model)
 			     sizeof(view->cards));
 		(void)memcpy(view->globals, canonical->globals,
 			     sizeof(view->globals));
-		if (model->stages[card]->description.include_embedding) /* replicated_embedding: the rank's own copy */
+		if (model->stages[card]
+			    ->description
+			    .include_embedding) /* replicated_embedding: the rank's own copy */
 			view->globals[V41_DATA_EMBEDDING] =
 				model->stages[card]
 					->model->globals[V41_DATA_EMBEDDING];
-		if (model->stages[card]->description.head_shards && card != canonical->result_card) {
+		if (model->stages[card]->description.head_shards &&
+		    card != canonical->result_card) {
 			/* head_shards: the rank's own norm and head rows */
 			view->globals[V41_DATA_NORM] =
 				model->stages[card]
@@ -389,7 +392,8 @@ MUST_CHECK static result_status metadata_merge(struct v41_tp2_model *model)
 		}
 		(void)memcpy(view->draft_globals, canonical->draft_globals,
 			     sizeof(view->draft_globals));
-		if (model->stages[card]->description.draft_shards && card != canonical->result_card) {
+		if (model->stages[card]->description.draft_shards &&
+		    card != canonical->result_card) {
 			/* draft_shards: the rank's own Markov tables */
 			view->draft_globals[V41_DATA_DRAFT_MARKOV_EMBEDDING] =
 				model->stages[card]->model->draft_globals
@@ -398,14 +402,19 @@ MUST_CHECK static result_status metadata_merge(struct v41_tp2_model *model)
 				model->stages[card]->model->draft_globals
 					[V41_DATA_DRAFT_MARKOV_HEAD];
 		}
-		if (model->stages[card]->description.draft_layers && card != canonical->result_card) {
+		if (model->stages[card]->description.draft_layers &&
+		    card != canonical->result_card) {
 			/* draft_layers: the rank's own main_proj, main_norm and final norm */
 			static const uint32_t own[] = {
 				V41_DATA_DRAFT_MAIN_PROJECTION,
 				V41_DATA_DRAFT_MAIN_NORM, V41_DATA_DRAFT_NORM
 			};
-			for (uint32_t index = 0; index < sizeof(own) / sizeof(own[0]); index++)
-				view->draft_globals[own[index]] = model->stages[card]->model->draft_globals[own[index]];
+			for (uint32_t index = 0;
+			     index < sizeof(own) / sizeof(own[0]); index++)
+				view->draft_globals[own[index]] =
+					model->stages[card]
+						->model
+						->draft_globals[own[index]];
 		}
 		(void)memcpy(view->layer_card, canonical->layer_card,
 			     sizeof(view->layer_card));
@@ -564,7 +573,7 @@ void v41_tp2_model_destroy(struct v41_tp2_model *model)
 {
 	if (model == NULL)
 		return;
-	free(model->host_arena);
+	tp_host_arena_release(&model->host_memory);
 	free(model->extent_offsets);
 	free(model->jobs);
 	free(model->canonical);
@@ -738,10 +747,21 @@ peer_tables_attach(const struct v41_tp2_model *model,
 
 /* head_shards (sampler_shard_records.h): each rank's table of the four ranks' exchange areas; the result card's table
  * of the four ranks' settings copies (its settings push writes them). */
-MUST_CHECK static result_status
-sampler_peers_attach(const struct v41_tp2_model *model,
-		     const struct v41_tp2_model_load_request *request)
+result_status v41_tp2_model_sampler_peers_attach(
+	const struct v41_tp2_model *model,
+	const struct v41_tp2_model_load_request *request)
 {
+	if (model == NULL || request == NULL || model->canonical == NULL ||
+	    !model->description.head_shards ||
+	    model->canonical->card_count != TP4_RANKS ||
+	    request->backend == NULL || request->cards == NULL ||
+	    request->backend->peer_connect == NULL ||
+	    request->backend->launch_wait == NULL ||
+	    request->wait_limit_nanoseconds == 0)
+		return STATUS_INVALID_ARGUMENT;
+	for (uint32_t card = 0; card < TP4_RANKS; card++)
+		if (model->stages[card] == NULL || request->cards[card] == NULL)
+			return STATUS_INVALID_ARGUMENT;
 	const uint32_t result = model->canonical->result_card;
 	result_status status = STATUS_OK;
 	for (uint32_t card = 0;
@@ -750,27 +770,50 @@ sampler_peers_attach(const struct v41_tp2_model *model,
 		const struct v41_tp2_stage_plan *const local =
 			model->stages[card];
 		for (uint32_t rank = 0; rank < TP4_RANKS && status == STATUS_OK;
-		     rank++)
-			status = request->backend->peer_connect(request->cards[card], request->cards[rank],
-								model->stages[rank]->sampler_exchange.byte_offset,
-								local->sampler_peers.byte_offset + rank * sizeof(uint64_t));
+		     rank++) {
+			status = request->backend->peer_connect(
+				request->cards[card], request->cards[rank],
+				model->stages[rank]
+					->sampler_exchange.byte_offset,
+				local->sampler_peers.byte_offset +
+					rank * sizeof(uint64_t));
+			if (status == STATUS_OK)
+				status = request->backend->peer_connect(
+					request->cards[card],
+					request->cards[rank],
+					model->stages[rank]
+						->sampler_entry.byte_offset,
+					local->sampler_peers.byte_offset +
+						(TP4_RANKS + rank) *
+							sizeof(uint64_t));
+		}
 		for (uint32_t rank = 0;
 		     rank < TP4_RANKS && status == STATUS_OK && card == result;
 		     rank++)
-			status = request->backend->peer_connect(request->cards[card], request->cards[rank],
-								model->stages[rank]->sampler_settings.byte_offset,
-								local->sampler_settings_peers.byte_offset + rank * sizeof(uint64_t));
+			status = request->backend->peer_connect(
+				request->cards[card], request->cards[rank],
+				model->stages[rank]
+					->sampler_settings.byte_offset,
+				local->sampler_settings_peers.byte_offset +
+					rank * sizeof(uint64_t));
 		for (uint32_t rank = 0;
 		     rank < TP4_RANKS && status == STATUS_OK &&
 		     card == result && local->description.draft_shards;
 		     rank++) {
-			if (rank != result) /* draft_shards: the result card's table of the other ranks' share areas */
-				status = request->backend->peer_connect(request->cards[card], request->cards[rank],
-									model->stages[rank]->draft_area.byte_offset,
-									local->draft_peers.byte_offset + rank * sizeof(uint64_t));
+			if (rank !=
+			    result) /* draft_shards: the result card's table of the other ranks' share areas */
+				status = request->backend->peer_connect(
+					request->cards[card],
+					request->cards[rank],
+					model->stages[rank]
+						->draft_area.byte_offset,
+					local->draft_peers.byte_offset +
+						rank * sizeof(uint64_t));
 		}
 		if (status == STATUS_OK)
-			status = request->backend->launch_wait(request->cards[card], request->wait_limit_nanoseconds);
+			status = request->backend->launch_wait(
+				request->cards[card],
+				request->wait_limit_nanoseconds);
 	}
 	return status;
 }
@@ -801,21 +844,28 @@ v41_tp2_model_load(struct v41_tp2_model *model,
 	if (!request_fits(model, request) || model->load_attempted)
 		return STATUS_INVALID_ARGUMENT;
 	model->load_attempted = true;
-	void *source = NULL, *output = NULL, *host_arena = NULL;
+	void *source = NULL, *output = NULL;
 	result_status status = request->backend->staging_allocate(
 		model->gpu_load.source_workspace_byte_count, &source);
 	if (status == STATUS_OK)
 		status = request->backend->staging_allocate(
 			model->output_workspace_bytes, &output);
-	/* the host arena (the n-gram tables a step gathers rows of at random) in 2 MiB pages, as loader.c maps its own:
-	 * small pages cost a TLB walk a row */
-	const size_t host_mapped =
-		(size_t)((model->host_load.host_byte_count + HOST_HUGE_PAGE_BYTES - 1u) / HOST_HUGE_PAGE_BYTES *
-			 HOST_HUGE_PAGE_BYTES);
-	if (status == STATUS_OK && model->host_load.host_byte_count != 0 &&
-	    posix_memalign(&host_arena, HOST_HUGE_PAGE_BYTES, host_mapped) != 0)
-		status = STATUS_OUT_OF_MEMORY;
-	if (host_arena != NULL && madvise(host_arena, host_mapped, MADV_HUGEPAGE) != 0)
+	/* the host arena (the n-gram tables a step gathers rows of at random) in 2 MiB pages, as loader.c maps its own;
+	 * with external tables unaccounted (loader.h) */
+	bool external_tables = false;
+	for (uint32_t extent = 0; request->external_host_extents != NULL &&
+				  extent < model->host_load.extent_count;
+	     extent++)
+		external_tables = external_tables ||
+				  request->external_host_extents[extent] != 0;
+	struct tp_host_arena arena = { 0 };
+	if (status == STATUS_OK)
+		status =
+			tp_host_arena_allocate(model->host_load.host_byte_count,
+					       external_tables, &arena);
+	void *const host_arena = arena.bytes;
+	if (host_arena != NULL &&
+	    madvise(host_arena, arena.byte_count, MADV_HUGEPAGE) != 0)
 		LOG_WARNING_ENTRY(
 			"no 2 MiB pages for the TP host arena: the n-gram rows read through small pages");
 	/* one choice of copy for both loads (tp_load.h); the serial loads read the copies in order */
@@ -824,20 +874,31 @@ v41_tp2_model_load(struct v41_tp2_model *model,
 		tp_load_copies_init(&model->copies,
 				    request->load_reads_per_copy) == STATUS_OK;
 	struct tp_load_copies *const copies = choosing ? &model->copies : NULL;
-	if (copies != NULL)
+	if (copies != NULL) {
 		copies->split = request->load_copy_split;
+		copies->host_reads_most = request->load_host_reads_per_copy;
+		memcpy(copies->tuned_weights, request->load_copy_weights,
+		       sizeof(copies->tuned_weights));
+	}
 	struct host_load_thread host = {
 		.request = { .plan = &model->host_load,
+			     .external_host_extents =
+				     request->external_host_extents,
 			     .storage = request->storage,
 			     .reader = request->reader,
 			     .host_arena = host_arena,
-			     .host_arena_byte_count = model->host_load.host_byte_count,
-			     .worker_count = request->load_host_threads != 0 ? request->load_host_threads :
-										 request->load_threads,
-			     .copies = copies },
+			     .host_arena_byte_count =
+				     model->host_load.host_byte_count,
+			     .worker_count =
+				     request->load_host_threads != 0 ?
+					     request->load_host_threads :
+					     request->load_threads,
+			     .copies = copies,
+			     .chunk_bytes = request->load_piece_bytes },
 		.status = status
 	};
-	/* the host arena beside the cards' loads (load_threads != 0), else first, inline (also when no thread starts) */
+	/* the host arena beside the cards' loads (load_threads != 0), else first, inline (also when no thread
+	 * starts) */
 	const bool host_beside =
 		status == STATUS_OK && request->load_threads != 0 &&
 		pthread_create(&host.thread, NULL, host_load_run, &host) == 0;
@@ -882,7 +943,7 @@ v41_tp2_model_load(struct v41_tp2_model *model,
 	TIMER_END(tp_model_peer_tables);
 	TIMER_BEGIN(tp_model_sampler_peers);
 	if (status == STATUS_OK && model->description.head_shards)
-		status = sampler_peers_attach(model, request);
+		status = v41_tp2_model_sampler_peers_attach(model, request);
 	TIMER_END(tp_model_sampler_peers);
 	TIMER_END(tp_model_initialise);
 	/* Every attempted card is drained even when a different card failed. Failed waits are not retirement. */
@@ -897,11 +958,12 @@ v41_tp2_model_load(struct v41_tp2_model *model,
 		model->gpu_result = gpu_result;
 		model->host_result = host.result;
 		model->host_arena = host_arena;
+		model->host_memory = arena;
 		model->host_offsets = model->extent_offsets;
 		model->host_bytes = model->host_load.host_byte_count;
 		model->ready = true;
 	} else {
-		free(host_arena);
+		tp_host_arena_release(&arena);
 	}
 	return status;
 }

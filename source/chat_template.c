@@ -57,6 +57,9 @@
 #define SCRATCH_SLACK_BYTES 4096                  /* a number's terminating zero, the keys of objects deep inside */
 #define ARGUMENT_DECODINGS 2                      /* arguments are JSON, or JSON of a string that is JSON */
 #define EFFORT_DIGITS_CAPACITY 16
+#define EFFORT_SIGNATURE_DIGITS \
+	3u /* the decimal digits of CHAT_TEMPLATE_HIGHEST_EFFORT */
+#define EFFORT_DECIMAL_BASE 10u
 #define FIRST_TRUSTED_SPANS 16u
 #define TRUSTED_SPANS_GROWTH 2u
 
@@ -572,11 +575,12 @@ static void write_entry(struct context *context, uint32_t index)
 				      fields[FIELD_TOOLS];
 	const bool is_last = index + 1 == context->entry_count,
 		   has_calls = is_truthy(context, fields[FIELD_TOOL_CALLS]);
-	write_text(context, index == 0 && (options->is_thinking ||
+	write_text(context, index == 0 && ((options->is_thinking &&
+					    !options->stable_turns) ||
 					   entry->role == ROLE_SYSTEM) ?
 				    role_tokens[ROLE_SYSTEM] :
 				    "");
-	if (index == 0 && options->is_thinking) {
+	if (index == 0 && options->is_thinking && !options->stable_turns) {
 		const int length = snprintf(effort, sizeof(effort), "%u",
 					    options->reasoning_effort);
 		write_text(context, EFFORT_BEGIN);
@@ -605,27 +609,89 @@ static void write_entry(struct context *context, uint32_t index)
         }
     } else {
         const bool follows_task = index > 0 && context->entries[index - 1].task != TASK_NONE;
-        if (options->is_thinking && !follows_task && (!context->drops_thinking || index > context->last_user_index)) {
-            write_content(context, fields[FIELD_REASONING], "", "");
-            write_text(context, THINKING_END);
-        }
-        write_content(context, fields[FIELD_CONTENT], "", "");
-        if (has_calls) {
-            write_calls(context, fields[FIELD_TOOL_CALLS]);
-            keep_call_identifiers(context, fields[FIELD_TOOL_CALLS]);
-        }
-        write_text(context, is_last && options->continues_final_message ? "" : END_OF_SENTENCE);
+	if ((options->stable_turns ?
+		     fields[FIELD_REASONING].text != NULL :
+		     options->is_thinking && !follows_task &&
+			     (!context->drops_thinking ||
+			      index > context->last_user_index))) {
+		write_content(context, fields[FIELD_REASONING], "", "");
+		write_text(context, THINKING_END);
+	}
+	write_content(context, fields[FIELD_CONTENT], "", "");
+	if (has_calls) {
+		write_calls(context, fields[FIELD_TOOL_CALLS]);
+		keep_call_identifiers(context, fields[FIELD_TOOL_CALLS]);
+	}
+	write_text(context, is_last && options->continues_final_message ?
+				    "" :
+				    END_OF_SENTENCE);
     }
     const uint32_t next_role = is_last ? ROLE_ASSISTANT : context->entries[index + 1].role;
     const bool opens_answer = entry->role == ROLE_USER || (entry->role == ROLE_SYSTEM && index > 0);
     if ((next_role == ROLE_ASSISTANT || next_role == ROLE_LATEST_REMINDER) &&
         (entry->task != TASK_NONE || opens_answer)) {
         const bool is_plain_task = entry->task != TASK_NONE && entry->task != TASK_ACTION;
-        const bool opens_thinking = options->is_thinking && (entry->task == TASK_ACTION || !context->drops_thinking ||
-                                                             index >= context->last_user_index);
-        write_text(context, is_plain_task ? "" : role_tokens[ROLE_ASSISTANT]);
-        write_text(context, is_plain_task ? "" : opens_thinking ? THINKING_BEGIN : THINKING_END);
-        write_text(context, task_tokens[entry->task]);
+	bool opens_thinking = options->is_thinking &&
+			      (entry->task == TASK_ACTION ||
+			       !context->drops_thinking ||
+			       index >= context->last_user_index);
+	if (options->stable_turns) {
+		struct json_value next_fields[FIELD_COUNT] = { { 0 } };
+		if (!is_last)
+			read_fields(context, context->entries[index + 1u].first,
+				    next_fields);
+		opens_thinking = is_last ? options->is_thinking :
+					   next_fields[FIELD_REASONING].text !=
+						   NULL;
+		uint32_t turn_effort = is_last ? options->reasoning_effort :
+						 CHAT_TEMPLATE_DEFAULT_EFFORT;
+		if (!is_last && is_kind(next_fields[FIELD_NAME], '"')) {
+			const struct json_bytes signature = json_unescape(
+				&context->scratch, next_fields[FIELD_NAME]);
+			const size_t prefix_bytes =
+				strlen(CHAT_TEMPLATE_SIGNATURE_PREFIX);
+			/* The server writes the prefix and the effort's decimal digits (at most 100): a checked parse
+			 * of at most EFFORT_SIGNATURE_DIGITS digits, defined for any client-supplied signature. */
+			if (signature.count > prefix_bytes &&
+			    signature.count <=
+				    prefix_bytes + EFFORT_SIGNATURE_DIGITS &&
+			    memcmp(signature.data,
+				   CHAT_TEMPLATE_SIGNATURE_PREFIX,
+				   prefix_bytes) == 0) {
+				uint32_t parsed = 0;
+				bool digits = true;
+				for (size_t position = prefix_bytes;
+				     digits && position < signature.count;
+				     position++) {
+					const char byte =
+						signature.data[position];
+					digits = byte >= '0' && byte <= '9';
+					parsed = parsed * EFFORT_DECIMAL_BASE +
+						 (digits ? (uint32_t)(byte -
+								      '0') :
+							   0);
+				}
+				if (digits &&
+				    parsed >= CHAT_TEMPLATE_LOWEST_EFFORT &&
+				    parsed <= CHAT_TEMPLATE_HIGHEST_EFFORT)
+					turn_effort = parsed;
+			}
+		}
+		if (opens_thinking) {
+			const int length = snprintf(effort, sizeof(effort),
+						    "%u", turn_effort);
+			write_text(context, PARAGRAPH);
+			write_text(context, EFFORT_BEGIN);
+			write_template_bytes(context, effort,
+					     length > 0 ? (size_t)length : 0);
+			write_text(context, EFFORT_END);
+		}
+	}
+	write_text(context, is_plain_task ? "" : role_tokens[ROLE_ASSISTANT]);
+	write_text(context, is_plain_task  ? "" :
+			    opens_thinking ? THINKING_BEGIN :
+					     THINKING_END);
+	write_text(context, task_tokens[entry->task]);
     }
 }
 

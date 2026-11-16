@@ -14,6 +14,7 @@
 #include "host_memory_backend.h"
 #include "serving_fixture.h"
 #include "step_driver.h"
+#include "byte_identity.h"
 
 #define CONTEXT_TOKENS 16384u
 #define SESSION_SLOTS 2u
@@ -368,8 +369,8 @@ static void test_continuations(uint32_t kind, uint32_t depth, uint32_t draft,
 	expect(generated(engine, DESTINATION_SLOT, child_tokens, 0, prompt_end,
 			 CONTINUATION_TOKENS, CHILD_TAG,
 			 fresh_events) == CONTINUATION_EVENTS &&
-		       memcmp(child_events, fresh_events,
-			      sizeof(child_events)) == 0,
+		       bytes_identical(child_events, fresh_events,
+				       sizeof(child_events)),
 	       "every child event bit equals its independent cold run");
 	live_window(fresh_window, DESTINATION_SLOT, processed);
 	expect(memcmp(child_window, fresh_window, sizeof(child_window)) == 0,
@@ -377,8 +378,8 @@ static void test_continuations(uint32_t kind, uint32_t depth, uint32_t draft,
 	expect(generated(engine, SOURCE_SLOT, parent_tokens, 0, prompt_end,
 			 CONTINUATION_TOKENS, PARENT_TAG,
 			 fresh_events) == CONTINUATION_EVENTS &&
-		       memcmp(parent_events, fresh_events,
-			      sizeof(parent_events)) == 0,
+		       bytes_identical(parent_events, fresh_events,
+				       sizeof(parent_events)),
 	       "donor checkpoint still produces every event bit of its independent cold run");
 	live_window(fresh_window, SOURCE_SLOT, processed);
 	expect(memcmp(parent_window, fresh_window, sizeof(parent_window)) == 0,
@@ -620,8 +621,8 @@ static void test_partial_copy_cold_restart(void)
 	expect(generated(engine, DESTINATION_SLOT, child_tokens, 0,
 			 prompt_count, CONTINUATION_TOKENS, CHILD_TAG,
 			 fresh_events) == CONTINUATION_EVENTS &&
-		       memcmp(restarted_events, fresh_events,
-			      sizeof(restarted_events)) == 0,
+		       bytes_identical(restarted_events, fresh_events,
+				       sizeof(restarted_events)),
 	       "every restarted event bit equals its fresh cold run after a real partial copy");
 	live_window(fresh_window, DESTINATION_SLOT, processed);
 	expect(memcmp(restarted_window, fresh_window,

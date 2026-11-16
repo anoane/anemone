@@ -6,6 +6,7 @@
 | [Build](../BUILD.md) | Linux toolchain, source-only build and native checks. |
 | [Install](../INSTALL.md) | Prepared models, deployment, authentication and HTTP requests. |
 | [Server profiles](SERVER_PROFILES.md) | Original exact, original balanced and EXL3 balanced; all 169 serve option spellings. |
+| [Prometheus metrics](METRICS.md) | Optional endpoint, authentication policy, metric families and label keys. |
 | [User manual](USAGE.md) | Commands, HTTP API, sampling, sessions, advanced knobs and client templates. |
 | [Model data](user/MODEL_DATA.md) | Hugging Face revisions, input manifests, tokenizer, pack and EXL3-map preparation. |
 | [Full comparison matrix](results/COMPARISON_MATRIX.md) | All component/benchmark/profile rows and dated comparisons. |

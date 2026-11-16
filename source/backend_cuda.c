@@ -1092,8 +1092,8 @@ MUST_CHECK static result_status peer_connect(struct device_card *accessor,
 	}
 	if (status == STATUS_OK) {
 		const CUdeviceptr address = owner_address + owner_offset;
-		/* the word's host record, for copies that name it (backend_seam.h); past the record's capacity a word stays
-		 * unrecorded, and a copy naming it is refused */
+		/* the word's host record, for copies that name it (backend_seam.h); past the record's capacity a word
+		 * stays unrecorded, and a copy naming it is refused */
 		uint32_t entry = 0;
 		while (entry < state->peer_word_count && state->peer_words[entry].word != word)
 			entry++;

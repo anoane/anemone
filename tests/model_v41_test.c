@@ -189,7 +189,10 @@ static void capture_end_expecting(const char *words, const char *what)
 {
     char text[CAPTURE_CAPACITY];
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, sizeof(text) - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    sizeof(text)) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';
@@ -378,8 +381,8 @@ static void expect_card_regions(const struct model_plan_record *plan,
 				?
 				slabs * (STEP_BLOCK_BYTES_VALUE +
 					 slab_rows * STEP_ROW_BYTES_VALUE) +
-					V41_DATA_HALF_VIEWS *
-						STEP_BLOCK_BYTES_VALUE +
+					(uint64_t)(V41_DATA_HALF_VIEWS *
+						STEP_BLOCK_BYTES_VALUE) +
 					rows * STEP_ROW_BYTES_VALUE :
 				bytes;
 		misplaced += is_wide_only(array) && slabs == 1u &&
@@ -1221,7 +1224,8 @@ static void test_draft_refusals(void)
 	      "mtp.2.confidence_head.proj.weight" },
 	    { { MOVE, "mtp.2.norm.weight", TEST_MODEL_V41_LAYER_UNIT(0) },
 	      STATUS_UNSUPPORTED,
-	      "mtp.2.norm.weight lies on card 0 and the head on card 4: place them together (--layout, or --card_order" },
+	      "mtp.2.norm.weight lies on card 0 and the head on card 4: place them together (--layout, or "
+	      "--card_order" },
 	    { { MOVE, "mtp.1.hc_ffn_fn", TEST_MODEL_V41_LAYER_UNIT(0) },
 	      STATUS_UNSUPPORTED,
 	      "mtp.1.hc_ffn_fn lies on card 0" },

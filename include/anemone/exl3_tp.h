@@ -11,7 +11,7 @@
 #define BB_EXL3_PRODUCT_KERNEL_FILE "kernel_exl3_product"
 #define BB_EXL3_PRODUCT_TWO_TILES 2u
 #define BB_EXL3_PRODUCT_FOUR_TILES 4u
-#define BB_EXL3_PRODUCT_EIGHT_TILES 8u		/* kernel_exl3_wide's _t8_g1 (exl3_v3_claude) */
+#define BB_EXL3_PRODUCT_EIGHT_TILES 8u		/* kernel_exl3_wide's _t8_g1 (exl3_v3_b) */
 #define BB_EXL3_WIDE_KERNEL_FILE "kernel_exl3_wide"
 
 enum bb_exl3_pass {

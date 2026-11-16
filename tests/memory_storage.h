@@ -25,6 +25,8 @@
  *     forgets the pack and zeroes the counters:
  *       fail_reads    every read of that copy fails with STATUS_INPUT_OUTPUT_ERROR from its
  *                     first_failing_read_number-th read on, counted from 1: a drive that was pulled
+ *       fail_one_read only that read of that copy (counted from 1) fails with STATUS_INPUT_OUTPUT_ERROR: a
+ *                     transient error
  *       flip_bit      that copy delivers the byte at byte_offset with its lowest bit flipped, in every read that
  *                     covers it: a block that rotted on one drive. One offset per copy; setting again replaces it
  *   - The setters and reset are called with no read in flight; the counters may be read at any time.
@@ -47,6 +49,8 @@ MUST_CHECK result_status test_memory_storage_hold_tables_of(
 	const struct storage_operations_record *storage,
 	const struct storage_reader *reader);
 void test_memory_storage_fail_reads(uint32_t copy_index, uint64_t first_failing_read_number);
+void test_memory_storage_fail_one_read(uint32_t copy_index,
+				       uint64_t failing_read_number);
 void test_memory_storage_flip_bit(uint32_t copy_index, uint64_t byte_offset);
 
 /* How many reads of that copy were asked for (failed ones included) and how many bytes it delivered. */

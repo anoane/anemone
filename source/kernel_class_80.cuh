@@ -274,6 +274,93 @@ __device__ static __forceinline__ void class_80_instruction(float accumulator[EL
     }
 }
 
+/* ---- class_80_instruction output by output ----
+ * class_80_instruction makes a not-a-number of all four outputs of a lane that gathered an input that is not finite,
+ * though two of them are another column's: another vector (in the EXL3 products another job row, another session's).
+ * Here an input or a running sum that is not finite makes a not-a-number only of the outputs it enters, as on a card:
+ * the sums take every such input as a zero (no term, no anchor) and every such running sum of a column in use as a
+ * zero, and the outputs of a column in use whose row of A, column of B or running sum held one become the
+ * not-a-number, which a chain of instructions then keeps. The columns from column_count on stay as they are. Where
+ * every input and running sum is finite (one vote of the warp) nothing is zeroed or marked: class_80_instruction then
+ * runs on the very operands it is handed, and its bits are its own. */
+#define CLASS_80_COLUMN_MARK (1u << OUTPUT_HALVES) /* beside a mark for each output half's row of A */
+
+/* The halves of a register of two 16-bit inputs whose exponent field is all ones, as a mask of their bits. */
+__device__ static __forceinline__ uint32_t class_80_not_finite_halves(uint32_t word, bool is_bfloat16)
+{
+    const uint32_t field = (is_bfloat16 ? CLASS_80_BFLOAT16_FIELD_MASK << CLASS_80_BFLOAT16_FIELD_SHIFT
+                                        : CLASS_80_HALF_FIELD_MASK << CLASS_80_HALF_FIELD_SHIFT);
+    return ((word & field) == field ? CLASS_80_HALF_BITS : 0u) |
+           (((word >> BITS_PER_HALF) & field) == field ? CLASS_80_HALF_BITS << BITS_PER_HALF : 0u);
+}
+
+/* Which outputs of the lane an input or a running sum that is not finite enters (marks: bit h, row g (h 0) or g + 8
+ * (h 1) of A held one in this lane; CLASS_80_COLUMN_MARK, column g of B did), its running sums of them zeroed. */
+__device__ static __forceinline__ void class_80_poisoned_outputs(float accumulator[ELEMENTS_PER_LANE], uint32_t marks,
+                                                                 const bool is_running_finite[ELEMENTS_PER_LANE],
+                                                                 uint32_t column_count,
+                                                                 bool is_poisoned[ELEMENTS_PER_LANE])
+{
+    const uint32_t lane_place = threadIdx.x % THREADS_PER_WARP % LANES_PER_LANE_GROUP;
+    /* the four lanes of lane group g hold rows g and g + 8 of A and column g of B between them */
+#pragma unroll
+    for (uint32_t distance = 1; distance < LANES_PER_LANE_GROUP; distance <<= 1u) {
+        marks |= __shfl_xor_sync(CLASS_80_EVERY_LANE, marks, (int)distance);
+    }
+    uint32_t column_marks[COLUMNS_PER_LANE]; /* of the lane's columns 2 t and 2 t + 1: lane groups 2 t and 2 t + 1 */
+#pragma unroll
+    for (uint32_t column = 0; column < COLUMNS_PER_LANE; column++) {
+        column_marks[column] = __shfl_sync(CLASS_80_EVERY_LANE, marks,
+                                           (int)((COLUMNS_PER_LANE * lane_place + column) * LANES_PER_LANE_GROUP));
+    }
+#pragma unroll
+    for (uint32_t element = 0; element < ELEMENTS_PER_LANE; element++) {
+        const uint32_t half = element / COLUMNS_PER_LANE, column = element % COLUMNS_PER_LANE;
+        is_poisoned[element] = COLUMNS_PER_LANE * lane_place + column < column_count &&
+                               (((marks >> half) & 1u) != 0 || (column_marks[column] & CLASS_80_COLUMN_MARK) != 0 ||
+                                !is_running_finite[element]);
+        accumulator[element] = is_poisoned[element] ? 0.0f : accumulator[element];
+    }
+}
+
+__device__ static __forceinline__ void class_80_instruction_by_element(float accumulator[ELEMENTS_PER_LANE],
+                                                                       const uint32_t weights[REGISTERS_PER_OPERAND_A],
+                                                                       uint32_t fed_low_inputs,
+                                                                       uint32_t fed_high_inputs, bool is_bfloat16,
+                                                                       uint32_t column_count)
+{
+    uint32_t finite_weights[REGISTERS_PER_OPERAND_A];
+    uint32_t marks = 0;
+#pragma unroll
+    for (uint32_t index = 0; index < REGISTERS_PER_OPERAND_A; index++) {
+        const uint32_t not_finite = class_80_not_finite_halves(weights[index], is_bfloat16);
+        finite_weights[index] = weights[index] & ~not_finite;
+        marks |= not_finite != 0 ? 1u << (index % OUTPUT_HALVES) : 0u; /* registers 1 and 3: row g + 8 */
+    }
+    const uint32_t low_not_finite = class_80_not_finite_halves(fed_low_inputs, is_bfloat16);
+    const uint32_t high_not_finite = class_80_not_finite_halves(fed_high_inputs, is_bfloat16);
+    marks |= (low_not_finite | high_not_finite) != 0 ? CLASS_80_COLUMN_MARK : 0u;
+    bool is_running_finite[ELEMENTS_PER_LANE], is_poisoned[ELEMENTS_PER_LANE];
+    bool is_lane_finite = marks == 0;
+#pragma unroll
+    for (uint32_t element = 0; element < ELEMENTS_PER_LANE; element++) {
+        is_running_finite[element] =
+            (__float_as_uint(accumulator[element]) & FLOAT32_INFINITY_BITS) != FLOAT32_INFINITY_BITS;
+        is_lane_finite = is_lane_finite && is_running_finite[element];
+        is_poisoned[element] = false;
+    }
+    if (!__all_sync(CLASS_80_EVERY_LANE, is_lane_finite)) {
+        class_80_poisoned_outputs(accumulator, marks, is_running_finite, column_count, is_poisoned);
+    }
+    class_80_instruction(accumulator, finite_weights, fed_low_inputs & ~low_not_finite,
+                         fed_high_inputs & ~high_not_finite, is_bfloat16, column_count);
+#pragma unroll
+    for (uint32_t element = 0; element < ELEMENTS_PER_LANE; element++) {
+        accumulator[element] =
+            is_poisoned[element] ? __uint_as_float(CLASS_80_NOT_A_NUMBER_BITS) : accumulator[element];
+    }
+}
+
 #if LINEAR_THREAD_SUMS
 /* ---- the exact profile on class 120: class 80's groups formed by one thread each ----
  * Emulating an instruction lane by lane (class_80_instruction) costs every lane shuffles and a decode of all the
@@ -382,7 +469,7 @@ __device__ static __forceinline__ float class_80_thread_group(float running,
  * group of the placed operands is the exact sum of the 8 products W A, each first cut toward zero to an even number
  * where the running sum is 2^25 or more (the window's unit is then 2; the running sum, of 24 significant bits, is a
  * multiple of 4 and keeps its value), added to the running sum, the total cut toward zero to 24 significant bits
- * (agent D's proof: tmp/rnd/20261025/codex_linear_v1/REPORT_D_class120_exact.md; tools/measure/expert_group_check.cu
+ * (proved in the 25 Oct 2026 class-120 exactness report; tools/measure/expert_group_check.cu
  * holds it to class_80_thread_group). The placed block sum is the result times 2^(c - 163). */
 #define CLASS_80_E2M1_EVEN_FROM (1 << 25)   /* a running sum from here up cuts each product to an even number */
 #define CLASS_80_E2M1_KEPT_FROM (1 << 24)   /* a total from here up keeps 24 significant bits */

@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
-/* EXL3 mul1 reconstruction; kept separate from every native module. */
+/* EXL3 mul1 reconstruction and the routed experts' chain. Built for sm_80, for sm_120a (class 80's sums emulated)
+ * and for sm_120a native (kernel_exl3_native): only the products' sums differ (kernel_exl3_mma.cuh). */
 #include <cuda_fp16.h>
 #include "anemone/exl3_records.h"
+#include "kernel_exl3_mma.cuh"
+#include "kernel_exl3_ring.cuh"
 
 #define MMA_PAIR 2u
 #define FRAGMENT_LANE_GROUP 4u
@@ -27,12 +30,13 @@ __device__ static __forceinline__ uint32_t exl3_ring_position(uint32_t input,
 
 __device__ static __forceinline__ half exl3_decode(const uint32_t *tile,
 						   uint32_t position,
-						   uint32_t bits)
+						   uint32_t bits_x2)
 {
-	const uint32_t ring_bits = EXL3_TILE_VALUES * bits;
-	const uint32_t begin =
-		((position + 1u) * bits + ring_bits - EXL3_STATE_BITS) %
-		ring_bits;
+	const uint32_t ring_bits =
+		EXL3_TILE_VALUES * bits_x2 / EXL3_HALF_BITS_PER_BIT;
+	const uint32_t begin = (exl3_window_end(position, bits_x2) + ring_bits -
+				EXL3_STATE_BITS) %
+			       ring_bits;
 	const uint32_t word = begin / EXL3_WORD_BITS;
 	const uint32_t shift = begin % EXL3_WORD_BITS;
 	uint32_t window = tile[word] << shift;
@@ -49,8 +53,8 @@ __device__ static __forceinline__ half exl3_decode(const uint32_t *tile,
 }
 
 /* Every MMA lane owns eight consecutive ring symbols. Their preceding history
- * and all eight advances fit in two cyclic words for K2/K3. Decode those words
- * once per tile; no full matrix or floating-point intermediate is introduced. */
+ * and all eight advances fit in two cyclic words (exl3_lane_ring). Decode those
+ * words once per tile; no full matrix or floating-point intermediate is introduced. */
 __device__ static __forceinline__ half exl3_state_value(uint32_t state)
 {
 	const uint32_t product = state * EXL3_MUL1_MULTIPLIER;
@@ -74,13 +78,14 @@ exl3_reconstruct(struct exl3_reconstruct_record record, unsigned char *arena)
 	const uint64_t tile_index = (uint64_t)(input / EXL3_TILE) *
 					    (record.output_size / EXL3_TILE) +
 				    output / EXL3_TILE;
+	const uint32_t bits_x2 = exl3_bits_x2(record.bits_per_weight);
 	const uint32_t *const tile =
 		(const uint32_t *)(arena + record.matrix_offset) +
-		tile_index * EXL3_TILE_VALUES * record.bits_per_weight /
-			EXL3_WORD_BITS;
+		tile_index * (EXL3_TILE_VALUES / EXL3_HALF_BITS_PER_BIT *
+			      bits_x2 / EXL3_WORD_BITS);
 	((half *)(arena + record.output_offset))[element] = exl3_decode(
 		tile, exl3_ring_position(input % EXL3_TILE, output % EXL3_TILE),
-		record.bits_per_weight);
+		bits_x2);
 }
 
 #include "anemone/linear_records.h"
@@ -93,10 +98,6 @@ exl3_reconstruct(struct exl3_reconstruct_record record, unsigned char *arena)
 #define MMA_OUTPUT_HALF 8u
 #define MMA_COLUMNS 8u
 #define MMA_COLUMNS_PER_LANE 2u
-#define MMA_CHAIN_LOW_EVEN 0u
-#define MMA_CHAIN_LOW_ODD 1u
-#define MMA_CHAIN_HIGH_EVEN 2u
-#define MMA_CHAIN_HIGH_ODD 3u
 
 /* The same Sylvester butterfly for independent input and output passes. Every
  * thread reaches every barrier; job columns run serially with disjoint writes. */
@@ -125,8 +126,8 @@ __device__ static void exl3_hadamard(float *values)
 __device__ static __forceinline__ uint64_t
 exl3_codes_bytes(struct exl3_expert_record record)
 {
-	return (uint64_t)record.input_size * record.inner_size /
-	       EXL3_BITS_PER_BYTE * record.bits_per_weight;
+	return exl3_code_bytes(record.input_size, record.inner_size,
+			       exl3_bits_x2(record.bits_per_weight));
 }
 
 extern "C" __global__ void exl3_input(struct exl3_expert_record record,
@@ -174,7 +175,7 @@ __device__ static __forceinline__ uint32_t exl3_half_pair(half low, half high)
 /* A is 16 output channels of a decoded tile, B is up to eight job rows.
  * Four contiguous K slices accumulate independently, then reduce in fixed order.
  * Decoded weights exist only in registers; no expanded expert is materialized. */
-template <uint32_t bits, bool down, uint32_t slices>
+template <uint32_t bits_x2, bool down, uint32_t slices>
 __device__ static void exl3_product(struct exl3_expert_record record,
 				    unsigned char *arena)
 {
@@ -202,23 +203,28 @@ __device__ static void exl3_product(struct exl3_expert_record record,
 	const uint32_t tile_count = inputs / EXL3_TILE;
 	const uint32_t first = tile_count * slice / slices;
 	const uint32_t last = tile_count * (slice + 1u) / slices;
+	typedef exl3_lane_ring<bits_x2> ring;
+	/* a whole K keeps the K2/K3 entries' own index expressions (their SASS as before): K bits a symbol */
+	constexpr uint32_t whole_bits =
+		bits_x2 % EXL3_HALF_BITS_PER_BIT == 0 ?
+			bits_x2 / EXL3_HALF_BITS_PER_BIT :
+			0u;
 	for (uint32_t inner_tile = first; inner_tile < last; inner_tile++) {
+		const uint64_t tile_index =
+			(uint64_t)inner_tile * (outputs / EXL3_TILE) +
+			blockIdx.x;
 		const uint32_t *const tile =
-			matrix + ((uint64_t)inner_tile * (outputs / EXL3_TILE) +
-				  blockIdx.x) *
-					 EXL3_TILE_VALUES * bits /
-					 EXL3_WORD_BITS;
+			matrix + (whole_bits != 0 ?
+					  tile_index * EXL3_TILE_VALUES *
+						  whole_bits / EXL3_WORD_BITS :
+					  tile_index * ring::ring_words);
 		uint32_t weights[MMA_CHAINS];
-		const uint32_t ring_bits = EXL3_TILE_VALUES * bits;
-		const uint32_t begin =
-			((lane * FRAGMENT_VALUES_PER_LANE + 1u) * bits +
-			 ring_bits - EXL3_STATE_BITS) %
-			ring_bits;
+		const uint32_t begin = ring::begin(lane);
 		const uint32_t word = begin / EXL3_WORD_BITS;
 		const uint32_t shift = begin % EXL3_WORD_BITS;
 		const uint64_t packed =
 			((uint64_t)tile[word] << EXL3_WORD_BITS) |
-			tile[(word + 1u) % (ring_bits / EXL3_WORD_BITS)];
+			tile[(word + 1u) % ring::ring_words];
 
 		for (uint32_t fragment = 0; fragment < MMA_CHAINS; fragment++) {
 			const uint32_t element =
@@ -227,12 +233,15 @@ __device__ static void exl3_product(struct exl3_expert_record record,
 				(fragment / MMA_PAIR) * FRAGMENT_HIGH_ROW_BIT;
 			const uint32_t first_shift = EXL3_WORD_BITS +
 						     EXL3_STATE_BITS - shift -
-						     element * bits;
+						     ring::offset(element);
 			const uint32_t low_state =
 				(uint32_t)(packed >> first_shift) &
 				EXL3_HALF_MASK;
 			const uint32_t high_state =
-				(uint32_t)(packed >> (first_shift - bits)) &
+				(uint32_t)(packed >>
+					   (first_shift -
+					    (ring::offset(element + 1u) -
+					     ring::offset(element)))) &
 				EXL3_HALF_MASK;
 			weights[fragment] =
 				exl3_half_pair(exl3_state_value(low_state),
@@ -252,18 +261,7 @@ __device__ static void exl3_product(struct exl3_expert_record record,
 		const uint32_t high = exl3_half_pair(
 			operands[row_offset + input + MMA_INPUT_HALF],
 			operands[row_offset + input + MMA_INPUT_HALF + 1u]);
-		asm volatile(
-			"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-			"{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
-			: "+f"(accumulators[MMA_CHAIN_LOW_EVEN]),
-			  "+f"(accumulators[MMA_CHAIN_LOW_ODD]),
-			  "+f"(accumulators[MMA_CHAIN_HIGH_EVEN]),
-			  "+f"(accumulators[MMA_CHAIN_HIGH_ODD])
-			: "r"(weights[MMA_CHAIN_LOW_EVEN]),
-			  "r"(weights[MMA_CHAIN_LOW_ODD]),
-			  "r"(weights[MMA_CHAIN_HIGH_EVEN]),
-			  "r"(weights[MMA_CHAIN_HIGH_ODD]), "r"(low),
-			  "r"(high));
+		exl3_mma_f16(accumulators, weights, low, high, job->row_count);
 	}
 	__shared__ float partial[slices][EXL3_WARP][MMA_CHAINS];
 	for (uint32_t chain = 0; chain < MMA_CHAINS; chain++) {
@@ -294,26 +292,26 @@ __device__ static void exl3_product(struct exl3_expert_record record,
 	}
 }
 
-#define EXL3_PRODUCT_ENTRY(name, bits, down, slices)                      \
+#define EXL3_PRODUCT_ENTRY(name, bits_x2, down, slices)                   \
 	extern "C" __global__ void name(struct exl3_expert_record record, \
 					unsigned char *arena)             \
 	{                                                                 \
-		exl3_product<bits, down, slices>(record, arena);          \
+		exl3_product<bits_x2, down, slices>(record, arena);       \
 	}
-EXL3_PRODUCT_ENTRY(exl3_gate_up_k2, EXL3_MINIMUM_BITS, false,
-		   EXL3_PRODUCT_SLICES)
-EXL3_PRODUCT_ENTRY(exl3_gate_up_k2_s8, EXL3_MINIMUM_BITS, false,
-		   EXL3_RELAXED_SLICES)
-EXL3_PRODUCT_ENTRY(exl3_gate_up_k3, EXL3_MAXIMUM_BITS, false,
-		   EXL3_PRODUCT_SLICES)
-EXL3_PRODUCT_ENTRY(exl3_gate_up_k3_s8, EXL3_MAXIMUM_BITS, false,
-		   EXL3_RELAXED_SLICES)
-EXL3_PRODUCT_ENTRY(exl3_down_k2, EXL3_MINIMUM_BITS, true, EXL3_PRODUCT_SLICES)
-EXL3_PRODUCT_ENTRY(exl3_down_k2_s8, EXL3_MINIMUM_BITS, true,
-		   EXL3_RELAXED_SLICES)
-EXL3_PRODUCT_ENTRY(exl3_down_k3, EXL3_MAXIMUM_BITS, true, EXL3_PRODUCT_SLICES)
-EXL3_PRODUCT_ENTRY(exl3_down_k3_s8, EXL3_MAXIMUM_BITS, true,
-		   EXL3_RELAXED_SLICES)
+#define EXL3_PRODUCT_WIDTH(width, bits_x2)                            \
+	EXL3_PRODUCT_ENTRY(exl3_gate_up_##width, bits_x2, false,      \
+			   EXL3_PRODUCT_SLICES)                       \
+	EXL3_PRODUCT_ENTRY(exl3_gate_up_##width##_s8, bits_x2, false, \
+			   EXL3_RELAXED_SLICES)                       \
+	EXL3_PRODUCT_ENTRY(exl3_down_##width, bits_x2, true,          \
+			   EXL3_PRODUCT_SLICES)                       \
+	EXL3_PRODUCT_ENTRY(exl3_down_##width##_s8, bits_x2, true,     \
+			   EXL3_RELAXED_SLICES)
+EXL3_PRODUCT_WIDTH(k2, EXL3_BITS_X2_K2)
+EXL3_PRODUCT_WIDTH(k2_5, EXL3_BITS_X2_K2_5)
+EXL3_PRODUCT_WIDTH(k3, EXL3_BITS_X2_K3)
+EXL3_PRODUCT_WIDTH(k4, EXL3_BITS_X2_K4)
+#undef EXL3_PRODUCT_WIDTH
 #undef EXL3_PRODUCT_ENTRY
 
 extern "C" __global__ void exl3_activate(struct exl3_expert_record record,
@@ -450,10 +448,9 @@ bb_exl3_activate_output_shard(struct bb_exl3_shard_activation_record arguments,
 	const half *const up_scale =
 		(const half *)(arena + job->up_offset + codes_bytes) +
 		record.input_size;
-	const uint64_t down_codes_bytes = (uint64_t)arguments.down_input_size *
-					  arguments.down_output_size /
-					  EXL3_BITS_PER_BYTE *
-					  record.bits_per_weight;
+	const uint64_t down_codes_bytes = exl3_code_bytes(
+		arguments.down_input_size, arguments.down_output_size,
+		exl3_bits_x2(record.bits_per_weight));
 	const half *const down_scale =
 		(const half *)(arena + job->down_offset + down_codes_bytes) +
 		arguments.down_input_begin;

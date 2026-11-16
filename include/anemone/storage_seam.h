@@ -50,6 +50,9 @@ struct storage_description {
 	uint64_t byte_count; /* the size of the pack: the same on every copy */
 	uint32_t copy_count; /* as given to reader_open */
 	uint32_t block_alignment_bytes; /* the largest of the copies'; a power of two */
+	/* copy 0 as it was opened, so that a caller that resolved its path first can tell the open met the same file;
+	 * both 0 when the storage opened none */
+	uint64_t first_device, first_inode;
 };
 
 struct storage_reader;

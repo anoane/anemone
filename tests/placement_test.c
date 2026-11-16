@@ -159,7 +159,8 @@ static const struct placement_case placement_cases[] = {
 	  .expected_status = STATUS_OK,
 	  .expected_on_demand_units_per_owner = 0,
 	  .expected_card_of_unit = { 1, 3 } },
-	/* the stages own 3, 1 and 0: the count 1 asks for 2 + 2 + 1 blocks, the count 2 for 3 + 2 + 1, the count 3 for 7 */
+	/* the stages own 3, 1 and 0: the count 1 asks for 2 + 2 + 1 blocks, the count 2 for 3 + 2 + 1, the count 3 for
+	 * 7 */
 	{ .what = "stages that own different numbers, count 1",
 	  .units = { STAGE_UNIT(1), ON_DEMAND_UNIT(1), ON_DEMAND_UNIT(1),
 		     ON_DEMAND_UNIT(1), STAGE_UNIT(1), ON_DEMAND_UNIT(1),
@@ -380,7 +381,8 @@ static void capture_end(char *text, size_t text_capacity)
 {
     ssize_t byte_count = -1;
     if (fflush(stderr) == 0) {
-        byte_count = pread(capture_descriptor, text, text_capacity - 1, 0);
+	    byte_count = test_log_capture_read(capture_descriptor, text,
+					       text_capacity);
     }
     if (dup2(error_stream_descriptor, STDERR_FILENO) != STDERR_FILENO || byte_count < 0) {
         give_up("the temporary file could not be read back");

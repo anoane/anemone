@@ -201,7 +201,10 @@ static void capture_begin(void)
 static void capture_end(char *text, size_t text_capacity)
 {
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, text_capacity - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    text_capacity) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';
@@ -527,8 +530,8 @@ static void test_staged_widths(void)
 								 [BFLOAT16]) &&
 				       launch.dynamic_shared_byte_count ==
 					       (staged ?
-							HIDDEN *
-								LINEAR_MAXIMUM_ROWS *
+							(size_t)(HIDDEN *
+								LINEAR_MAXIMUM_ROWS) *
 								sizeof(uint16_t) :
 							0u),
 			       "whole output coverage and shared rows match the selected width or wide fallback");
@@ -600,7 +603,8 @@ static void test_products(void)
 			       launch.argument_byte_count ==
 				       DENSE_ARGUMENT_BYTES &&
 			       launch.branch == LAUNCH_CHAIN,
-		       "the function of its form, type and row count, the grid of its outputs, the block of the family");
+		       "the function of its form, type and row count, the grid of its outputs, the block of the "
+		       "family");
 		expect(memcmp(launch.argument, record_bytes,
 			      sizeof(record_bytes)) == 0,
 		       "the record member by member, zero behind it");
@@ -671,7 +675,8 @@ static void test_wide_products(void)
 			const uint32_t groups =
 				(row_count + LINEAR_MAXIMUM_ROWS - 1u) /
 				LINEAR_MAXIMUM_ROWS;
-			/* class 80's skinny form for a matrix of at most DENSE_SKINNY_MOST_OUTPUTS_VALUE float32 outputs */
+			/* class 80's skinny form for a matrix of at most DENSE_SKINNY_MOST_OUTPUTS_VALUE float32
+			 * outputs */
 			const uint32_t regime =
 				row_count > DENSE_SKINNY_MANY_ROWS ? 1u : 0u;
 			const bool is_skinny =
@@ -725,7 +730,8 @@ static void test_wide_products(void)
 					      sizeof(record_bytes)) == 0 &&
 				       test_host_memory_backend.launch_run(
 					       card, &launch, 1) == STATUS_OK,
-			       "a wide launch: the class's form of the weights' type (class 80's skinny one for a skinny float32 "
+			       "a wide launch: the class's form of the weights' type (class 80's skinny one for a "
+			       "skinny float32 "
 			       "matrix), its grid over the groups, the thin record, taken by the card");
 		}
 		test_host_memory_backend.card_close(card, 0);

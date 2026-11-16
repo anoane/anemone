@@ -77,7 +77,10 @@ static void capture_end_expecting(const char *words, const char *what)
 {
     char text[CAPTURE_CAPACITY];
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, sizeof(text) - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    sizeof(text)) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';
@@ -304,8 +307,10 @@ static void test_tables_only(void)
     test_memory_storage_reset();
     context_text = "the tables held through another storage";
     source_description =
-	    (struct storage_description){ pack_byte_count, 1,
-					  SMALLER_BLOCK_ALIGNMENT };
+	    (struct storage_description){ .byte_count = pack_byte_count,
+					  .copy_count = 1,
+					  .block_alignment_bytes =
+						  SMALLER_BLOCK_ALIGNMENT };
     source_describe_status = STATUS_OK;
     source_bytes = pack;
     source_failing_read = 0;

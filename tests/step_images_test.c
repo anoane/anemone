@@ -14,9 +14,12 @@
 #include "anemone/vision.h"
 #include "host_memory_backend.h"
 #include "model_v41.h"
+#include "serving_cursor.h"
 #include "step_driver.h"
 
 #define TEST_SESSIONS 2u
+#define TEST_WIDE_SESSIONS \
+	64u /* a plan of more slots than a word's bits: the slot table is sized at attach */
 #define TEST_CONTEXT 32u
 #define TEST_ARENA_BYTES (300ull * 1024ull * 1024ull)
 #define TEST_WEIGHT_BYTES (96ull * 1024ull * 1024ull)
@@ -427,6 +430,27 @@ int main(void)
 	status = step_images_attach(&driver, plan, ARITHMETIC_CLASS_SM_80);
 	image_runtime_require(status == STATUS_INVALID_ARGUMENT,
 			      "duplicate attach refused");
+	step_images_free(&driver, false);
+	plan->limits.session_capacity = TEST_WIDE_SESSIONS;
+	status = step_images_attach(&driver, plan, ARITHMETIC_CLASS_SM_80);
+	step_images_cancel(&driver, TEST_WIDE_SESSIONS - 1u);
+	step_images_cancel(&driver, TEST_WIDE_SESSIONS);
+	image_runtime_require(
+		status == STATUS_OK &&
+			!step_image_position(&driver, TEST_WIDE_SESSIONS - 1u,
+					     TEST_FIRST_BEGIN) &&
+			!step_image_position(&driver, TEST_WIDE_SESSIONS,
+					     TEST_FIRST_BEGIN),
+		"a plan of 64 slots attaches with its own slot table");
+	step_images_free(&driver, false);
+	plan->limits.session_capacity = SERVING_SLOTS_MOST + 1u;
+	image_runtime_require(step_images_attach(&driver, plan,
+						 ARITHMETIC_CLASS_SM_80) ==
+				      STATUS_INVALID_ARGUMENT,
+			      "more slots than SERVING_SLOTS_MOST refused");
+	plan->limits.session_capacity = TEST_SESSIONS;
+	status = step_images_attach(&driver, plan, ARITHMETIC_CLASS_SM_80);
+	image_runtime_require(status == STATUS_OK, "attach again at 2 slots");
 	status = step_images_begin(&driver, 0, &inputs);
 	image_runtime_require(status == STATUS_OK, "begin first image request");
 	image_runtime_preflight(&driver, &inputs);

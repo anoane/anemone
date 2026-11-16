@@ -1,0 +1,931 @@
+{
+  "spdx": "AGPL-3.0-or-later",
+  "upstream": {
+    "url": "https://github.com/vllm-project/vllm/tree/1ecc9cc4ce6626352df39e4364579ec376c10761",
+    "commit": "1ecc9cc4ce6626352df39e4364579ec376c10761",
+    "retrieved": "2026-11-07",
+    "contract": "v1 default buckets; one API server; Prometheus text 0.0.4"
+  },
+  "metadata_attribution": "vLLM contributors (Apache-2.0); prometheus/client_python (Apache-2.0); prometheus-fastapi-instrumentator (ISC). Metadata only; no upstream implementation copied.",
+  "expected_metrics_v1": [
+    "vllm:num_requests_running",
+    "vllm:num_requests_waiting",
+    "vllm:num_requests_waiting_by_reason",
+    "vllm:kv_cache_usage_perc",
+    "vllm:prefix_cache_queries",
+    "vllm:prefix_cache_hits",
+    "vllm:num_preemptions_total",
+    "vllm:admission_rejections_total",
+    "vllm:prompt_tokens_total",
+    "vllm:generation_tokens_total",
+    "vllm:iteration_tokens_total",
+    "vllm:cache_config_info",
+    "vllm:request_success_total",
+    "vllm:request_prompt_tokens_sum",
+    "vllm:request_prompt_tokens_bucket",
+    "vllm:request_prompt_tokens_count",
+    "vllm:request_generation_tokens_sum",
+    "vllm:request_generation_tokens_bucket",
+    "vllm:request_generation_tokens_count",
+    "vllm:request_params_n_sum",
+    "vllm:request_params_n_bucket",
+    "vllm:request_params_n_count",
+    "vllm:request_params_max_tokens_sum",
+    "vllm:request_params_max_tokens_bucket",
+    "vllm:request_params_max_tokens_count",
+    "vllm:time_to_first_token_seconds_sum",
+    "vllm:time_to_first_token_seconds_bucket",
+    "vllm:time_to_first_token_seconds_count",
+    "vllm:inter_token_latency_seconds_sum",
+    "vllm:inter_token_latency_seconds_bucket",
+    "vllm:inter_token_latency_seconds_count",
+    "vllm:e2e_request_latency_seconds_sum",
+    "vllm:e2e_request_latency_seconds_bucket",
+    "vllm:e2e_request_latency_seconds_count",
+    "vllm:request_queue_time_seconds_sum",
+    "vllm:request_queue_time_seconds_bucket",
+    "vllm:request_queue_time_seconds_count",
+    "vllm:request_inference_time_seconds_sum",
+    "vllm:request_inference_time_seconds_bucket",
+    "vllm:request_inference_time_seconds_count",
+    "vllm:request_prefill_time_seconds_sum",
+    "vllm:request_prefill_time_seconds_bucket",
+    "vllm:request_prefill_time_seconds_count",
+    "vllm:request_decode_time_seconds_sum",
+    "vllm:request_decode_time_seconds_bucket",
+    "vllm:request_decode_time_seconds_count",
+    "vllm:request_num_preemptions_sum",
+    "vllm:request_num_preemptions_bucket",
+    "vllm:request_num_preemptions_count"
+  ],
+  "families": {
+    "vllm:num_requests_running": {
+      "type": "gauge",
+      "help": "Number of requests in model execution batches.",
+      "labels": [
+        "model_name",
+        "engine"
+      ]
+    },
+    "vllm:num_requests_waiting": {
+      "type": "gauge",
+      "help": "Number of requests waiting to be processed.",
+      "labels": [
+        "model_name",
+        "engine"
+      ]
+    },
+    "vllm:num_requests_waiting_by_reason": {
+      "type": "gauge",
+      "help": "Number of waiting requests by reason. Reason labels: 'capacity' = waiting for scheduling capacity; 'deferred' = deferred by transient constraints (LoRA budget, KV transfer, blocked status). Sum of all reasons equals vllm:num_requests_waiting.",
+      "labels": [
+        "model_name",
+        "engine",
+        "reason"
+      ]
+    },
+    "vllm:kv_cache_usage_perc": {
+      "type": "gauge",
+      "help": "KV-cache usage. 1 means 100 percent usage.",
+      "labels": [
+        "model_name",
+        "engine"
+      ]
+    },
+    "vllm:prefix_cache_queries_total": {
+      "type": "counter",
+      "help": "Prefix cache queries, in terms of number of queried tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ]
+    },
+    "vllm:prefix_cache_hits_total": {
+      "type": "counter",
+      "help": "Prefix cache hits, in terms of number of cached tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ]
+    },
+    "vllm:prompt_tokens_total": {
+      "type": "counter",
+      "help": "Number of prefill tokens processed.",
+      "labels": [
+        "model_name",
+        "engine"
+      ]
+    },
+    "vllm:prompt_tokens_cached_total": {
+      "type": "counter",
+      "help": "Number of cached prompt tokens (local + external).",
+      "labels": [
+        "model_name",
+        "engine"
+      ]
+    },
+    "vllm:generation_tokens_total": {
+      "type": "counter",
+      "help": "Number of generation tokens processed.",
+      "labels": [
+        "model_name",
+        "engine"
+      ]
+    },
+    "vllm:num_preemptions_total": {
+      "type": "counter",
+      "help": "Cumulative number of preemption from the engine.",
+      "labels": [
+        "model_name",
+        "engine"
+      ]
+    },
+    "vllm:admission_rejections_total": {
+      "type": "counter",
+      "help": "Number of admission attempts rejected by a queue limit, by reason.",
+      "labels": [
+        "model_name",
+        "reason"
+      ]
+    },
+    "vllm:request_success_total": {
+      "type": "counter",
+      "help": "Count of successfully processed requests.",
+      "labels": [
+        "model_name",
+        "engine",
+        "finished_reason"
+      ]
+    },
+    "vllm:request_prompt_tokens": {
+      "type": "histogram",
+      "help": "Number of prefill tokens processed.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": "build_1_2_5_buckets(max_model_len)"
+    },
+    "vllm:request_generation_tokens": {
+      "type": "histogram",
+      "help": "Number of generation tokens processed.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": "build_1_2_5_buckets(max_model_len)"
+    },
+    "vllm:request_params_max_tokens": {
+      "type": "histogram",
+      "help": "Histogram of the max_tokens request parameter.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": "build_1_2_5_buckets(max_model_len)"
+    },
+    "vllm:request_max_num_generation_tokens": {
+      "type": "histogram",
+      "help": "Histogram of maximum number of requested generation tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": "build_1_2_5_buckets(max_model_len)"
+    },
+    "vllm:request_params_n": {
+      "type": "histogram",
+      "help": "Histogram of the n request parameter.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        1,
+        2,
+        5,
+        10,
+        20
+      ]
+    },
+    "vllm:iteration_tokens_total": {
+      "type": "histogram",
+      "help": "Histogram of number of tokens per engine_step.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        1,
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ]
+    },
+    "vllm:time_to_first_token_seconds": {
+      "type": "histogram",
+      "help": "Histogram of time to first token in seconds.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        0.001,
+        0.005,
+        0.01,
+        0.02,
+        0.04,
+        0.06,
+        0.08,
+        0.1,
+        0.25,
+        0.5,
+        0.75,
+        1.0,
+        2.5,
+        5.0,
+        7.5,
+        10.0,
+        20.0,
+        40.0,
+        80.0,
+        160.0,
+        640.0,
+        2560.0
+      ]
+    },
+    "vllm:inter_token_latency_seconds": {
+      "type": "histogram",
+      "help": "Histogram of inter-token latency in seconds.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.075,
+        0.1,
+        0.15,
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.75,
+        1.0,
+        2.5,
+        5.0,
+        7.5,
+        10.0,
+        20.0,
+        40.0,
+        80.0
+      ]
+    },
+    "vllm:request_time_per_output_token_seconds": {
+      "type": "histogram",
+      "help": "Histogram of time_per_output_token_seconds per request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.075,
+        0.1,
+        0.15,
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.75,
+        1.0,
+        2.5,
+        5.0,
+        7.5,
+        10.0,
+        20.0,
+        40.0,
+        80.0
+      ]
+    },
+    "vllm:e2e_request_latency_seconds": {
+      "type": "histogram",
+      "help": "Histogram of e2e request latency in seconds.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        0.3,
+        0.5,
+        0.8,
+        1.0,
+        1.5,
+        2.0,
+        2.5,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        30.0,
+        40.0,
+        50.0,
+        60.0,
+        120.0,
+        240.0,
+        480.0,
+        960.0,
+        1920.0,
+        7680.0
+      ]
+    },
+    "vllm:request_queue_time_seconds": {
+      "type": "histogram",
+      "help": "Histogram of time spent in WAITING phase for request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        0.3,
+        0.5,
+        0.8,
+        1.0,
+        1.5,
+        2.0,
+        2.5,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        30.0,
+        40.0,
+        50.0,
+        60.0,
+        120.0,
+        240.0,
+        480.0,
+        960.0,
+        1920.0,
+        7680.0
+      ]
+    },
+    "vllm:request_prefill_time_seconds": {
+      "type": "histogram",
+      "help": "Histogram of time spent in PREFILL phase for request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        0.3,
+        0.5,
+        0.8,
+        1.0,
+        1.5,
+        2.0,
+        2.5,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        30.0,
+        40.0,
+        50.0,
+        60.0,
+        120.0,
+        240.0,
+        480.0,
+        960.0,
+        1920.0,
+        7680.0
+      ]
+    },
+    "vllm:request_decode_time_seconds": {
+      "type": "histogram",
+      "help": "Histogram of time spent in DECODE phase for request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        0.3,
+        0.5,
+        0.8,
+        1.0,
+        1.5,
+        2.0,
+        2.5,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        30.0,
+        40.0,
+        50.0,
+        60.0,
+        120.0,
+        240.0,
+        480.0,
+        960.0,
+        1920.0,
+        7680.0
+      ]
+    },
+    "vllm:request_inference_time_seconds": {
+      "type": "histogram",
+      "help": "Histogram of time spent in RUNNING phase for request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        0.3,
+        0.5,
+        0.8,
+        1.0,
+        1.5,
+        2.0,
+        2.5,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        30.0,
+        40.0,
+        50.0,
+        60.0,
+        120.0,
+        240.0,
+        480.0,
+        960.0,
+        1920.0,
+        7680.0
+      ]
+    },
+    "vllm:request_num_preemptions": {
+      "type": "histogram",
+      "help": "Histogram of the number of times a request was preempted.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        10,
+        20
+      ]
+    },
+    "vllm:request_prefill_kv_computed_tokens": {
+      "type": "histogram",
+      "help": "Histogram of new KV tokens computed during prefill (excluding cached tokens).",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "buckets": "build_1_2_5_buckets(max_model_len)"
+    },
+    "vllm:cache_config_info": {
+      "type": "gauge",
+      "help": "Information of the LLMEngine CacheConfig",
+      "labels": [
+        "engine",
+        "enable_prefix_caching",
+        "kv_cache_size_tokens",
+        "kv_cache_max_concurrency"
+      ]
+    },
+    "vllm:spec_decode_num_drafts_total": {
+      "type": "counter",
+      "help": "Number of spec decoding drafts.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "conditional": "speculation enabled"
+    },
+    "vllm:spec_decode_num_draft_tokens_total": {
+      "type": "counter",
+      "help": "Number of draft tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "conditional": "speculation enabled"
+    },
+    "vllm:spec_decode_num_accepted_tokens_total": {
+      "type": "counter",
+      "help": "Number of accepted tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "conditional": "speculation enabled"
+    },
+    "vllm:spec_decode_num_accepted_tokens_per_pos_total": {
+      "type": "counter",
+      "help": "Accepted tokens per draft position.",
+      "labels": [
+        "model_name",
+        "engine",
+        "position"
+      ],
+      "conditional": "speculation enabled"
+    },
+    "process_virtual_memory_bytes": {
+      "type": "gauge",
+      "help": "Virtual memory size in bytes.",
+      "labels": []
+    },
+    "process_resident_memory_bytes": {
+      "type": "gauge",
+      "help": "Resident memory size in bytes.",
+      "labels": []
+    },
+    "process_start_time_seconds": {
+      "type": "gauge",
+      "help": "Start time of the process since unix epoch in seconds.",
+      "labels": []
+    },
+    "process_cpu_seconds_total": {
+      "type": "counter",
+      "help": "Total user and system CPU time spent in seconds.",
+      "labels": []
+    },
+    "process_open_fds": {
+      "type": "gauge",
+      "help": "Number of open file descriptors.",
+      "labels": []
+    },
+    "process_max_fds": {
+      "type": "gauge",
+      "help": "Maximum number of open file descriptors.",
+      "labels": []
+    },
+    "http_requests_total": {
+      "type": "counter",
+      "help": "Total number of requests by method, status and handler.",
+      "labels": [
+        "handler",
+        "method",
+        "status"
+      ]
+    },
+    "http_request_size_bytes": {
+      "type": "summary",
+      "help": "Content length of incoming requests by handler. Only value of header is respected. Otherwise ignored. No percentile calculated. ",
+      "labels": [
+        "handler"
+      ]
+    },
+    "http_response_size_bytes": {
+      "type": "summary",
+      "help": "Content length of outgoing responses by handler. Only value of header is respected. Otherwise ignored. No percentile calculated. ",
+      "labels": [
+        "handler"
+      ]
+    },
+    "http_request_duration_seconds": {
+      "type": "histogram",
+      "help": "Latency with only few buckets by handler. Made to be only used if aggregation by handler is important. ",
+      "labels": [
+        "handler",
+        "method"
+      ],
+      "buckets": [
+        0.1,
+        0.5,
+        1
+      ]
+    },
+    "http_request_duration_highr_seconds": {
+      "type": "histogram",
+      "help": "Latency with many buckets but no API specific labels. Made for more accurate percentile calculations. ",
+      "labels": [],
+      "buckets": [
+        0.01,
+        0.025,
+        0.05,
+        0.075,
+        0.1,
+        0.25,
+        0.5,
+        0.75,
+        1,
+        1.5,
+        2,
+        2.5,
+        3,
+        3.5,
+        4,
+        4.5,
+        5,
+        7.5,
+        10,
+        30,
+        60
+      ]
+    },
+    "vllm:prefix_cache_queries_created": {
+      "help": "Prefix cache queries, in terms of number of queried tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:prefix_cache_hits_created": {
+      "help": "Prefix cache hits, in terms of number of cached tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:prompt_tokens_created": {
+      "help": "Number of prefill tokens processed.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:prompt_tokens_cached_created": {
+      "help": "Number of cached prompt tokens (local + external).",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:generation_tokens_created": {
+      "help": "Number of generation tokens processed.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:num_preemptions_created": {
+      "help": "Cumulative number of preemption from the engine.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:admission_rejections_created": {
+      "help": "Number of admission attempts rejected by a queue limit, by reason.",
+      "labels": [
+        "model_name",
+        "reason"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_success_created": {
+      "help": "Count of successfully processed requests.",
+      "labels": [
+        "model_name",
+        "engine",
+        "finished_reason"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_prompt_tokens_created": {
+      "help": "Number of prefill tokens processed.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_generation_tokens_created": {
+      "help": "Number of generation tokens processed.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_params_max_tokens_created": {
+      "help": "Histogram of the max_tokens request parameter.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_max_num_generation_tokens_created": {
+      "help": "Histogram of maximum number of requested generation tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_params_n_created": {
+      "help": "Histogram of the n request parameter.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:iteration_tokens_total_created": {
+      "help": "Histogram of number of tokens per engine_step.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:time_to_first_token_seconds_created": {
+      "help": "Histogram of time to first token in seconds.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:inter_token_latency_seconds_created": {
+      "help": "Histogram of inter-token latency in seconds.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_time_per_output_token_seconds_created": {
+      "help": "Histogram of time_per_output_token_seconds per request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:e2e_request_latency_seconds_created": {
+      "help": "Histogram of e2e request latency in seconds.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_queue_time_seconds_created": {
+      "help": "Histogram of time spent in WAITING phase for request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_prefill_time_seconds_created": {
+      "help": "Histogram of time spent in PREFILL phase for request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_decode_time_seconds_created": {
+      "help": "Histogram of time spent in DECODE phase for request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_inference_time_seconds_created": {
+      "help": "Histogram of time spent in RUNNING phase for request.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_num_preemptions_created": {
+      "help": "Histogram of the number of times a request was preempted.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:request_prefill_kv_computed_tokens_created": {
+      "help": "Histogram of new KV tokens computed during prefill (excluding cached tokens).",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "type": "gauge"
+    },
+    "vllm:spec_decode_num_drafts_created": {
+      "help": "Number of spec decoding drafts.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "conditional": "speculation enabled",
+      "type": "gauge"
+    },
+    "vllm:spec_decode_num_draft_tokens_created": {
+      "help": "Number of draft tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "conditional": "speculation enabled",
+      "type": "gauge"
+    },
+    "vllm:spec_decode_num_accepted_tokens_created": {
+      "help": "Number of accepted tokens.",
+      "labels": [
+        "model_name",
+        "engine"
+      ],
+      "conditional": "speculation enabled",
+      "type": "gauge"
+    },
+    "vllm:spec_decode_num_accepted_tokens_per_pos_created": {
+      "help": "Accepted tokens per draft position.",
+      "labels": [
+        "model_name",
+        "engine",
+        "position"
+      ],
+      "conditional": "speculation enabled",
+      "type": "gauge"
+    },
+    "http_requests_created": {
+      "help": "Total number of requests by method, status and handler.",
+      "labels": [
+        "handler",
+        "method",
+        "status"
+      ],
+      "type": "gauge"
+    },
+    "http_request_size_bytes_created": {
+      "help": "Content length of incoming requests by handler. Only value of header is respected. Otherwise ignored. No percentile calculated. ",
+      "labels": [
+        "handler"
+      ],
+      "type": "gauge"
+    },
+    "http_response_size_bytes_created": {
+      "help": "Content length of outgoing responses by handler. Only value of header is respected. Otherwise ignored. No percentile calculated. ",
+      "labels": [
+        "handler"
+      ],
+      "type": "gauge"
+    },
+    "http_request_duration_seconds_created": {
+      "help": "Latency with only few buckets by handler. Made to be only used if aggregation by handler is important. ",
+      "labels": [
+        "handler",
+        "method"
+      ],
+      "type": "gauge"
+    },
+    "http_request_duration_highr_seconds_created": {
+      "help": "Latency with many buckets but no API specific labels. Made for more accurate percentile calculations. ",
+      "labels": [],
+      "type": "gauge"
+    },
+    "vllm:prompt_tokens_by_source_total": {
+      "type": "counter",
+      "help": "Number of prompt tokens by source.",
+      "labels": [
+        "model_name",
+        "engine",
+        "source"
+      ]
+    },
+    "vllm:prompt_tokens_by_source_created": {
+      "type": "gauge",
+      "help": "Number of prompt tokens by source.",
+      "labels": [
+        "model_name",
+        "engine",
+        "source"
+      ]
+    }
+  }
+}

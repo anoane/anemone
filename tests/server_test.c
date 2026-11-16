@@ -57,8 +57,11 @@
 #define KEY_FILE_PATTERN "/tmp/anemone_server_test_XXXXXX"
 #define OWNER_ONLY 0600
 #define OTHERS_READ 0644
-#define QUEUED_CLIENTS (SERVER_MOST_WAITING + TEST_SERVING_MOST_SLOTS)
+#define QUEUED_CLIENTS (SERVER_MOST_WAITING + TEST_SERVING_SLOT_ROOM)
+#define WIDE_QUEUE_DEPTH 4u /* beside 64 slots: the queue past the slots */
 #define QUEUE_RESPONSE_CAPACITY 1048576u
+/* A wide server's statistics: the sessions and their windows grow with the slots (64 slots pass 256 KiB) */
+#define STATS_RESPONSE_CAPACITY 8388608u
 #define LIVE_TABLE_HEADINGS 3u
 #define LIVE_SCHEMA_VERSION 2u
 #define METRICS_SAMPLE_WAIT_NS 2200000000ull
@@ -314,16 +317,19 @@ static void test_heads(void)
 static void test_keys(void)
 {
     context_text = "the key compared";
-    expect(server_key_matches(KEY, strlen(KEY), KEY, strlen(KEY)), "the key");
-    expect(!server_key_matches(KEY, strlen(KEY), KEY, strlen(KEY) - 1u),
+    struct server_keys_record keys = { .count = 1 };
+    keys.entries[0].length = strlen(KEY);
+    memcpy(keys.entries[0].key, KEY, strlen(KEY));
+    expect(server_keys_match(&keys, KEY, strlen(KEY)) == 0, "the key");
+    expect(server_keys_match(&keys, KEY, strlen(KEY) - 1u) == keys.count,
 	   "a key cut short");
-    expect(!server_key_matches(KEY, strlen(KEY) - 1u, KEY, strlen(KEY)),
+    expect(server_keys_match(&keys, KEY, strlen(KEY) + 1u) == keys.count,
 	   "a key too long");
-    expect(!server_key_matches(KEY, strlen(KEY),
-			       "abcdefghijklmnop0123456789-._~+/!",
-			       strlen(KEY)),
+    expect(server_keys_match(&keys, "abcdefghijklmnop0123456789-._~+/!",
+			     strlen(KEY)) == keys.count,
 	   "a key one byte off");
-    expect(!server_key_matches("", 0, "", 0), "no key matches nothing");
+    expect(server_keys_match(&keys, "", 0) == keys.count,
+	   "no key matches nothing");
 }
 
 static void test_identity_metadata(void)
@@ -544,6 +550,21 @@ static size_t exchange_capacity(const char *request, char *response, size_t capa
 static size_t exchange(const char *request, char *response)
 {
     return exchange_capacity(request, response, RESPONSE_CAPACITY);
+}
+
+/* Whether a response of length bytes holds its whole body: as many bytes after the head as its Content-Length. */
+static bool response_whole(const char *response, size_t length)
+{
+	static const char field[] = "\r\nContent-Length: ";
+	const char *const head_end = strstr(response, "\r\n\r\n");
+	const char *const declared = strstr(response, field);
+	if (head_end == NULL || declared == NULL || declared > head_end)
+		return false;
+	const size_t head_bytes =
+		(size_t)(head_end - response) + strlen("\r\n\r\n");
+	return strtoull(declared + strlen(field), NULL, DECIMAL_BASE) +
+		       head_bytes ==
+	       length;
 }
 
 /* A chat request of this body, in request. */
@@ -1183,7 +1204,8 @@ static void test_responses(const struct text_tokenizer *tokenizer)
 	(void)snprintf(
 		body, sizeof(body),
 		"{\"input\":[{\"role\":\"user\",\"content\":\"call tools\"}],\"stream\":true,"
-		"\"seed\":%u,\"tools\":[{\"type\":\"function\",\"name\":\"list_agents\",\"parameters\":{},\"strict\":false}],"
+		"\"seed\":%u,\"tools\":[{\"type\":\"function\",\"name\":\"list_agents\",\"parameters\":{},"
+		"\"strict\":false}],"
 		"\"store\":false}",
 		(unsigned)SCRIPT_CALLS);
 	(void)snprintf(
@@ -1286,7 +1308,10 @@ static void test_connection_limit(uint32_t queue_depth, uint32_t active_slots)
         "Expect: 100-continue\r\nContent-Length: 1\r\n\r\n";
     static const char continuation[] = "HTTP/1.1 100 Continue\r\n\r\n";
     char response[sizeof(continuation)];
-    int clients[SERVER_MOST_CONNECTIONS];
+    /* the most this test asks for: the fixture's room of slots and the deepest queue */
+    int clients[SERVER_CONNECTION_FACTOR *
+			(TEST_SERVING_SLOT_ROOM + SERVER_MOST_WAITING) +
+		SERVER_CONNECTION_HEADROOM];
     const uint32_t limit =
 	    SERVER_CONNECTION_FACTOR * (active_slots + queue_depth) +
 	    SERVER_CONNECTION_HEADROOM;
@@ -1423,9 +1448,18 @@ static void test_queue_and_leaving(uint32_t queue_depth, uint32_t active_slots)
                (strstr(response, "\"finish_reason\":\"length\"") != NULL ||
                 strstr(response, "\"finish_reason\":\"stop\"") != NULL) && test_serving_step_count() > before,
                "a bounded next request executes and completes with exact usage after cancellation");
-        (void)exchange("GET /v1/anemone/stats HTTP/1.1\r\nHost: x\r\n\r\n", response);
-        const struct json_value settled = live_member(live_document(response), "global");
-        expect(live_integer(settled, "queued_requests") == 0 && live_integer(settled, "slots_busy") == 0,
+	static char stats[STATS_RESPONSE_CAPACITY];
+	const size_t stats_bytes = exchange_capacity(
+		"GET /v1/anemone/stats HTTP/1.1\r\nHost: x\r\n\r\n", stats,
+		sizeof(stats));
+	expect(response_whole(stats, stats_bytes),
+	       "the statistics response read whole");
+	(void)printf(
+		"statistics document: %u slots, %zu bytes (head included)\n",
+		active_slots, stats_bytes);
+	const struct json_value settled =
+		live_member(live_document(stats), "global");
+	expect(live_integer(settled, "queued_requests") == 0 && live_integer(settled, "slots_busy") == 0,
                "all queued and active work is retired after recovery");
     }
 }
@@ -1686,6 +1720,39 @@ static void test_configured_queues(const struct text_tokenizer *tokenizer)
     }
     test_serving_close();
     test_serving_set_engine(1, 1, TEST_SERVING_ROWS, 0);
+}
+
+/* More session slots than a word's bits (unbounded sessions): 64 slots admit 64 streams at once beside a waiting
+ * queue, the statistics show every slot and request, and the connection limit follows the slots. */
+static void test_wide_slots(const struct text_tokenizer *tokenizer)
+{
+	struct inference_engine *engine = NULL;
+	test_serving_set_engine(TEST_SERVING_SLOT_ROOM, 1, TEST_SERVING_ROWS,
+				0);
+	if (test_serving_open(CONTEXT, scripts, SCRIPTS, &engine) !=
+	    STATUS_OK) {
+		expect(false, "a 64-slot engine opens");
+		test_serving_set_engine(1, 1, TEST_SERVING_ROWS, 0);
+		return;
+	}
+	struct running_server running = { .engine = engine,
+					  .tokenizer = tokenizer };
+	struct server_options options = {
+		.bind_address = SERVER_DEFAULT_ADDRESS,
+		.queue_depth = WIDE_QUEUE_DEPTH,
+		.user_queue_depth = WIDE_QUEUE_DEPTH,
+		.defaults = { .max_tokens = UINT32_MAX,
+			      .top_p = 1.0f,
+			      .is_seeded = true }
+	};
+	if (server_started(&running, &options)) {
+		test_connection_limit(WIDE_QUEUE_DEPTH, TEST_SERVING_SLOT_ROOM);
+		test_queue_and_leaving(WIDE_QUEUE_DEPTH,
+				       TEST_SERVING_SLOT_ROOM);
+		server_stopped(&running);
+	}
+	test_serving_close();
+	test_serving_set_engine(1, 1, TEST_SERVING_ROWS, 0);
 }
 
 /* Tool ids contain the response's process/time id plus their stable call index. Normalize that prefix only;
@@ -2176,7 +2243,8 @@ static void test_exact_prefix_schedule(const struct text_tokenizer *tokenizer)
 					expect(server_run(server, engine,
 							  tokenizer,
 							  stop[0]) == expected,
-					       "exact1/2, fork1/global0 and stable1/global0 refuse orders0/3; qualified1/2 remain admitted");
+					       "exact1/2, fork1/global0 and stable1/global0 refuse orders0/3; "
+					       "qualified1/2 remain admitted");
 				expect(close(stop[0]) == 0,
 				       "the stop reader closes");
 			}
@@ -2525,6 +2593,7 @@ static void test_snapshot_fifo_selection(void)
     }
     uint32_t token = 0, user = UINT32_MAX;
     server->description.session_slot_count = TEST_SERVING_MOST_SLOTS;
+    expect(server_tables(server) == STATUS_OK, "the run's tables");
     server->live.user_count = FAIR_USER_COUNT;
     (void)snprintf(server->live.users[0].user, SERVER_USER_BYTES, "%s",
 		   "alice");
@@ -2587,6 +2656,7 @@ static void test_snapshot_fifo_selection(void)
     expect(server_next_waiting(NULL, &user) == SERVER_MOST_WAITING &&
 		   server_next_waiting(server, NULL) == SERVER_MOST_WAITING,
 	   "the internal dispatch probe refuses missing pointers");
+    server_tables_free(server);
     free(server);
 }
 
@@ -2942,12 +3012,14 @@ static void test_namespace_continuation(const struct text_tokenizer *tokenizer)
 					content[lengths[size]] = '\0';
 					(void)snprintf(
 						body, sizeof(body),
-						"{\"messages\":[{\"role\":\"user\",\"content\":\"%s\"}],\"prompt_cache_key\":\"shared\","
+						"{\"messages\":[{\"role\":\"user\",\"content\":\"%s\"}],"
+						"\"prompt_cache_key\":\"shared\","
 						"\"metadata\":{\"session_id\":\"%s\"}}",
 						content, sessions[index]);
 					(void)snprintf(
 						request, sizeof(request),
-						"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n"
+						"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nAuthorization: "
+						"Bearer %s\r\n"
 						"Content-Length: %zu\r\n\r\n%s",
 						keys[users[index]],
 						strlen(body), body);
@@ -2960,7 +3032,8 @@ static void test_namespace_continuation(const struct text_tokenizer *tokenizer)
 					expect((cached_tokens(response) == 0) ==
 						       (round == 0 &&
 							first_use[index]),
-					       "only the first request of this user/session is cold; other namespaces contribute zero");
+					       "only the first request of this user/session is cold; other namespaces "
+					       "contribute zero");
 				}
 				server_stopped(&running);
 			}
@@ -3067,6 +3140,7 @@ int main(void)
     test_blocked_statistics_output(tokenizer, engine);
     test_serving_close();
     test_configured_queues(tokenizer);
+    test_wide_slots(tokenizer);
     test_sampling_requests(tokenizer);
     test_metrics_without_printer(tokenizer);
     test_session_directory(tokenizer);

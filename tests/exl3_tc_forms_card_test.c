@@ -30,6 +30,7 @@
 #include "anemone/model_layout.h"
 #include "card_timing.h"
 #include "linear_card_fixture.h"
+#include "byte_identity.h"
 
 #define HIDDEN EXL3_TC_HIDDEN
 #define EXPERTS EXL3_TCP_EXPERTS
@@ -60,6 +61,11 @@ enum { SHORT_FORM, PAIRED_FORM, DEFAULT_FORM };
 #define WARM_RUNS 3u
 #define TIME_SAMPLES 9u
 #define TIME_NAME_BYTES 32u
+#define SIGN_SHIFT 16 /* the hash bit that signs a scale */
+#define DOWN_MATRIX \
+	2u /* an expert's down matrix, after gate and up: its place and its stream */
+#define BITS_X2_SCALE 2u /* bits_x2 counts half bits */
+#define FIRST_STREAM 61u
 
 struct test_case {
     uint32_t rows, inner;
@@ -82,9 +88,10 @@ static void matrix_fill(unsigned char *stored, uint64_t input, uint64_t output, 
     }
     for (uint64_t value = 0; value < input + output; value++) {
         const uint64_t hash = test_linear_hash(stream ^ SCALE_STREAM, value);
-        const uint16_t half =
-            (uint16_t)(HALF_ONE | (hash & HALF_MANTISSA_MASK) | ((hash >> 16) & 1u ? HALF_SIGN : 0u));
-        memcpy(stored + trellis + HALF_BYTES * value, &half, HALF_BYTES);
+	const uint16_t half =
+		(uint16_t)(HALF_ONE | (hash & HALF_MANTISSA_MASK) |
+			   ((hash >> SIGN_SHIFT) & 1u ? HALF_SIGN : 0u));
+	memcpy(stored + trellis + HALF_BYTES * value, &half, HALF_BYTES);
     }
 }
 
@@ -94,7 +101,8 @@ static void picks_fill(uint32_t (*picks)[PAIRS], float (*weights)[PAIRS], uint32
     for (uint32_t row = 0; row < rows; row++) {
         uint32_t count = 0;
         for (uint64_t draw = 0; count < PAIRS; draw++) {
-            const uint32_t expert = (uint32_t)(test_linear_hash(stream, row * DRAW_STRIDE + draw) % EXPERTS);
+            const uint32_t expert =
+                (uint32_t)(test_linear_hash(stream, (uint64_t)(row * DRAW_STRIDE) + draw) % EXPERTS);
             bool taken = false;
             for (uint32_t slot = 0; slot < count; slot++)
                 taken = taken || picks[row][slot] == expert;
@@ -135,9 +143,10 @@ static void jobs_fill(struct expert_job_record *jobs, uint32_t capacity,
 		struct expert_job_record *const at = &jobs[job];
 		at->gate_offset = offsets[expert % EXPERT_SETS];
                 at->up_offset = offsets[expert % EXPERT_SETS] + gate_up_bytes;
-                at->down_offset = offsets[expert % EXPERT_SETS] + 2u * gate_up_bytes;
-                at->pair_index[at->row_count] = row * PAIRS + slot;
-                at->route_weight[at->row_count] = weights[first + row][slot];
+		at->down_offset = offsets[expert % EXPERT_SETS] +
+				  DOWN_MATRIX * gate_up_bytes;
+		at->pair_index[at->row_count] = row * PAIRS + slot;
+		at->route_weight[at->row_count] = weights[first + row][slot];
                 at->row_count++;
             }
         if (jobs[job].row_count != 0)
@@ -149,7 +158,8 @@ static uint32_t rows_unlike(const float *candidate, const float *reference, uint
 {
     uint32_t unlike = 0;
     for (uint32_t row = 0; row < rows; row++)
-        unlike += memcmp(candidate + (size_t)row * HIDDEN, reference + (size_t)row * HIDDEN, HIDDEN * FLOAT_BYTES) != 0
+        unlike += !bytes_identical(candidate + (size_t)row * HIDDEN, reference + (size_t)row * HIDDEN,
+                                   (size_t)(HIDDEN * FLOAT_BYTES))
                       ? 1u
                       : 0u;
     return unlike;
@@ -160,7 +170,8 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
     test_linear_context("rows %u, intermediate %u", test->rows, test->inner);
     test_linear_card_clear(card);
     const uint64_t gate_up = matrix_bytes(HIDDEN, test->inner);
-    const uint64_t expert = 2u * gate_up + matrix_bytes(test->inner, HIDDEN);
+    const uint64_t expert =
+	    DOWN_MATRIX * gate_up + matrix_bytes(test->inner, HIDDEN);
     uint64_t sets[EXPERT_SETS];
     for (uint32_t set = 0; set < EXPERT_SETS; set++) {
 	    const struct linear_range range =
@@ -171,10 +182,11 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 		    return test_linear_expect(false, "room for the experts");
 	    sets[set] = range.byte_offset;
 	    const uint64_t base =
-		    stream * STREAM_STRIDE + set * MODEL_EXPERT_MATRICES;
+		    stream * STREAM_STRIDE + (uint64_t)(set * MODEL_EXPERT_MATRICES);
 	    matrix_fill(stored, HIDDEN, test->inner, base);
 	    matrix_fill(stored + gate_up, HIDDEN, test->inner, base + 1u);
-	    matrix_fill(stored + 2u * gate_up, test->inner, HIDDEN, base + 2u);
+	    matrix_fill(stored + DOWN_MATRIX * gate_up, test->inner, HIDDEN,
+			base + DOWN_MATRIX);
     }
     static uint32_t picks[MOST_ROWS][PAIRS];
     static float weights[MOST_ROWS][PAIRS];
@@ -224,7 +236,7 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 		    .row_count = SLAB_ROWS,
 		    .job_capacity = slab_capacity,
 		    .intermediate = test->inner,
-		    .bits_x2 = 2u * BITS,
+		    .bits_x2 = BITS_X2_SCALE * BITS,
 		    .activation_limit = ACTIVATION_LIMIT
 	    };
 	    struct kernel_launch launches[EXL3_TC_LAUNCHES];
@@ -245,7 +257,7 @@ static bool case_run(struct test_linear_card *card, const struct test_case *test
 		    .row_count = test->rows,
 		    .job_capacity = capacity,
 		    .intermediate = test->inner,
-		    .bits_x2 = 2u * BITS,
+		    .bits_x2 = BITS_X2_SCALE * BITS,
 		    .activation_limit = ACTIVATION_LIMIT
 	    };
 	    const uint64_t bytes = card->arena_byte_count;
@@ -339,7 +351,7 @@ int main(void)
     if (!test_linear_card_open(&card, 0, WORK_CAPACITY, WEIGHTS_CAPACITY))
         return EXIT_FAILURE;
     for (uint32_t index = 0; index < sizeof(cases) / sizeof(cases[0]); index++)
-        (void)case_run(&card, &cases[index], 61u + index);
+	    (void)case_run(&card, &cases[index], FIRST_STREAM + index);
     test_linear_card_close(&card);
     (void)printf("exl3_tc_forms_card_test: %d failures\n", test_linear_failures());
     return test_linear_failures() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

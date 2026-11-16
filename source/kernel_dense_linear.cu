@@ -22,6 +22,7 @@
 #define DENSE_BLOCKS_PER_MULTIPROCESSOR 2u      /* at least, held by the launch bound: 128 registers a thread */
 #define DENSE_NARROW_CHUNKS_AHEAD 4             /* the narrow form's chunks unrolled: their loads leave together */
 #define DENSE_STAGED_SUM_BUFFERS 2u             /* the staged form's warp sums: an output's while the next forms */
+#define DENSE_STAGED_ALIGNMENT 16               /* the staged rows: 16-byte words */
 
 /* Value `index` of a 16-byte part, widened: a bfloat16 (the even one in the low half of its word) or a float32. */
 template <int type>
@@ -238,7 +239,7 @@ __device__ __forceinline__ void
 dense_linear_staged(struct dense_linear_arguments arguments,
 		    unsigned char *arena)
 {
-    extern __shared__ __align__(16) uint4 dense_staged_rows[];
+    extern __shared__ __align__(DENSE_STAGED_ALIGNMENT) uint4 dense_staged_rows[];
     __shared__ float warp_sums[DENSE_STAGED_SUM_BUFFERS][DENSE_WARPS]
 			      [LINEAR_MAXIMUM_ROWS];
     const uint32_t first_row = blockIdx.y * LINEAR_MAXIMUM_ROWS;

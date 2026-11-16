@@ -26,9 +26,10 @@ struct step_images {
 	const struct model_plan_record *plan;
 	struct vision_kernels kernels;
 	struct kernel_launch launches[IMAGE_LAUNCH_CAPACITY];
-	struct image_slot slots[SERVING_SESSION_CAPACITY];
 	unsigned char *staging;
 	uint32_t owner, launch_count, next_launch;
+	uint32_t slot_count; /* the plan's sessions */
+	struct image_slot slots[]; /* [session slot], sized at attach */
 };
 
 bool step_images_supported(const struct step_driver *driver)
@@ -42,18 +43,23 @@ result_status step_images_attach(struct step_driver *driver,
 {
 	if (driver == NULL || plan == NULL || driver->images != NULL ||
 	    driver->sequence != 0 || driver->pipeline != NULL ||
-	    plan->limits.session_capacity > SERVING_SESSION_CAPACITY) {
+	    plan->limits.session_capacity > SERVING_SLOTS_MOST) {
 		return STATUS_INVALID_ARGUMENT;
 	}
 	if (!plan->vision.enabled) {
 		return STATUS_OK;
 	}
-	struct step_images *const images = FAULT_POINT(step_driver_memory) ?
-						   NULL :
-						   calloc(1, sizeof(*images));
+	const uint32_t slot_count = plan->limits.session_capacity;
+	struct step_images *const images =
+		FAULT_POINT(step_driver_memory) ?
+			NULL :
+			calloc(1, sizeof(*images) +
+					  (size_t)slot_count *
+						  sizeof(images->slots[0]));
 	if (images == NULL) {
 		return STATUS_OUT_OF_MEMORY;
 	}
+	images->slot_count = slot_count;
 	images->plan = plan;
 	images->owner = IMAGE_NO_OWNER;
 	result_status status =
@@ -282,7 +288,7 @@ result_status step_images_advance(struct step_driver *driver, uint32_t slot,
 void step_images_cancel(struct step_driver *driver, uint32_t slot)
 {
 	if (driver != NULL && driver->images != NULL &&
-	    slot < SERVING_SESSION_CAPACITY) {
+	    slot < driver->images->slot_count) {
 		struct step_images *const images = driver->images;
 		images->owner = images->owner == slot ? IMAGE_NO_OWNER :
 							images->owner;
@@ -296,7 +302,7 @@ bool step_image_position(const struct step_driver *driver, uint32_t slot,
 			 uint32_t position)
 {
 	if (driver == NULL || driver->images == NULL ||
-	    slot >= SERVING_SESSION_CAPACITY) {
+	    slot >= driver->images->slot_count) {
 		return false;
 	}
 	const struct vision_session *const metadata =

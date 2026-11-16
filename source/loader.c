@@ -3,7 +3,7 @@
  * loader.c: where a placement puts the extents of a pack, and the load that brings them there. Contract: loader.h.
  *
  * A destination is a lane: one for every card of the layout and one for host memory. A lane hands out its bytes as
- * pieces: the next run that is contiguous in the file and in the lane, cut at LOADER_CHUNK_BYTES. A piece
+ * pieces: the next run that is contiguous in the file and in the lane, cut at the request's piece. A piece
  * for a card travels in one of the lane's staging slots, which is free again once upload_wait has reported its
  * upload finished; a piece for host memory is read into its place in the host arena, which is mapped before any thread
  * starts. One mutex guards what the threads share: no thread holds it across a read, an upload_begin, a digest or a
@@ -25,23 +25,31 @@
 #include "anemone/pack_digest.h"
 
 #define NANOSECONDS_PER_SECOND 1000000000ull
-#define WAIT_SLICE_NANOSECONDS 1000000           /* a thread with nothing to take looks again after this long */
-#define HUGE_PAGE_BYTES 2097152ull               /* 2 MiB: the host arena is mapped as a whole number of them */
-#define HOST_ARENA_MAPPED_BYTES(bytes) ((size_t)(((bytes) + HUGE_PAGE_BYTES - 1) / HUGE_PAGE_BYTES * HUGE_PAGE_BYTES))
+#define WAIT_SLICE_NANOSECONDS \
+	1000000 /* a thread with nothing to take looks again after this long */
+#define HUGE_PAGE_BYTES \
+	2097152ull /* 2 MiB: the host arena is mapped as a whole number of them */
+#define HOST_ARENA_MAPPED_BYTES(bytes)                                \
+	((size_t)(((bytes) + HUGE_PAGE_BYTES - 1) / HUGE_PAGE_BYTES * \
+		  HUGE_PAGE_BYTES))
 #define LINK_GENERATION_COUNT 6
+#define HOST_ARENA_FLAGS (MAP_PRIVATE | MAP_ANONYMOUS)
 #define MAXIMUM_LANES \
 	(BACKEND_MAXIMUM_CARDS + 1) /* the cards, then host memory */
 #define MAXIMUM_READER_THREADS \
 	(STORAGE_MAXIMUM_COPIES * LOADER_MAXIMUM_READER_THREADS_PER_COPY)
 
-_Static_assert(LOADER_CHUNK_BYTES % PACK_BLOCK_BYTES == 0,
+_Static_assert(LOADER_CHUNK_BYTES % PACK_BLOCK_BYTES == 0 &&
+		       LOADER_PIECE_BYTES_MOST % PACK_BLOCK_BYTES == 0,
 	       "a piece is cut between two blocks");
 /* The bytes one lane of a link carries in a second, by generation from 1: its line rate less its encoding. */
-static const double link_lane_bytes_per_second[LINK_GENERATION_COUNT] = {250e6, 500e6, 985e6, 1969e6, 3938e6, 7563e6};
+static const double link_lane_bytes_per_second[LINK_GENERATION_COUNT] = {
+	250e6, 500e6, 985e6, 1969e6, 3938e6, 7563e6
+};
 
 /* A piece on its way: in a slot of its card's lane or, for host memory, in one of its thread, without memory. */
 struct slot {
-	void *memory; /* LOADER_CHUNK_BYTES of staging memory */
+	void *memory; /* the piece's bytes of staging memory */
 	struct device_card *card; /* NULL for host memory */
 	uint64_t file_byte_offset;
 	uint64_t destination_byte_offset;
@@ -67,16 +75,20 @@ struct lane {
 	struct slot slots[LOADER_STAGING_SLOTS_PER_CARD];
 };
 
+#define LOADER_MAXIMUM_TUNED_WEIGHT 1000000u
+
 struct loader {
 	const struct load_request *request;
 	const struct pack_extent *extents;
 	uint32_t extent_count;
 	uint32_t copy_count;
 	uint32_t lane_count; /* the cards of the layout, then host memory */
+	uint64_t piece_bytes; /* the request's, or LOADER_CHUNK_BYTES */
 	pthread_mutex_t
 		mutex; /* guards everything below while reader threads run */
 	result_status status; /* the first failure */
 	uint32_t next_thread_number; /* a thread takes it as it begins: it names the copy it reads */
+	uint32_t tuned_weight, tuned_tick;
 	uint64_t bytes_not_delivered;
 	uint64_t last_arrival_nanoseconds; /* the stall rule counts from here */
 	bool copy_is_dropped[STORAGE_MAXIMUM_COPIES];
@@ -92,16 +104,18 @@ struct loader {
  * there is when the clock cannot be read, so that every wait ends. */
 static uint64_t nanoseconds_since(uint64_t earlier_nanoseconds)
 {
-    struct timespec now = {0};
-    const bool is_read = !FAULT_POINT(loader_clock) &&
-			 clock_gettime(CLOCK_MONOTONIC, &now) == 0;
-    const uint64_t now_nanoseconds = (uint64_t)now.tv_sec * NANOSECONDS_PER_SECOND + (uint64_t)now.tv_nsec;
-    return is_read ? now_nanoseconds - earlier_nanoseconds : UINT64_MAX;
+	struct timespec now = { 0 };
+	const bool is_read = !FAULT_POINT(loader_clock) &&
+			     clock_gettime(CLOCK_MONOTONIC, &now) == 0;
+	const uint64_t now_nanoseconds =
+		(uint64_t)now.tv_sec * NANOSECONDS_PER_SECOND +
+		(uint64_t)now.tv_nsec;
+	return is_read ? now_nanoseconds - earlier_nanoseconds : UINT64_MAX;
 }
 
 static uint64_t smaller_of(uint64_t left, uint64_t right)
 {
-    return left < right ? left : right;
+	return left < right ? left : right;
 }
 
 result_status load_layout_create(const struct pack_record *pack,
@@ -127,52 +141,62 @@ result_status load_layout_create(const struct pack_record *pack,
 	if (layout == NULL) {
 		return STATUS_OUT_OF_MEMORY;
 	}
-    layout->byte_offset_of_extent = (void *)(layout + 1);
-    layout->card_of_extent = (void *)(layout->byte_offset_of_extent + extent_count);
-    layout->extent_count = extent_count;
-    layout->card_count = card_count;
-    for (uint32_t extent_index = 0; extent_index < extent_count; extent_index++) {
-        const uint32_t card_index = card_of_unit[extents[extent_index].unit_index];
-        uint64_t *const byte_count =
-            card_index < card_count ? &layout->card_byte_count[card_index] : &layout->host_byte_count;
-        layout->card_of_extent[extent_index] = card_index;
-        layout->byte_offset_of_extent[extent_index] = *byte_count;
-        *byte_count += extents[extent_index].byte_count;
-    }
-    *layout_out = layout;
-    return STATUS_OK;
+	layout->byte_offset_of_extent = (void *)(layout + 1);
+	layout->card_of_extent =
+		(void *)(layout->byte_offset_of_extent + extent_count);
+	layout->extent_count = extent_count;
+	layout->card_count = card_count;
+	for (uint32_t extent_index = 0; extent_index < extent_count;
+	     extent_index++) {
+		const uint32_t card_index =
+			card_of_unit[extents[extent_index].unit_index];
+		uint64_t *const byte_count =
+			card_index < card_count ?
+				&layout->card_byte_count[card_index] :
+				&layout->host_byte_count;
+		layout->card_of_extent[extent_index] = card_index;
+		layout->byte_offset_of_extent[extent_index] = *byte_count;
+		*byte_count += extents[extent_index].byte_count;
+	}
+	*layout_out = layout;
+	return STATUS_OK;
 }
 
 void load_layout_destroy(struct load_layout *layout)
 {
-    free(layout);                                /* the one allocation; NULL is accepted, as by free */
+	free(layout); /* the one allocation; NULL is accepted, as by free */
 }
 
 /* The first extent at or after extent_index that goes to the lane; the extent count when none does. */
-static uint32_t lane_extent_from(const struct loader *loader, const struct lane *lane, uint32_t extent_index)
+static uint32_t lane_extent_from(const struct loader *loader,
+				 const struct lane *lane, uint32_t extent_index)
 {
-    const uint32_t *const card_of_extent = loader->request->layout->card_of_extent;
-    while (extent_index < loader->extent_count && card_of_extent[extent_index] != lane->destination) {
-        extent_index++;
-    }
-    return extent_index;
+	const uint32_t *const card_of_extent =
+		loader->request->layout->card_of_extent;
+	while (extent_index < loader->extent_count &&
+	       (card_of_extent[extent_index] != lane->destination ||
+		(loader->request->external_host_extents != NULL &&
+		 loader->request->external_host_extents[extent_index] != 0))) {
+		extent_index++;
+	}
+	return extent_index;
 }
 
 /* The slot of the lane that is in that state: of several, the one with the lowest ticket. NULL when none is. */
 static struct slot *oldest_slot(struct lane *lane, enum slot_state state)
 {
-    struct slot *oldest = NULL;
-    for (uint32_t slot_index = 0; slot_index < LOADER_STAGING_SLOTS_PER_CARD;
-	 slot_index++) {
-	    struct slot *const slot = &lane->slots[slot_index];
-	    /* a slot that is being read into is not looked at beyond its state: its thread writes the ticket */
-	    if (slot->state == state &&
-		(oldest == NULL ||
-		 slot->upload_ticket < oldest->upload_ticket)) {
-		    oldest = slot;
-	    }
-    }
-    return oldest;
+	struct slot *oldest = NULL;
+	for (uint32_t slot_index = 0;
+	     slot_index < LOADER_STAGING_SLOTS_PER_CARD; slot_index++) {
+		struct slot *const slot = &lane->slots[slot_index];
+		/* a slot that is being read into is not looked at beyond its state: its thread writes the ticket */
+		if (slot->state == state &&
+		    (oldest == NULL ||
+		     slot->upload_ticket < oldest->upload_ticket)) {
+			oldest = slot;
+		}
+	}
+	return oldest;
 }
 
 /* Under the mutex: asks every card about its oldest uploads, only asks, and frees the slots of those that have
@@ -225,140 +249,215 @@ static struct slot *take_piece(struct loader *loader, struct slot *host_piece)
 			lane = candidate;
 			piece = slot;
 		}
-    }
-    if (lane == NULL || piece == NULL) {
-        return NULL;
-    }
-    uint32_t extent_index = lane->next_extent_index;
-    const uint64_t byte_limit =
-	    smaller_of(lane->bytes_not_taken, LOADER_CHUNK_BYTES);
-    ASSERT(extent_index <
-	   loader->extent_count); /* a lane with bytes left has an extent left */
-    piece->file_byte_offset = loader->extents[extent_index].byte_offset + lane->next_byte_offset_in_extent;
-    piece->destination_byte_offset = layout->byte_offset_of_extent[extent_index] + lane->next_byte_offset_in_extent;
-    piece->byte_count = 0;
-    piece->state = SLOT_READING;
-    /* the next extent of the pack, when it goes to the same lane, follows this one in the file and in the lane */
-    while (piece->byte_count < byte_limit && extent_index < loader->extent_count &&
-           layout->card_of_extent[extent_index] == lane->destination) {
-        const uint64_t extent_bytes_left = loader->extents[extent_index].byte_count - lane->next_byte_offset_in_extent;
-        const uint64_t byte_count = smaller_of(extent_bytes_left, byte_limit - piece->byte_count);
-        piece->byte_count += byte_count;
-        lane->next_byte_offset_in_extent += byte_count;
-        if (byte_count == extent_bytes_left) {
-            lane->next_byte_offset_in_extent = 0;
-            extent_index++;
-        }
-    }
-    lane->next_extent_index = lane_extent_from(loader, lane, extent_index);
-    lane->bytes_not_taken -= piece->byte_count;
-    return piece;
+	}
+	if (lane == NULL || piece == NULL) {
+		return NULL;
+	}
+	uint32_t extent_index = lane->next_extent_index;
+	const uint64_t byte_limit =
+		smaller_of(lane->bytes_not_taken, loader->piece_bytes);
+	ASSERT(extent_index <
+	       loader->extent_count); /* a lane with bytes left has an extent left */
+	piece->file_byte_offset = loader->extents[extent_index].byte_offset +
+				  lane->next_byte_offset_in_extent;
+	piece->destination_byte_offset =
+		layout->byte_offset_of_extent[extent_index] +
+		lane->next_byte_offset_in_extent;
+	piece->byte_count = 0;
+	piece->state = SLOT_READING;
+	/* the next extent of the pack, when it goes to the same lane, follows this one in the file and in the lane */
+	while (piece->byte_count < byte_limit &&
+	       extent_index < loader->extent_count &&
+	       layout->card_of_extent[extent_index] == lane->destination &&
+	       (loader->request->external_host_extents == NULL ||
+		loader->request->external_host_extents[extent_index] == 0)) {
+		const uint64_t extent_bytes_left =
+			loader->extents[extent_index].byte_count -
+			lane->next_byte_offset_in_extent;
+		const uint64_t byte_count = smaller_of(
+			extent_bytes_left, byte_limit - piece->byte_count);
+		piece->byte_count += byte_count;
+		lane->next_byte_offset_in_extent += byte_count;
+		if (byte_count == extent_bytes_left) {
+			lane->next_byte_offset_in_extent = 0;
+			extent_index++;
+		}
+	}
+	lane->next_extent_index = lane_extent_from(loader, lane, extent_index);
+	lane->bytes_not_taken -= piece->byte_count;
+	return piece;
 }
 
 /* What a reader thread does, and the calling thread for an extent that is sent again: transfers until every piece
  * has arrived, then digests. It reads the copy its number names until that one is dropped, and ends at a failure. */
 static void *transfer_and_check(void *argument)
 {
-    struct loader *const loader = argument;
-    const struct load_request *const request = loader->request;
-    unsigned char *const host_arena = loader->result.host_arena;         /* a mapping: it begins on a page boundary */
-    struct slot host_piece = {0};
-    struct slot *piece = NULL;                   /* kept for another turn only to be read from another copy */
-    result_status status =
-	    STATUS_OK; /* of what this thread did last outside the mutex */
-    (void)pthread_mutex_lock(&loader->mutex);
-    uint32_t copy_index = loader->next_thread_number / request->reader_threads_per_copy;
-    loader->next_thread_number++;
-    for (;;) {
-        struct lane *checked_lane = NULL;
-        uint64_t digest = 0;
-	loader->status = loader->status == STATUS_OK ? status : loader->status;
-	status = STATUS_OK;
-	reclaim_finished_uploads(loader);
-	if (loader->status != STATUS_OK) {
-		break;
+	struct loader *const loader = argument;
+	const struct load_request *const request = loader->request;
+	unsigned char *const host_arena =
+		loader->result
+			.host_arena; /* a mapping: it begins on a page boundary */
+	struct slot host_piece = { 0 };
+	struct slot *piece =
+		NULL; /* kept for another turn only to be read from another copy */
+	result_status status =
+		STATUS_OK; /* of what this thread did last outside the mutex */
+	(void)pthread_mutex_lock(&loader->mutex);
+	uint32_t copy_index =
+		loader->next_thread_number / request->reader_threads_per_copy;
+	loader->next_thread_number++;
+	for (;;) {
+		struct lane *checked_lane = NULL;
+		uint64_t digest = 0;
+		loader->status = loader->status == STATUS_OK ? status :
+							       loader->status;
+		status = STATUS_OK;
+		reclaim_finished_uploads(loader);
+		if (loader->status != STATUS_OK) {
+			break;
+		}
+		const bool is_new = piece == NULL;
+		piece = piece != NULL ? piece : take_piece(loader, &host_piece);
+		if (piece != NULL) {
+			if (is_new && loader->tuned_weight != 0) {
+				const uint32_t tick = loader->tuned_tick++ %
+						      loader->tuned_weight;
+				uint32_t cumulative = 0;
+				for (uint32_t index = 0;
+				     index < loader->copy_count; index++) {
+					cumulative +=
+						request->copy_weights[index];
+					if (tick < cumulative) {
+						copy_index = index;
+						break;
+					}
+				}
+			}
+			for (uint32_t live_index = 0;
+			     live_index < loader->copy_count &&
+			     loader->copy_is_dropped[copy_index];
+			     live_index++) { /* the live copy with the lowest index takes over */
+				copy_index =
+					loader->copy_is_dropped[live_index] ?
+						copy_index :
+						live_index;
+			}
+			void *const memory =
+				piece->card != NULL ?
+					piece->memory :
+					host_arena +
+						piece->destination_byte_offset;
+			(void)pthread_mutex_unlock(&loader->mutex);
+			status = request->storage->reader_read(
+				request->reader, copy_index,
+				piece->file_byte_offset, memory,
+				piece->byte_count);
+			const bool copy_failed = status ==
+						 STATUS_INPUT_OUTPUT_ERROR;
+			if (status == STATUS_OK && piece->card != NULL) {
+				status = request->backend->upload_begin(
+					piece->card,
+					piece->destination_byte_offset, memory,
+					piece->byte_count,
+					&piece->upload_ticket);
+			}
+			(void)pthread_mutex_lock(&loader->mutex);
+			if (copy_failed &&
+			    !loader->copy_is_dropped[copy_index]) {
+				loader->copy_is_dropped[copy_index] = true;
+				loader->result.copies_dropped++;
+				LOG_WARNING_ENTRY(
+					"copy %" PRIu32
+					" failed a read: the load goes on without it",
+					copy_index);
+			}
+			/* a piece of a dropped copy is read again while a copy is left; a card's piece arrives at
+			 * its reclaim */
+			const bool is_read_again =
+				copy_failed && loader->result.copies_dropped <
+						       loader->copy_count;
+			const bool has_arrived = status == STATUS_OK &&
+						 piece->card == NULL;
+			piece->state = is_read_again ? SLOT_READING :
+				       status == STATUS_OK && !has_arrived ?
+						       SLOT_UPLOADING :
+				       status == STATUS_DEVICE_ERROR ?
+						       SLOT_ABANDONED :
+						       SLOT_FREE;
+			loader->result.byte_count_read_of_copy[copy_index] +=
+				status == STATUS_OK ? piece->byte_count : 0;
+			if (has_arrived) {
+				loader->bytes_not_delivered -=
+					piece->byte_count;
+				loader->lanes[loader->lane_count - 1]
+					.arrival_nanoseconds =
+					loader->last_arrival_nanoseconds =
+						nanoseconds_since(0);
+			}
+			status = is_read_again ? STATUS_OK : status;
+			piece = is_read_again ? piece : NULL;
+		} else if (loader->bytes_not_delivered == 0) {
+			for (uint32_t lane_index = 0;
+			     lane_index < loader->lane_count &&
+			     checked_lane == NULL;
+			     lane_index++) {
+				struct lane *const lane =
+					&loader->lanes[lane_index];
+				const bool has_work = lane->check_extent_index <
+						      lane->next_extent_index;
+				checked_lane =
+					has_work && !lane->is_being_checked ?
+						lane :
+						NULL;
+			}
+			if (checked_lane ==
+			    NULL) { /* nothing is left that this thread may digest */
+				break;
+			}
+			const uint32_t extent_index =
+				checked_lane->check_extent_index;
+			const uint64_t byte_offset =
+				request->layout
+					->byte_offset_of_extent[extent_index];
+			const uint64_t byte_count =
+				loader->extents[extent_index].byte_count;
+			const bool is_on_a_card = checked_lane->destination !=
+						  PLACEMENT_IN_HOST_MEMORY;
+			checked_lane->check_extent_index = lane_extent_from(
+				loader, checked_lane, extent_index + 1);
+			checked_lane->is_being_checked = is_on_a_card;
+			(void)pthread_mutex_unlock(&loader->mutex);
+			status =
+				is_on_a_card ?
+					request->backend->digest(
+						request->cards
+							[checked_lane
+								 ->destination],
+						byte_offset, byte_count,
+						request->stall_limit_nanoseconds,
+						&digest) :
+					pack_digest_of_host_bytes(
+						host_arena + byte_offset,
+						byte_count, &digest);
+			(void)pthread_mutex_lock(&loader->mutex);
+			checked_lane->is_being_checked = false;
+			loader->extent_differs[extent_index] =
+				status == STATUS_OK &&
+				digest != loader->extents[extent_index].digest;
+		} else if (nanoseconds_since(loader->last_arrival_nanoseconds) >
+			   request->stall_limit_nanoseconds) {
+			status = STATUS_TIMED_OUT;
+		} else { /* nothing to take now: the other threads hold it, or the links */
+			(void)pthread_mutex_unlock(&loader->mutex);
+			(void)nanosleep(
+				&(struct timespec){
+					.tv_nsec = WAIT_SLICE_NANOSECONDS },
+				NULL);
+			(void)pthread_mutex_lock(&loader->mutex);
+		}
 	}
-	piece = piece != NULL ? piece : take_piece(loader, &host_piece);
-        if (piece != NULL) {
-            for (uint32_t live_index = 0; live_index < loader->copy_count && loader->copy_is_dropped[copy_index];
-                 live_index++) {                 /* the live copy with the lowest index takes over */
-                copy_index = loader->copy_is_dropped[live_index] ? copy_index : live_index;
-            }
-            void *const memory = piece->card != NULL ? piece->memory : host_arena + piece->destination_byte_offset;
-            (void)pthread_mutex_unlock(&loader->mutex);
-            status = request->storage->reader_read(request->reader, copy_index, piece->file_byte_offset, memory,
-                                                   piece->byte_count);
-	    const bool copy_failed = status == STATUS_INPUT_OUTPUT_ERROR;
-	    if (status == STATUS_OK && piece->card != NULL) {
-		    status = request->backend->upload_begin(
-			    piece->card, piece->destination_byte_offset, memory,
-			    piece->byte_count, &piece->upload_ticket);
-	    }
-	    (void)pthread_mutex_lock(&loader->mutex);
-            if (copy_failed && !loader->copy_is_dropped[copy_index]) {
-                loader->copy_is_dropped[copy_index] = true;
-                loader->result.copies_dropped++;
-		LOG_WARNING_ENTRY("copy %" PRIu32
-				  " failed a read: the load goes on without it",
-				  copy_index);
-	    }
-            /* a piece of a dropped copy is read again while a copy is left; a card's piece arrives at its reclaim */
-            const bool is_read_again = copy_failed && loader->result.copies_dropped < loader->copy_count;
-	    const bool has_arrived = status == STATUS_OK && piece->card == NULL;
-	    piece->state = is_read_again ? SLOT_READING :
-			   status == STATUS_OK && !has_arrived ?
-					   SLOT_UPLOADING :
-			   status == STATUS_DEVICE_ERROR ? SLOT_ABANDONED :
-							   SLOT_FREE;
-	    loader->result.byte_count_read_of_copy[copy_index] +=
-		    status == STATUS_OK ? piece->byte_count : 0;
-	    if (has_arrived) {
-                loader->bytes_not_delivered -= piece->byte_count;
-                loader->lanes[loader->lane_count - 1].arrival_nanoseconds = loader->last_arrival_nanoseconds =
-                    nanoseconds_since(0);
-            }
-	    status = is_read_again ? STATUS_OK : status;
-	    piece = is_read_again ? piece : NULL;
-        } else if (loader->bytes_not_delivered == 0) {
-            for (uint32_t lane_index = 0; lane_index < loader->lane_count && checked_lane == NULL; lane_index++) {
-                struct lane *const lane = &loader->lanes[lane_index];
-                const bool has_work = lane->check_extent_index < lane->next_extent_index;
-                checked_lane = has_work && !lane->is_being_checked ? lane : NULL;
-            }
-            if (checked_lane == NULL) {          /* nothing is left that this thread may digest */
-                break;
-            }
-            const uint32_t extent_index = checked_lane->check_extent_index;
-            const uint64_t byte_offset = request->layout->byte_offset_of_extent[extent_index];
-            const uint64_t byte_count = loader->extents[extent_index].byte_count;
-	    const bool is_on_a_card = checked_lane->destination !=
-				      PLACEMENT_IN_HOST_MEMORY;
-	    checked_lane->check_extent_index = lane_extent_from(loader, checked_lane, extent_index + 1);
-            checked_lane->is_being_checked = is_on_a_card;
-            (void)pthread_mutex_unlock(&loader->mutex);
-	    status = is_on_a_card ?
-			     request->backend->digest(
-				     request->cards[checked_lane->destination],
-				     byte_offset, byte_count,
-				     request->stall_limit_nanoseconds,
-				     &digest) :
-			     pack_digest_of_host_bytes(host_arena + byte_offset,
-						       byte_count, &digest);
-	    (void)pthread_mutex_lock(&loader->mutex);
-            checked_lane->is_being_checked = false;
-	    loader->extent_differs[extent_index] =
-		    status == STATUS_OK &&
-		    digest != loader->extents[extent_index].digest;
-	} else if (nanoseconds_since(loader->last_arrival_nanoseconds) > request->stall_limit_nanoseconds) {
-		status = STATUS_TIMED_OUT;
-	} else {                                 /* nothing to take now: the other threads hold it, or the links */
-            (void)pthread_mutex_unlock(&loader->mutex);
-            (void)nanosleep(&(struct timespec){.tv_nsec = WAIT_SLICE_NANOSECONDS}, NULL);
-            (void)pthread_mutex_lock(&loader->mutex);
-        }
-    }
-    (void)pthread_mutex_unlock(&loader->mutex);
-    return NULL;
+	(void)pthread_mutex_unlock(&loader->mutex);
+	return NULL;
 }
 
 /* On the calling thread, the reader threads joined: every extent that differed takes the way of its lane again,
@@ -441,12 +540,12 @@ static void release_slots(const struct loader *loader)
 		request->backend->staging_free(is_over ? slot->memory : NULL);
 		slots_left_allocated += is_over ? 0u : 1u;
 	}
-    if (slots_left_allocated > 0) {
-	    LOG_ERROR(
-		    "%" PRIu32
-		    " staging slots stay allocated: their uploads were not seen to finish",
-		    slots_left_allocated);
-    }
+	if (slots_left_allocated > 0) {
+		LOG_ERROR(
+			"%" PRIu32
+			" staging slots stay allocated: their uploads were not seen to finish",
+			slots_left_allocated);
+	}
 }
 
 result_status load_run_entry(const struct load_request *request,
@@ -463,6 +562,8 @@ result_status load_run_entry(const struct load_request *request,
 	    request->reader_threads_per_copy == 0 ||
 	    request->reader_threads_per_copy >
 		    LOADER_MAXIMUM_READER_THREADS_PER_COPY ||
+	    request->piece_bytes % PACK_BLOCK_BYTES != 0 ||
+	    request->piece_bytes > LOADER_PIECE_BYTES_MOST ||
 	    request->reserved_zero != 0 ||
 	    request->stall_limit_nanoseconds == 0) {
 		return STATUS_INVALID_ARGUMENT;
@@ -480,150 +581,230 @@ result_status load_run_entry(const struct load_request *request,
 		free(loader);
 		return STATUS_OUT_OF_MEMORY;
 	}
-    loader->request = request;
-    loader->extents = pack_extents_of(request->pack);
-    loader->extent_count = layout->extent_count;
-    loader->lane_count = layout->card_count + 1;
-    /* What of the request takes a walk to check, before anything is obtained. The reader's alignment divides what a
+	loader->request = request;
+	loader->extents = pack_extents_of(request->pack);
+	loader->extent_count = layout->extent_count;
+	loader->lane_count = layout->card_count + 1;
+	loader->piece_bytes = request->piece_bytes != 0 ? request->piece_bytes :
+							  LOADER_CHUNK_BYTES;
+	/* What of the request takes a walk to check, before anything is obtained. The reader's alignment divides what a
      * direct read is given: whole pack blocks, its address from a page boundary on (a slot's start, the arena's). The
      * layout, followed extent by extent, so that one of another pack or card count, or changed since, is refused: an
      * extent lies where the ones before it of its destination end, and a byte count is what the extents occupy, no more
      * and no less. Every lane is then set at its first extent, and a card that receives bytes gets its staging slots
      * and the rate of its link: one that is not known counts as one lane of generation 1, the slowest, served first. */
-    result_status status =
-	    request->storage->reader_describe(request->reader, &storage);
-    const bool reader_fits =
-	    storage.copy_count >= 1 &&
-	    storage.copy_count <= STORAGE_MAXIMUM_COPIES &&
-	    storage.block_alignment_bytes != 0 &&
-	    PACK_BLOCK_BYTES % storage.block_alignment_bytes == 0 &&
-	    BACKEND_STAGING_ALIGNMENT_BYTES % storage.block_alignment_bytes ==
-		    0;
-    status = status == STATUS_OK && !reader_fits ? STATUS_INVALID_ARGUMENT :
-						   status;
-    loader->copy_count = storage.copy_count;
-    for (uint32_t extent_index = 0;
-	 extent_index < loader->extent_count && status == STATUS_OK;
-	 extent_index++) {
-	    const uint32_t card_index = layout->card_of_extent[extent_index];
-	    const bool is_card = card_index < layout->card_count;
-	    struct lane *const lane =
-		    &loader->lanes[is_card ? card_index : layout->card_count];
-	    const bool has_destination =
-		    is_card ? request->cards != NULL &&
-				      request->cards[card_index] != NULL &&
-				      request->card_descriptions != NULL :
-			      card_index == PLACEMENT_IN_HOST_MEMORY;
-	    status =
-		    has_destination &&
-				    layout->byte_offset_of_extent[extent_index] ==
-					    lane->bytes_not_taken ?
-			    STATUS_OK :
-			    STATUS_INVALID_ARGUMENT;
-	    lane->bytes_not_taken += loader->extents[extent_index].byte_count;
-    }
-    for (uint32_t lane_index = 0;
-	 lane_index < loader->lane_count && status == STATUS_OK; lane_index++) {
-	    struct lane *const lane = &loader->lanes[lane_index];
-	    const bool is_card = lane_index < layout->card_count;
-	    lane->destination = is_card ? lane_index : PLACEMENT_IN_HOST_MEMORY;
-	    lane->next_extent_index = lane_extent_from(loader, lane, 0);
-	    lane->check_extent_index = lane->next_extent_index;
-	    loader->bytes_not_delivered += lane->bytes_not_taken;
-	    if (lane->bytes_not_taken !=
-		(is_card ? layout->card_byte_count[lane_index] :
-			   layout->host_byte_count)) {
-		    status = STATUS_INVALID_ARGUMENT;
-	    } else if (is_card && lane->bytes_not_taken > 0) {
-		    const struct card_description_record *const card =
-			    &request->card_descriptions[lane_index];
-		    const bool link_is_known = card->link_generation >= 1 &&
-					       card->link_lane_count >= 1 &&
-					       card->link_generation <=
-						       LINK_GENERATION_COUNT;
-		    lane->seconds_per_byte =
-			    1.0 /
-			    (link_is_known ?
-				     link_lane_bytes_per_second
-						     [card->link_generation - 1] *
-					     (double)card->link_lane_count :
-				     link_lane_bytes_per_second[0]);
-	    }
-    }
-    for (uint32_t slot_index = 0;
-	 slot_index < layout->card_count * LOADER_STAGING_SLOTS_PER_CARD &&
-	 status == STATUS_OK;
-	 slot_index++) { /* the request is whole */
-	    struct lane *const lane =
-		    &loader->lanes[slot_index / LOADER_STAGING_SLOTS_PER_CARD];
-	    struct slot *const slot =
-		    &lane->slots[slot_index % LOADER_STAGING_SLOTS_PER_CARD];
-	    if (lane->bytes_not_taken > 0) {
-		    slot->card = request->cards[lane->destination];
-		    status = request->backend->staging_allocate(
-			    LOADER_CHUNK_BYTES, &slot->memory);
-	    }
-    }
-    const bool needs_arena = status == STATUS_OK && layout->host_byte_count > 0;
-    const size_t mapped_bytes = HOST_ARENA_MAPPED_BYTES(layout->host_byte_count);   /* 0 for a count that wraps */
-    void *const host_arena = !needs_arena || mapped_bytes == 0 ||
-					     FAULT_POINT(loader_host_arena) ?
-				     MAP_FAILED :
-				     mmap(NULL, mapped_bytes,
-					  PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    loader->result.host_arena = host_arena != MAP_FAILED ? host_arena : NULL;     /* before any thread; not touched */
-    status = needs_arena && host_arena == MAP_FAILED ? STATUS_OUT_OF_MEMORY :
+	result_status status =
+		request->storage->reader_describe(request->reader, &storage);
+	const bool reader_fits =
+		storage.copy_count >= 1 &&
+		storage.copy_count <= STORAGE_MAXIMUM_COPIES &&
+		storage.block_alignment_bytes != 0 &&
+		PACK_BLOCK_BYTES % storage.block_alignment_bytes == 0 &&
+		BACKEND_STAGING_ALIGNMENT_BYTES %
+				storage.block_alignment_bytes ==
+			0;
+	status = status == STATUS_OK && !reader_fits ? STATUS_INVALID_ARGUMENT :
 						       status;
-    if (host_arena != MAP_FAILED && madvise(host_arena, mapped_bytes, MADV_HUGEPAGE) != 0) {
-	    LOG_WARNING_ENTRY(
-		    "no 2 MiB pages for the host arena: the load goes on with small pages");
-    }
-    const uint32_t thread_limit = loader->copy_count * request->reader_threads_per_copy;
-    const uint64_t started_nanoseconds = loader->last_arrival_nanoseconds = nanoseconds_since(0);
-    uint64_t transfer_nanoseconds = 0;
-    uint32_t thread_count = 0;
-    while (status == STATUS_OK && thread_count < thread_limit &&
-	   !FAULT_POINT(loader_thread_create) &&
-	   pthread_create(&loader->threads[thread_count], NULL,
-			  transfer_and_check, loader) == 0) {
-	    thread_count++;
-    }
-    status = status == STATUS_OK && thread_count < thread_limit ?
-		     STATUS_OUT_OF_MEMORY :
-		     status;
-    (void)pthread_mutex_lock(&loader->mutex);                    /* a failure ends the threads at their next step */
-    loader->status = loader->status == STATUS_OK ? status : loader->status;
-    (void)pthread_mutex_unlock(&loader->mutex);
-    for (uint32_t thread_index = 0; thread_index < thread_count; thread_index++) {
-        (void)pthread_join(loader->threads[thread_index], NULL);
-    }
-    for (uint32_t lane_index = 0; lane_index < loader->lane_count; lane_index++) {      /* before any is sent again */
-        const uint64_t arrival_nanoseconds = loader->lanes[lane_index].arrival_nanoseconds;
-        uint64_t *const arrival_out = lane_index + 1 < loader->lane_count
-            ? &loader->result.card_arrival_nanoseconds[lane_index] : &loader->result.host_arrival_nanoseconds;
-        *arrival_out = arrival_nanoseconds != 0 ? arrival_nanoseconds - started_nanoseconds : 0;
-        transfer_nanoseconds = *arrival_out > transfer_nanoseconds ? *arrival_out : transfer_nanoseconds;
-    }
-    send_differing_extents_again(loader);
-    status = loader->status;
-    loader->result.transfer_nanoseconds = transfer_nanoseconds;
-    loader->result.check_nanoseconds = nanoseconds_since(started_nanoseconds) - transfer_nanoseconds;
-    release_slots(loader);
-    if (status == STATUS_OK) {
-	    *result_out = loader->result;
-    } else {
-	    load_host_arena_release(loader->result.host_arena,
-				    layout->host_byte_count);
-    }
-    (void)pthread_mutex_destroy(&loader->mutex);
-    free(loader);
-    return status;
+	loader->copy_count = storage.copy_count;
+	for (uint32_t index = 0;
+	     status == STATUS_OK && index < storage.copy_count; index++) {
+		if (request->copy_weights[index] > LOADER_MAXIMUM_TUNED_WEIGHT)
+			status = STATUS_INVALID_ARGUMENT;
+		loader->tuned_weight += request->copy_weights[index];
+	}
+	if (loader->tuned_weight != 0)
+		for (uint32_t index = 0; index < storage.copy_count; index++)
+			if (request->copy_weights[index] == 0)
+				status = STATUS_INVALID_ARGUMENT;
+	for (uint32_t extent_index = 0;
+	     extent_index < loader->extent_count && status == STATUS_OK;
+	     extent_index++) {
+		const uint32_t card_index =
+			layout->card_of_extent[extent_index];
+		const bool is_card = card_index < layout->card_count;
+		struct lane *const lane =
+			&loader->lanes[is_card ? card_index :
+						 layout->card_count];
+		const bool has_destination =
+			is_card ? request->cards != NULL &&
+					  request->cards[card_index] != NULL &&
+					  request->card_descriptions != NULL :
+				  card_index == PLACEMENT_IN_HOST_MEMORY;
+		status = has_destination && layout->byte_offset_of_extent
+							    [extent_index] ==
+						    lane->bytes_not_taken ?
+				 STATUS_OK :
+				 STATUS_INVALID_ARGUMENT;
+		lane->bytes_not_taken +=
+			loader->extents[extent_index].byte_count;
+	}
+	for (uint32_t extent_index = 0;
+	     status == STATUS_OK && request->external_host_extents != NULL &&
+	     extent_index < loader->extent_count;
+	     extent_index++) {
+		if (request->external_host_extents[extent_index] != 0 &&
+		    (layout->card_of_extent[extent_index] !=
+			     PLACEMENT_IN_HOST_MEMORY ||
+		     pack_units_of(request->pack)[loader->extents[extent_index]
+							  .unit_index]
+				     .unit_kind != PLACEMENT_UNIT_HOST_ONLY))
+			status = STATUS_INVALID_ARGUMENT;
+	}
+	for (uint32_t lane_index = 0;
+	     lane_index < loader->lane_count && status == STATUS_OK;
+	     lane_index++) {
+		struct lane *const lane = &loader->lanes[lane_index];
+		const bool is_card = lane_index < layout->card_count;
+		lane->destination = is_card ? lane_index :
+					      PLACEMENT_IN_HOST_MEMORY;
+		lane->next_extent_index = lane_extent_from(loader, lane, 0);
+		lane->check_extent_index = lane->next_extent_index;
+		loader->bytes_not_delivered += lane->bytes_not_taken;
+		if (lane->bytes_not_taken !=
+		    (is_card ? layout->card_byte_count[lane_index] :
+			       layout->host_byte_count)) {
+			status = STATUS_INVALID_ARGUMENT;
+		} else if (is_card && lane->bytes_not_taken > 0) {
+			const struct card_description_record *const card =
+				&request->card_descriptions[lane_index];
+			const bool link_is_known =
+				card->link_generation >= 1 &&
+				card->link_lane_count >= 1 &&
+				card->link_generation <= LINK_GENERATION_COUNT;
+			lane->seconds_per_byte =
+				1.0 /
+				(link_is_known ?
+					 link_lane_bytes_per_second
+							 [card->link_generation -
+							  1] *
+						 (double)card->link_lane_count :
+					 link_lane_bytes_per_second[0]);
+		}
+	}
+	for (uint32_t slot_index = 0;
+	     slot_index < layout->card_count * LOADER_STAGING_SLOTS_PER_CARD &&
+	     status == STATUS_OK;
+	     slot_index++) { /* the request is whole */
+		struct lane *const lane =
+			&loader->lanes[slot_index /
+				       LOADER_STAGING_SLOTS_PER_CARD];
+		struct slot *const slot =
+			&lane->slots[slot_index % LOADER_STAGING_SLOTS_PER_CARD];
+		if (lane->bytes_not_taken > 0) {
+			slot->card = request->cards[lane->destination];
+			status = request->backend->staging_allocate(
+				loader->piece_bytes, &slot->memory);
+		}
+	}
+	const bool needs_arena = status == STATUS_OK &&
+				 layout->host_byte_count > 0;
+	bool external_tables = false;
+	for (uint32_t extent_index = 0;
+	     status == STATUS_OK && request->external_host_extents != NULL &&
+	     extent_index < loader->extent_count;
+	     extent_index++) {
+		if (request->external_host_extents[extent_index] != 0) {
+			loader->lanes[layout->card_count].bytes_not_taken -=
+				loader->extents[extent_index].byte_count;
+			loader->bytes_not_delivered -=
+				loader->extents[extent_index].byte_count;
+			external_tables = true;
+		}
+	}
+	const size_t mapped_bytes = HOST_ARENA_MAPPED_BYTES(
+		layout->host_byte_count); /* 0 for a count that wraps */
+	/* loader.h: with external tables unaccounted, as their pages are never touched */
+	const int arena_flags = HOST_ARENA_FLAGS |
+				(external_tables ? MAP_NORESERVE : 0);
+#if CHECKING_HOOKS_ENABLED
+	load_host_arena_last =
+		(struct load_host_arena_record){ .flags = arena_flags,
+						 .byte_count = mapped_bytes };
+#endif
+	void *const host_arena =
+		!needs_arena || mapped_bytes == 0 ||
+				FAULT_POINT(loader_host_arena) ?
+			MAP_FAILED :
+			mmap(NULL, mapped_bytes, PROT_READ | PROT_WRITE,
+			     arena_flags, -1, 0);
+	loader->result.host_arena =
+		host_arena != MAP_FAILED ?
+			host_arena :
+			NULL; /* before any thread; not touched */
+	status = needs_arena && host_arena == MAP_FAILED ?
+			 STATUS_OUT_OF_MEMORY :
+			 status;
+	if (host_arena != MAP_FAILED &&
+	    madvise(host_arena, mapped_bytes, MADV_HUGEPAGE) != 0) {
+		LOG_WARNING_ENTRY(
+			"no 2 MiB pages for the host arena: the load goes on with small pages");
+	}
+	const uint32_t thread_limit =
+		loader->copy_count * request->reader_threads_per_copy;
+	const uint64_t started_nanoseconds = loader->last_arrival_nanoseconds =
+		nanoseconds_since(0);
+	uint64_t transfer_nanoseconds = 0;
+	uint32_t thread_count = 0;
+	while (status == STATUS_OK && thread_count < thread_limit &&
+	       !FAULT_POINT(loader_thread_create) &&
+	       pthread_create(&loader->threads[thread_count], NULL,
+			      transfer_and_check, loader) == 0) {
+		thread_count++;
+	}
+	status = status == STATUS_OK && thread_count < thread_limit ?
+			 STATUS_OUT_OF_MEMORY :
+			 status;
+	(void)pthread_mutex_lock(
+		&loader->mutex); /* a failure ends the threads at their next step */
+	loader->status = loader->status == STATUS_OK ? status : loader->status;
+	(void)pthread_mutex_unlock(&loader->mutex);
+	for (uint32_t thread_index = 0; thread_index < thread_count;
+	     thread_index++) {
+		(void)pthread_join(loader->threads[thread_index], NULL);
+	}
+	for (uint32_t lane_index = 0; lane_index < loader->lane_count;
+	     lane_index++) { /* before any is sent again */
+		const uint64_t arrival_nanoseconds =
+			loader->lanes[lane_index].arrival_nanoseconds;
+		uint64_t *const arrival_out =
+			lane_index + 1 < loader->lane_count ?
+				&loader->result
+					 .card_arrival_nanoseconds[lane_index] :
+				&loader->result.host_arrival_nanoseconds;
+		*arrival_out =
+			arrival_nanoseconds != 0 ?
+				arrival_nanoseconds - started_nanoseconds :
+				0;
+		transfer_nanoseconds = *arrival_out > transfer_nanoseconds ?
+					       *arrival_out :
+					       transfer_nanoseconds;
+	}
+	send_differing_extents_again(loader);
+	status = loader->status;
+	loader->result.transfer_nanoseconds = transfer_nanoseconds;
+	loader->result.check_nanoseconds =
+		nanoseconds_since(started_nanoseconds) - transfer_nanoseconds;
+	release_slots(loader);
+	if (status == STATUS_OK) {
+		*result_out = loader->result;
+	} else {
+		load_host_arena_release(loader->result.host_arena,
+					layout->host_byte_count);
+	}
+	(void)pthread_mutex_destroy(&loader->mutex);
+	free(loader);
+	return status;
 }
+
+#if CHECKING_HOOKS_ENABLED
+struct load_host_arena_record load_host_arena_last;
+#endif
 
 void load_host_arena_release(void *host_arena, uint64_t host_byte_count)
 {
-    if (host_arena != NULL && munmap(host_arena, HOST_ARENA_MAPPED_BYTES(host_byte_count)) != 0) {
-	    LOG_ERROR("the host arena could not be unmapped: it stays mapped");
-    }
+	if (host_arena != NULL &&
+	    munmap(host_arena, HOST_ARENA_MAPPED_BYTES(host_byte_count)) != 0) {
+		LOG_ERROR(
+			"the host arena could not be unmapped: it stays mapped");
+	}
 }

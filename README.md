@@ -1,4 +1,4 @@
-# Anemone v0.0.2-alpha
+# Anemone v0.0.3-alpha
 
 SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -13,6 +13,104 @@ Features include **experimental vision support** for PNG/JPEG image inputs and a
 included [pi.dev configuration template](docs/USAGE.md#67-pi-configuration).
 Vision execution and quality qualification remain incomplete; the original exact
 recipe is text-only. See the [user manual](docs/USAGE.md) for input and profile limits.
+
+## What makes Anemone different
+
+- **Turbo load.** Verified copies of the model on every local NVMe drive are read in parallel as one weighted array,
+  with O_DIRECT and io_uring, checking each chunk's digest as it is read. The engine finds the copies by their
+  receipts, so there is no RAID to set up. A prepared model is serving in **30 s (EXL3 TP4) and 48 s (original PP5)**,
+  against about 205 s to 10 minutes for the vLLM-based engines on the same cards
+  ([A11](docs/results/COMPARISON_MATRIX.md#a-identity-provenance-packaging)).
+- **Turbo Engram.** The 189 GiB of Engram n-gram tables stay in host RAM by default. When they don't fit, the engine
+  keeps the largest share that does, reads the rest from NVMe and prints why. Disk tables are read a whole step at a
+  time on io_uring threads for each copy, with every block verified and a stalled read retried on another copy.
+  Serving PP5 from disk, a 131K-token cold prefill took **27.4 s against 27.2 s from RAM**. Decode was 2.2 % slower
+  at one session and equal at four and eight ([ENGRAM_PLACEMENT.md](docs/user/ENGRAM_PLACEMENT.md)).
+- **Mining cards plus one workstation card.** The original FP8/FP4 weights run as a five-stage pipeline over four CMP
+  170HX and one RTX PRO 6000 Blackwell, with native Blackwell arithmetic on the PRO. In the comparison below it has
+  the fastest strict cold prefill (**4,436 tok/s**) and the highest Fraser aggregates at four and eight users. EXL3
+  runs on the four CMP 170HX alone.
+- **1M tokens for every session.** Each session gets the full 1,048,576-token context by default, and the startup
+  fit serves as many sessions as the cards hold ([below](#sessions-and-context)).
+- **Exactness by choice.** The exact profile reproduces the pinned original serial reference: over 263 positions all
+  34,000,640 full-vocabulary F32 logits match (XR57, the exact recipe's qualification,
+  [original_reference_serial_m1](tools/cli/AXES.md#original_reference_serial_m1)). It is the reference the golden
+  scores compare against: on the 6 November subset of 7,878 positions the balanced profiles reach 98.21 % (PP5) and
+  96.81 % (EXL3) top-1 agreement with it ([GOLDEN_METRICS.md](docs/results/GOLDEN_METRICS.md)). Four profile axes
+  (category, exactness, concurrency, focus) pick the rest.
+- **Lossless, compact state.** FP16 state carriers at about 3,200 bytes per token per card: the smallest lossless
+  footprint in the comparison ([H7](docs/results/COMPARISON_MATRIX.md#h-kv-cache-and-state-memory)).
+- **Storage autotune.** `anemone autotune` prepares and verifies the copies and tunes the load for each machine, in
+  separate stages with their own parameters: the copy stage records its decisions beside the profile, and the load
+  stage writes the profile's load section. An Engram stage of its own is still to come
+  ([STORAGE_PROFILE.md](docs/user/STORAGE_PROFILE.md)).
+- **Proven changes.** Every merge has CPU proof on the reference machine:
+  - address, thread and undefined-behaviour sanitizers;
+  - an adversarial review of the code;
+  - object or dry-run identity outside its intended changes.
+  GPU output identity is checked at the [release gate](RELEASE_NOTES.md#release-gate), on PP5, TP4_PRO and TP4_EXL3.
+- **Small and self-contained.** C11 host code and CUDA kernels, linking only libc, libm and the CUDA driver. Formats,
+  hashing, asynchronous I/O and the HTTP server are all implemented in the tree.
+
+## Sessions and context
+
+Every session gets the full 1M context (`--context_tokens=1048576`, the default). The number of sessions defaults
+to `--session_slots=max`: at startup the engine fits as many full-context sessions as the cards hold, and prints
+`session slots: max -> N of 1048576 tokens each`. A context is never shrunk automatically. If not even one session
+fits, the start is refused.
+
+| Profile and placement | Sessions at 1M (default) |
+| --- | ---: |
+| Original weights, PP5 (4 × CMP 170HX + RTX PRO 6000), the default | 5 |
+| Original weights, `--placement=tp4_pro` | 1 |
+| EXL3 balanced, TP4, 2.9 bpw map (default) | 1 |
+| EXL3, TP4, 2.68 bpw map (opt-in, no quality claim yet) | 2 |
+| Original exact | 1 session of 512 tokens (bounded recipe) |
+
+Measured with the startup fit of a plain default serve of each placement on the reference machine, with no other engine
+on the cards: the placement, the tables, the pack or map and its verified copies, and no other option. TP4_PRO's start
+prints `session slots: max -> 1 of 1048576 tokens each`. For PP5 that is `serve --placement=pp5` with the tables and the
+pack only: the default resolver applies the PP5 base recipe itself, and the start prints
+`session slots: max -> 5 of 1048576 tokens each`. It is ready in about 24 s, loading 195 GiB of host memory at 16.6
+GiB/s from three verified copies. That start read each copy with 2 PP loader readers; the default is now 4, which loaded
+real PP5 serves in 16.42 s against 17.03 s with 2
+([`--reader_threads_per_copy`](docs/USAGE.md#knob-reader_threads_per_copy)). The benchmark recipes in
+[SERVER_PROFILES.md](docs/SERVER_PROFILES.md) pin 65,536 tokens × 8 sessions for the comparison runs: drop those two
+options to serve 1M sessions. More memory per card, or a smaller context, fits more sessions.
+
+To trade context for sessions by hand:
+- `--context_tokens=N`: the context of every session, a multiple of 16, at least 16,384 on TP placements. For
+  example, the original balanced PP5 recipe fits 28 sessions at `--context_tokens=65536`.
+- `--session_slots=N`: a fixed count. A count the cards cannot hold is refused before the load, with the most that
+  fit.
+
+See [SERVER_PROFILES.md](docs/SERVER_PROFILES.md#memory-slots-context-and-1m) for the memory options.
+
+## First-time setup: replicas and autotune
+
+Run this once per machine, and again after adding or replacing a drive.
+[STORAGE_PROFILE.md](docs/user/STORAGE_PROFILE.md) has every option.
+
+1. **Prepare the model packs** ([MODEL_DATA.md](docs/user/MODEL_DATA.md)) and build ([BUILD.md](BUILD.md)).
+2. **Copy the pack to your other NVMe drives.** The copy stage finds the local drives, copies the pack and verifies
+   every chunk. It writes the receipts that serving uses to find the copies:
+   ```sh
+   anemone autotune /srv/model.anemone --stage=copy --profile=/srv/runtime/storage-profile.json
+   ```
+   Copies live in `<mount>/anemone_engram_rnd/replicas/`, owned by the user that runs the engine. On a mount whose
+   root that user cannot write, create `<mount>/anemone_engram_rnd` once and give it to that user (`sudo mkdir`,
+   `sudo chown`). Give `--target=<mount>/anemone_engram_rnd/replicas/<name>.anemone` to choose drives yourself. A run
+   that stops resumes when you run the same command again.
+3. **Tune the load (optional).** The load stage measures the TP host load on these copies and writes a candidate
+   section into the profile. `--qualify` enables it:
+   ```sh
+   anemone autotune /srv/model.anemone --stage=load --profile=/srv/runtime/storage-profile.json
+   anemone autotune /srv/model.anemone --stage=load --profile=/srv/runtime/storage-profile.json --qualify
+   ```
+4. **Serve** with a command from [SERVER_PROFILES.md](docs/SERVER_PROFILES.md). Turbo load opens the verified copies
+   by itself: the startup lines `turbo load: copy N <path>` name them. The Engram fit prints where the tables go
+   (`engram ram percent: …`). Every command sets `CUDA_DEVICE_ORDER=PCI_BUS_ID`, and it is required: without it the
+   RTX PRO 6000 can be enumerated first and the PP5 startup fit fails ([INSTALL.md](INSTALL.md#card-placement)).
 
 ## Target hardware
 
@@ -35,11 +133,11 @@ installed:
 
 ```sh
 env -i PATH=/usr/local/cuda/bin:/usr/bin:/bin make -j32 release
-env -i PATH=/usr/local/cuda/bin:/usr/bin:/bin make host_tests
+env -i HOME="$(mktemp -d)" PATH=/usr/local/cuda/bin:/usr/bin:/bin make host_tests
 env -i PATH=/usr/local/cuda/bin:/usr/bin:/bin make -j32 header_check
 ```
 
-The recorded toolchain is CUDA 13.4 V13.4.92, GCC 15.2.0 and GNU Make 4.4.1.
+The recorded toolchain is CUDA 13.5 V13.5.37, GCC 14.2.0 and GNU Make 4.4.1.
 Release compilation and inference use C/CUDA; Python is an optional dependency
 for model preparation, code generation and analysis tools. No model weights
 are required to compile or run native host tests. See [BUILD.md](BUILD.md).
@@ -67,8 +165,10 @@ Choose a complete launch command from [SERVER_PROFILES.md](docs/SERVER_PROFILES.
 | Original balanced | Original weights over PP5 with native PRO arithmetic. |
 | Original exact | Bounded original PP THIN serial M1: one session, 512 total tokens. |
 
-The profile guide explains all 169 serve option spellings, resolved defaults,
-request controls and unsupported combinations. The [user manual](docs/USAGE.md)
+The profile guide explains the 169 serve option spellings of the 6 November parser
+and `--metrics`, marking the rows with current values, with resolved defaults,
+request controls and unsupported combinations; later options are in the user manual
+and [the knob catalogue](tools/cli/KNOBS.md). The [user manual](docs/USAGE.md)
 covers the HTTP API, other commands and a [Pi configuration template](docs/USAGE.md#67-pi-configuration)
 with private user/key-list generation. Its placeholders contain no real endpoint
 or API key.
@@ -159,6 +259,8 @@ scheduling, long-context handling, vision and numerical qualification. Help, rev
 feedback, bug and issue reports, and pull requests are all appreciated.
 See the [full matrix](docs/results/COMPARISON_MATRIX.md) for remaining work and
 [development guide](docs/DEVELOPMENT.md) for contributing and validation commands.
+[CONTRIBUTING.md](CONTRIBUTING.md) sets the bar for pull requests and issues: one change at a time, only the code
+that is needed, every linter clean, long testing on all four builds, and evidence for every claim.
 
 ## Repository guide
 
@@ -166,6 +268,7 @@ See the [full matrix](docs/results/COMPARISON_MATRIX.md) for remaining work and
 - [Development](docs/DEVELOPMENT.md): checks, generators and source layout.
 - [Tools](tools/README.md): source programs, dependencies and examples.
 - [Release notes](RELEASE_NOTES.md): version scope and known limits.
+- [Contributing](CONTRIBUTING.md): the standards for pull requests, issues and requests.
 - [Validation](docs/VALIDATION.md): build verification and evidence boundaries.
 
 The tree contains source, required build inputs and curated public results.

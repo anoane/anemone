@@ -21,6 +21,9 @@
  *     (REF:1292), its draws keyed. u_t = ((h >> SAMPLER_UNIFORM_SHIFT) + 1/2) 2^-23 of h =
  *     pack_digest_term(pack_digest_mix(seed), 2^32 position + t) (pack_digest.h) of the session's
  *     seed and the row's position.
+ *   - top_k 0 leaves the old distribution/arithmetic unchanged. Otherwise select k raw logits descending,
+ *     lowest token IDs on ties (signed zeros equal, NaNs last), then temperature, nucleus and the existing
+ *     keyed race on those tokens. k >= vocabulary is untruncated; temperature zero retains greedy.
  *   - Nothing of a row's answer depends on the other rows, on R, or on an order of additions. The masses are summed
  *     by integer atomic additions in shared memory, whose sum no order changes: no float and no global atomics.
  */

@@ -159,8 +159,8 @@ static bool site_inputs(struct replay *replay, uint32_t site)
 	const struct linear_range ranges[] = { replay->weights, replay->scale,
 					       replay->base, replay->norm };
 	const char *const suffixes[] = { "fn", "scale", "base", "norm" };
-	const uint64_t counts[] = { (uint64_t)MIXES * FLAT_INPUTS, HYPER_SCALES,
-				    MIXES, HIDDEN };
+	const uint64_t counts[] = { (uint64_t)MIXES * (uint64_t)FLAT_INPUTS,
+				    HYPER_SCALES, MIXES, HIDDEN };
 	for (uint32_t parameter = 0;
 	     parameter < sizeof(ranges) / sizeof(ranges[0]); parameter++) {
 		if (parameter == sizeof(ranges) / sizeof(ranges[0]) - 1u)
@@ -190,7 +190,7 @@ static bool site_inputs(struct replay *replay, uint32_t site)
 			       "layer_0.position_%" PRIu32 ".%s_site.streams",
 			       position, site == 0 ? "attn" : "ffn");
 		if (!read_values(replay, name, TEST_CAPTURE_BFLOAT16,
-				 FLAT_INPUTS, streams))
+				 (uint64_t)FLAT_INPUTS, streams))
 			return false;
 		if (replay->explicit_carried) {
 			(void)snprintf(name, sizeof(name),
@@ -358,7 +358,7 @@ static bool run_site(struct replay *replay, uint32_t site)
 			 test_linear_expect(
 				 before != NULL,
 				 "timing readback snapshot allocated");
-		if (passed) {
+		if (passed && before != NULL) {
 			memcpy(before, card->received,
 			       (size_t)card->work_byte_count);
 			const struct test_card_timing_form
@@ -499,8 +499,8 @@ int main(int argument_count, char **arguments)
 		struct test_linear_card *const card = &replay.card;
 		test_linear_card_clear(card);
 		replay.input = test_linear_card_work(
-			card, (uint64_t)replay.positions * FLAT_INPUTS *
-				      sizeof(uint16_t));
+			card, (uint64_t)replay.positions *
+				      (uint64_t)FLAT_INPUTS * sizeof(uint16_t));
 		replay.carried = test_linear_card_work(
 			card,
 			(uint64_t)replay.positions * STREAMS * sizeof(float));
@@ -510,8 +510,8 @@ int main(int argument_count, char **arguments)
 		replay.post =
 			test_linear_card_work(card, replay.carried.byte_count);
 		replay.comb = test_linear_card_work(
-			card, (uint64_t)replay.positions * COMB_VALUES *
-				      sizeof(float));
+			card, (uint64_t)replay.positions *
+				      (uint64_t)COMB_VALUES * sizeof(float));
 		replay.hidden = test_linear_card_work(
 			card,
 			(uint64_t)replay.positions * HIDDEN * sizeof(uint16_t));
@@ -523,7 +523,8 @@ int main(int argument_count, char **arguments)
 		replay.output =
 			test_linear_card_work(card, replay.hidden.byte_count);
 		replay.weights = test_linear_card_weights(
-			card, (uint64_t)MIXES * FLAT_INPUTS * sizeof(float));
+			card, (uint64_t)MIXES * (uint64_t)FLAT_INPUTS *
+				      sizeof(float));
 		replay.scale = test_linear_card_weights(
 			card, HYPER_SCALES * sizeof(float));
 		replay.base =

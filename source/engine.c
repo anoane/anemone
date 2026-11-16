@@ -20,6 +20,7 @@
  * drawing row would give them, and the driver's history of the session is cut back to the rows those tokens commit.
  */
 #include "anemone/front_end_seam.h"
+#include "anemone/sampler_records.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -57,6 +58,12 @@ static bool token_ends_generation(const struct inference_engine *engine,
 #define BATCH_COST_WEIGHT 8u /* a BATCH program's cost moves an eighth of the way to each step it took */
 #define ACCEPTANCE_PRIOR_REACHED 16u /* draft_learned_acceptance: the given table weighs as many reached outcomes */
 #define ACCEPTANCE_HALVED_REACHED 512u /* a cell's outcomes are halved once it holds as many reached drafts */
+/* what a full cell's reached and matched counts are divided by */
+#define ACCEPTANCE_HALVING 2u
+/* added before a truncation, it rounds to the nearest */
+#define ROUNDING_HALF 0.5
+/* (n + d / ROUNDING_HALVES) / d: n / d rounded to the nearest */
+#define ROUNDING_HALVES 2u
 #define SESSION_ACCEPTANCE_PRIOR 4.0 /* draft_session_acceptance: expected matches of weight at the ratio 1 */
 #define SESSION_ACCEPTANCE_DECAY 0.98 /* a session's counts decay by it a reached draft (about 50 remembered) */
 #define SESSION_SHIFT_MODE 2u /* draft_session_acceptance: the table's log-odds shifted per command */
@@ -343,6 +350,11 @@ static uint32_t lookup_drafted(struct inference_engine *engine,
 				    proposals_out);
 }
 
+/* draft_trace: the round's proposals it prints, by place */
+#define TRACE_THIRD_PROPOSAL 2
+#define TRACE_FOURTH_PROPOSAL 3
+#define TRACE_FIFTH_PROPOSAL 4
+
 /* The trained five-position block stays fixed; only its verified prefix changes. */
 static uint32_t device_drafted(struct inference_engine *engine,
 			       const struct command_cursor *cursor,
@@ -354,12 +366,18 @@ static uint32_t device_drafted(struct inference_engine *engine,
 #if TIMING_HOOKS_ENABLED
 	if (engine->description.draft_trace != 0) /* diagnostics: the round as the host sees it */
 		(void)fprintf(stderr,
-			      "draft round session %" PRIu32 " anchor %" PRId32 " token %" PRId32
-			      " (host %" PRIu32 " %" PRIu32 ") proposals %" PRId32 " %" PRId32 " %" PRId32
+			      "draft round session %" PRIu32 " anchor %" PRId32
+			      " token %" PRId32 " (host %" PRIu32 " %" PRIu32
+			      ") proposals %" PRId32 " %" PRId32 " %" PRId32
 			      " %" PRId32 " %" PRId32 " count %" PRIu32 "\n",
-			      round->session_slot, round->anchor_position, round->anchor_token, anchor_position,
-			      cursor->token_id, round->proposals[0], round->proposals[1], round->proposals[2],
-			      round->proposals[3], round->proposals[4], round->proposal_count);
+			      round->session_slot, round->anchor_position,
+			      round->anchor_token, anchor_position,
+			      cursor->token_id, round->proposals[0],
+			      round->proposals[1],
+			      round->proposals[TRACE_THIRD_PROPOSAL],
+			      round->proposals[TRACE_FOURTH_PROPOSAL],
+			      round->proposals[TRACE_FIFTH_PROPOSAL],
+			      round->proposal_count);
 #endif
 	if (round->proposal_count == 0 ||
 	    round->anchor_position != (int32_t)anchor_position ||
@@ -393,7 +411,7 @@ static uint32_t acceptance_scaled(uint32_t acceptance, double factor)
 	const double scaled = (double)acceptance * factor;
 	return scaled >= (double)DRAFT_PROBABILITY_SCALE ?
 		       DRAFT_PROBABILITY_SCALE :
-		       (uint32_t)(scaled + 0.5);
+		       (uint32_t)(scaled + ROUNDING_HALF);
 }
 
 /* The log-odds of a table acceptance (per thousand), its probability held from the floor to 1 less it. */
@@ -715,6 +733,8 @@ static uint32_t proposals_taken(struct inference_engine *engine,
 				bool step_planned, bool one_owner,
 				uint32_t *proposals_out)
 {
+	if (cursor->command.reasoning_budget != 0 && !cursor->reasoning.closed)
+		return 0; /* forced closing must be consumed before any speculative successor */
 	cursor->dspark_opportunity = false;
 	cursor->live_probe_planned = false;
 	cursor->needs_dspark_tail = false;
@@ -991,6 +1011,19 @@ static void cone_planned(struct inference_engine *engine,
 		slot->decoder_from = cone_end - 1u;
 }
 
+/* Worker-private reasoning policy. Control insertion changes only opt-in commands; the
+ * next ordinary row consumes the real delimiter, so token events and KV history agree. */
+static uint32_t controlled_token(struct inference_engine *engine,
+				 struct command_cursor *cursor, uint32_t token)
+{
+	uint32_t controlled = token;
+	cursor->status = reasoning_token(&cursor->command,
+					 engine->description.end_token_id,
+					 token, &cursor->reasoning,
+					 &controlled);
+	return controlled;
+}
+
 /* The worker stops reading the borrowed prompt BEFORE publishing final. Taking
  * final permits a new command, but never revives a failed shared driver. */
 static void command_finished(struct inference_engine *engine,
@@ -1048,10 +1081,9 @@ static void command_advanced(struct inference_engine *engine,
 		return;
 	}
 	if (!cursor->sampler_was_set) {
-		const struct step_session settings = {
+		const struct step_session settings = step_session_make(
 			command.sampler_seed, command.sampler_temperature,
-			command.sampler_top_p
-		};
+			command.sampler_top_p, command.sampler_top_k);
 		cursor->status = step_session_set(engine->driver, session_slot,
 						  &settings);
 		cursor->sampler_was_set = true;
@@ -1128,16 +1160,27 @@ static void command_advanced(struct inference_engine *engine,
 			kind = GENERATION_EVENT_FINISHED_AT_LIMIT;
 		} else if (cursor->status == OK &&
 			   cursor->position >= new_count) {
-			cursor->token_id = (uint32_t)drawn.token_id;
+			cursor->token_id = controlled_token(
+				engine, cursor, (uint32_t)drawn.token_id);
+			if (cursor->status != OK) {
+				command_finished(engine, cursor,
+						 GENERATION_EVENT_FAILED);
+				return;
+			}
 			cursor->generated++;
-			if (!engine_event_queued(engine, session_slot,
-						 (struct generation_event){
-							 command.request_tag,
-							 GENERATION_EVENT_TOKEN,
-							 cursor->token_id,
-							 cursor->position + 1,
-							 OK, drawn.logit },
-						 0)) {
+			if (!engine_event_queued(
+				    engine, session_slot,
+				    (struct generation_event){
+					    command.request_tag,
+					    GENERATION_EVENT_TOKEN,
+					    cursor->token_id,
+					    cursor->position + 1, OK,
+					    cursor->token_id ==
+							    (uint32_t)drawn
+								    .token_id ?
+						    drawn.logit :
+						    0.0f },
+				    0)) {
 				cursor->is_ready = false;
 				return;
 			}
@@ -1189,11 +1232,11 @@ static bool sampler_ready(struct inference_engine *engine,
 {
 	struct command_cursor *const cursor = engine->cursors + session_slot;
 	if (!cursor->sampler_was_set) {
-		const struct step_session settings = {
-			cursor->command.sampler_seed,
-			cursor->command.sampler_temperature,
-			cursor->command.sampler_top_p
-		};
+		const struct step_session settings =
+			step_session_make(cursor->command.sampler_seed,
+					  cursor->command.sampler_temperature,
+					  cursor->command.sampler_top_p,
+					  cursor->command.sampler_top_k);
 		cursor->status = step_session_set(engine->driver, session_slot,
 						  &settings);
 		cursor->sampler_was_set = cursor->status == OK;
@@ -1247,8 +1290,9 @@ uint32_t engine_exact_chunk_rows(const struct inference_engine *engine,
 	if (chunk == 0 && whole != 0)
 		chunk = step_chunk_rows(engine->driver, kind, whole);
 	/* prefill_thin_tail: a full (wide) step of fewer rows than the least chunk (the tail's rows short of a 64-row
-	 * chunk, a prompt's row of logits not among them) takes the largest such program of them (main.c's thin-tail
-	 * programs, their rows in a thin step's forms: no other has fewer than 64 rows); else they go in thin steps */
+	 * chunk, a prompt's row of logits not among them) takes the largest such program of them (commands.c's
+	 * thin-tail programs, their rows in a thin step's forms: no other has fewer than 64 rows); else they go in thin
+	 * steps */
 	if (chunk > rows && rows < MODEL_WIDE_LEAST_ROWS) {
 		const uint32_t program =
 			step_chunk_rows(engine->driver, kind, rows);
@@ -1379,7 +1423,8 @@ static bool full_flight_taken(struct inference_engine *engine,
 	flight->owners[0] = first_slot;
 	flight->taken[0] = full;
 	const uint32_t cone_end = cone_end_of(engine, end);
-	/* the bound a program of prefill_dead_halves was built for (engine_full_cone_behind) */
+#if CHECKING_HOOKS_ENABLED
+	/* the bound a program of prefill_dead_halves was built for (engine_full_cone_behind): asserted only */
 	const uint32_t least_behind =
 		engine->description.prefill_prefix_stable != 0 ?
 			0u :
@@ -1393,7 +1438,9 @@ static bool full_flight_taken(struct inference_engine *engine,
 		least_behind == 0 || full % MODEL_FULL_CONE_LEAST_ROWS != 0 ||
 			cone_end == 0 ||
 			cone_end - 1u >= position + full - 1u + least_behind,
-		"least_behind == 0 || full % ANEMONE_MODEL_FULL_CONE_LEAST_ROWS != 0 || cone_end == 0 || cone_end - 1u >= position + full - 1u + least_behind"); /* whole granules: no tail chunk */
+		"least_behind == 0 || full % ANEMONE_MODEL_FULL_CONE_LEAST_ROWS != 0 || cone_end == 0 || "
+		"cone_end - 1u >= position + full - 1u + least_behind"); /* whole granules: no tail chunk */
+#endif
 	const bool trunks = engine->description.prefill_cone_skip != PREFILL_CONE_UNTRIMMED;
 	for (uint32_t row = 0; row < full; row++) {
 		flight->rows[row] = (struct step_row_record){
@@ -1450,7 +1497,7 @@ static uint32_t batch_step_cost(const struct inference_engine *engine,
 				      (uint32_t)(prior - unused) :
 				      floor;
 	return rows <= SERVING_BATCH_COST_ROWS &&
-			       drafting <= SERVING_SESSION_CAPACITY ?
+			       drafting <= STEP_BATCH_MAXIMUM_SESSIONS ?
 		       draft_cost_estimate(
 			       &engine->batch_shape_costs[rows][drafting],
 			       seed) :
@@ -1475,7 +1522,7 @@ static void batch_step_measured(struct inference_engine *engine,
 		batch_step_cost(engine, flight->row_count, drafting);
 	const uint32_t shape_samples =
 		flight->row_count <= SERVING_BATCH_COST_ROWS &&
-				drafting <= SERVING_SESSION_CAPACITY ?
+				drafting <= STEP_BATCH_MAXIMUM_SESSIONS ?
 			engine->batch_shape_costs[flight->row_count][drafting]
 				.observations :
 			0u;
@@ -1483,7 +1530,7 @@ static void batch_step_measured(struct inference_engine *engine,
 	if (engine->description.draft_session_acceptance == SESSION_COST_MODE &&
 	    flight->owner_count != 0 &&
 	    flight->row_count <= SERVING_BATCH_COST_ROWS &&
-	    drafting <= SERVING_SESSION_CAPACITY &&
+	    drafting <= STEP_BATCH_MAXIMUM_SESSIONS &&
 	    index < engine->batch_cost_count) {
 		bool decode_only = true;
 		uint32_t expected_rows = flight->owner_count;
@@ -1593,7 +1640,9 @@ static void batch_step_measured(struct inference_engine *engine,
 	    elapsed_us < DRAFT_MOST_COST_US) {
 		const uint64_t cost = engine->batch_cost_us[index];
 		engine->batch_cost_us[index] =
-			(uint32_t)((cost * (BATCH_COST_WEIGHT - 1u) + elapsed_us + BATCH_COST_WEIGHT / 2u) /
+			(uint32_t)((cost * (BATCH_COST_WEIGHT - 1u) +
+				    elapsed_us +
+				    BATCH_COST_WEIGHT / ROUNDING_HALVES) /
 				   BATCH_COST_WEIGHT);
 		struct stats_batch_program *const live =
 			&engine->worker_live.batch_programs[index];
@@ -1645,18 +1694,22 @@ void engine_draft_depths(struct inference_engine *engine,
 	struct candidate {
 		double reach;
 		uint32_t turn;
-	} candidates[SERVING_SESSION_CAPACITY * SERVING_DRAFT_MOST], held;
-	uint32_t count = 0, rows = row_count, planned[SERVING_SESSION_CAPACITY];
-	uint32_t available[SERVING_SESSION_CAPACITY];
+	} candidates[FLIGHT_MOST_OWNERS * SERVING_DRAFT_MOST], held;
+	uint32_t count = 0, rows = row_count;
+	/* every turn sets its own or returns: zeroed for the copy below */
+	uint32_t planned[FLIGHT_MOST_OWNERS] = { 0 };
+	uint32_t available[FLIGHT_MOST_OWNERS];
 	double tokens = 0.0;
-	for (uint32_t turn = 0; turn < flight->owner_count; turn++)
+	/* the flight is const: every loop below sees the same owners */
+	const uint32_t owner_count = flight->owner_count;
+	for (uint32_t turn = 0; turn < owner_count; turn++)
 		caps[turn] = UINT32_MAX;
 	if (engine->batch_cost_count == 0)
 		return;
 	if (engine->description.draft_session_acceptance == SESSION_COST_MODE &&
-	    flight->owner_count == 1u)
+	    owner_count == 1u)
 		return;
-	for (uint32_t turn = 0; turn < flight->owner_count; turn++) {
+	for (uint32_t turn = 0; turn < owner_count; turn++) {
 		const struct command_cursor *const cursor = engine->cursors + flight->owners[turn];
 		const uint32_t anchor = cursor->position + cursor->in_flight;
 		const struct step_round *const round = &cursor->draft_round;
@@ -1719,9 +1772,9 @@ void engine_draft_depths(struct inference_engine *engine,
 			candidates[at] = candidates[at - 1u];
 		candidates[at] = held;
 	}
-	uint32_t candidate_depths[SERVING_SESSION_CAPACITY];
+	uint32_t candidate_depths[FLIGHT_MOST_OWNERS];
 	memcpy(candidate_depths, planned,
-	       (size_t)flight->owner_count * sizeof(*planned));
+	       (size_t)owner_count * sizeof(*planned));
 	uint32_t drafting = batch_draft_tails(engine, flight, candidate_depths);
 	uint32_t best = 0, best_cost = batch_step_cost(engine, rows, drafting);
 	double best_tokens = tokens;
@@ -1746,13 +1799,13 @@ void engine_draft_depths(struct inference_engine *engine,
 		     SESSION_RESIDUAL_MODE ||
 	     engine->description.draft_session_acceptance ==
 		     SESSION_COST_MODE) &&
-	    flight->owner_count > 1u) {
+	    owner_count > 1u) {
 		uint32_t selected_rows = row_count;
-		for (uint32_t turn = 0; turn < flight->owner_count; turn++)
+		for (uint32_t turn = 0; turn < owner_count; turn++)
 			selected_rows += planned[turn] == UINT32_MAX ?
 						 0u :
 						 planned[turn];
-		for (uint32_t turn = 0; turn < flight->owner_count; turn++) {
+		for (uint32_t turn = 0; turn < owner_count; turn++) {
 			const struct command_cursor *const cursor =
 				&engine->cursors[flight->owners[turn]];
 			const uint64_t rounds =
@@ -1781,7 +1834,7 @@ void engine_draft_depths(struct inference_engine *engine,
 			}
 		}
 	}
-	for (uint32_t turn = 0; turn < flight->owner_count; turn++)
+	for (uint32_t turn = 0; turn < owner_count; turn++)
 		caps[turn] = planned[turn];
 }
 
@@ -1994,7 +2047,11 @@ result_status engine_prefix_boundary(const struct inference_engine *engine,
  * whose rows end with its row that draws once every owner's prompt rows are counted takes its proposals from the rows
  * left (proposals_taken), behind that row: at most one owner of a step verifies. An owner that failed or was cancelled
  * takes none and ends once nothing of it is in flight. Without a pipeline the step flies when it lands. false when no
- * owner takes a row. */
+ * owner takes a row. The round's cursor (next_slot) moves past the owners that take a row and stops at the first
+ * owner the step's make-up passed over (a drawing owner past the pipeline's DRAWING_ROWS, an owner whose row is not
+ * the step's front or image kind, or a prefill_prompt_chunks prompt whose chunk waits only for its turn), so the next
+ * flight starts at it: a later owner's row never takes its turn, and a prompt beside decoding owners gets its wide or
+ * full step on that turn. */
 static bool flight_taken_off(struct inference_engine *engine,
 			     uint32_t first_slot)
 {
@@ -2002,9 +2059,9 @@ static bool flight_taken_off(struct inference_engine *engine,
 	struct flight *const flight =
 		&engine->flights[(engine->flight_first + engine->flight_count) %
 				 engine->depth];
-	uint32_t taken[SERVING_SESSION_CAPACITY] = { 0 };
+	uint32_t *const taken = engine->slot_taken; /* by session slot */
 	uint32_t proposals[SERVING_DRAFT_MOST];
-	uint32_t verifier = SERVING_SESSION_CAPACITY,
+	uint32_t verifier = FLIGHT_MOST_OWNERS,
 		 proposed =
 			 0; /* the turn of the owner with proposals (none), their count */
 	bool drafts = false;
@@ -2037,8 +2094,8 @@ static bool flight_taken_off(struct inference_engine *engine,
 	    (engine->prefill_chunk_limit == 0 ||
 	     decode_rows < engine->prefill_chunk_limit))
 		engine->prefill_chunk_limit = decode_rows;
-	/* prefill_order: the head prompt's chunk alone (prompt_head): in any turn with prefill_first, else in its own turn
-	 * or a waiting prompt's (a decoding owner's turn takes a thin or BATCH step) */
+	/* prefill_order: the head prompt's chunk alone (prompt_head): in any turn with prefill_first, else in its own
+	 * turn or a waiting prompt's (a decoding owner's turn takes a thin or BATCH step) */
 	const uint32_t oldest = engine->description.prefill_order != 0 ?
 					pending_prompt :
 					slot_count;
@@ -2051,7 +2108,8 @@ static bool flight_taken_off(struct inference_engine *engine,
 					 oldest;
 	const bool head_chunks = head < slot_count && engine->cursors[head].status == OK &&
 				 !is_cancelled(engine, head) && next_chunk_rows(engine, engine->cursors + head) != 0;
-	/* prefill_decode_every: after so many of the head's chunk steps in a row, a step of the decoding owners first */
+	/* prefill_decode_every: after so many of the head's chunk steps in a row, a step of the decoding owners
+	 * first */
 	const uint32_t every = engine->description.prefill_decode_every;
 	const uint32_t interval = every != 0 ? every : 1u;
 	const bool starts_burst = slices &&
@@ -2110,6 +2168,8 @@ static bool flight_taken_off(struct inference_engine *engine,
 							 first_slot;
 	uint32_t row_count = is_wide ? flight->taken[0] : 0, drawing = 0,
 		 front = 0, image_rows = 0;
+	/* the first owner the step's make-up passed over, which keeps the cursor */
+	uint32_t passed = slot_count;
 	flight->owner_count = is_wide ? flight->owner_count : 0;
 	for (uint32_t distance = 0;
 	     distance < slot_count && row_count < engine->most_rows && !is_wide;
@@ -2128,20 +2188,28 @@ static bool flight_taken_off(struct inference_engine *engine,
 			command_end(&cursor->command) - position <=
 				engine->most_rows &&
 			next_chunk_rows(engine, cursor) == 0;
+		/* prefill_prompt_chunks: a prompt whose chunk goes in a step of its own */
+		const bool chunk_ready =
+			is_prompt && !decode_due && !decode_wait &&
+			engine->description.prefill_prompt_chunks != 0 &&
+			prompt_chunk_ready(engine, session_slot);
 		if (!cursor->is_ready || cursor->images_pending ||
 		    cursor->awaits_token ||
 		    (!is_prompt && cursor->in_flight != 0) ||
 		    (is_prompt &&
-		     (decode_due || decode_wait ||
-		      (engine->description.prefill_prompt_chunks != 0 &&
-		       prompt_chunk_ready(engine, session_slot)) ||
+		     (decode_due || decode_wait || chunk_ready ||
 		      (head < slot_count &&
 		       (head_chunks ||
 			(session_slot != head && !short_prompt)))) &&
 		     cursor->status == OK &&
 		     !is_cancelled(engine, session_slot))) {
 			/* Reserved chunks never donate a foreign row to BATCH. Other prompt rows wait unless order 3
-			 * admits a short tail; cancelled/failed commands end here. Decoding owners may still share. */
+			 * admits a short tail; cancelled/failed commands end here. Decoding owners may still share. A
+			 * chunk that waits only for its owner's turn (no decode round or prompt head reserves the
+			 * step) keeps the cursor, so the next flight is that chunk's. */
+			if (chunk_ready && head == slot_count)
+				passed = passed < slot_count ? passed :
+							       session_slot;
 			continue;
 		}
 		cursor->status = cursor->status == OK &&
@@ -2160,16 +2228,19 @@ static bool flight_taken_off(struct inference_engine *engine,
 			}
 			continue;
 		}
+		const uint32_t flags = command_flags(cursor, position);
+		/* passed over by the step's make-up: a pipeline's drawing row taken, or a row of another front or
+		 * image kind */
 		if ((!engine->is_batch && !is_prompt && engine->depth > 1 &&
 		     drawing == DRAWING_ROWS) ||
-		    (row_count != 0 && (command_flags(cursor, position) &
-					STEP_ROW_FRONT) != front) ||
-		    (row_count != 0 && (command_flags(cursor, position) &
-					STEP_ROW_IMAGE) != image_rows)) {
+		    (row_count != 0 &&
+		     (flags & (STEP_ROW_FRONT | STEP_ROW_IMAGE)) !=
+			     (front | image_rows))) {
+			passed = passed < slot_count ? passed : session_slot;
 			continue;
 		}
-		front = command_flags(cursor, position) & STEP_ROW_FRONT;
-		image_rows = command_flags(cursor, position) & STEP_ROW_IMAGE;
+		front = flags & STEP_ROW_FRONT;
+		image_rows = flags & STEP_ROW_IMAGE;
 		if (!sampler_ready(engine, session_slot)) {
 			continue;
 		}
@@ -2177,7 +2248,9 @@ static bool flight_taken_off(struct inference_engine *engine,
 		flight->owners[flight->owner_count++] = session_slot;
 		taken[session_slot] = 1;
 		row_count++;
-		engine->next_slot = (session_slot + 1) % slot_count;
+		engine->next_slot = passed < slot_count ?
+					    passed :
+					    (session_slot + 1) % slot_count;
 		/* Only the scheduled round advances its own cursor. */
 		if (slices && decode_due && !is_prompt)
 			engine->decode_next_slot = engine->next_slot;
@@ -2204,13 +2277,14 @@ static bool flight_taken_off(struct inference_engine *engine,
 			row_count++;
 		}
 	}
-	/* then the first verifier's proposals: they never take a row a prompt could (a BATCH step plan: at most caps) */
-	uint32_t caps[SERVING_SESSION_CAPACITY];
+	/* then the first verifier's proposals: they never take a row a prompt could (a BATCH step plan: at most
+	 * caps) */
+	uint32_t caps[FLIGHT_MOST_OWNERS];
 	if (engine->is_batch && !is_wide)
 		engine_draft_depths(engine, flight, taken, row_count, caps);
 	for (uint32_t turn = 0;
 	     turn < flight->owner_count &&
-	     (engine->is_batch || verifier == SERVING_SESSION_CAPACITY) &&
+	     (engine->is_batch || verifier == FLIGHT_MOST_OWNERS) &&
 	     engine->description.speculative_depth != 0 && !is_wide;
 	     turn++) {
 		struct command_cursor *const cursor =
@@ -2257,6 +2331,8 @@ static bool flight_taken_off(struct inference_engine *engine,
 		struct command_cursor *const cursor =
 			engine->cursors + flight->owners[turn];
 		flight->taken[turn] = taken[flight->owners[turn]];
+		taken[flight->owners[turn]] =
+			0; /* all zero again for the next flight */
 		flight->proposed[turn] = engine->is_batch ?
 						 flight->proposed[turn] :
 					 turn == verifier ? proposed :
@@ -2381,9 +2457,9 @@ MUST_CHECK static result_status round_checked(struct inference_engine *engine,
 MUST_CHECK static result_status
 batch_rounds_checked(struct inference_engine *engine, struct flight *flight)
 {
-	struct step_round pending[SERVING_SESSION_CAPACITY] = { 0 };
+	struct step_round pending[STEP_BATCH_MAXIMUM_SESSIONS] = { 0 };
 	uint32_t mask = 0;
-	for (uint32_t slot = 0; slot < SERVING_SESSION_CAPACITY; slot++)
+	for (uint32_t slot = 0; slot < STEP_BATCH_MAXIMUM_SESSIONS; slot++)
 		pending[slot].session_slot = STEP_NO_SESSION;
 	for (uint32_t anchor = 0; anchor < flight->row_count; anchor++) {
 		const struct step_row_record *const row = &flight->rows[anchor];
@@ -2454,8 +2530,8 @@ static void acceptance_learned(struct inference_engine *engine, uint32_t mode,
 	*reached += 1u;
 	*hits += matched ? 1u : 0u;
 	if (*reached >= ACCEPTANCE_HALVED_REACHED) {
-		*reached /= 2u;
-		*hits /= 2u;
+		*reached /= ACCEPTANCE_HALVING;
+		*hits /= ACCEPTANCE_HALVING;
 	}
 	const uint64_t weight = (uint64_t)*reached + ACCEPTANCE_PRIOR_REACHED;
 	engine->draft_policy.acceptance[mode][position][bin] =
@@ -2463,7 +2539,7 @@ static void acceptance_learned(struct inference_engine *engine, uint32_t mode,
 			    (uint64_t)engine->acceptance_prior[mode][position]
 							      [bin] *
 				    ACCEPTANCE_PRIOR_REACHED +
-			    weight / 2u) /
+			    weight / ROUNDING_HALVES) /
 			   weight);
 }
 
@@ -2737,7 +2813,12 @@ void engine_flight_landed(struct inference_engine *engine)
 			const struct step_row_result *const drawn =
 				&results[anchor_row + index];
 			cursor->position += index != 0 ? 1u : 0u;
-			cursor->token_id = (uint32_t)drawn->token_id;
+			cursor->token_id = controlled_token(
+				engine, cursor, (uint32_t)drawn->token_id);
+			if (cursor->status != OK) {
+				kind = GENERATION_EVENT_FAILED;
+				break;
+			}
 			cursor->generated++;
 			if (!engine_event_queued(
 				    engine, flight->owners[turn],
@@ -2746,7 +2827,11 @@ void engine_flight_landed(struct inference_engine *engine)
 					    GENERATION_EVENT_TOKEN,
 					    cursor->token_id,
 					    cursor->position + 1, OK,
-					    drawn->logit },
+					    cursor->token_id ==
+							    (uint32_t)drawn
+								    ->token_id ?
+						    drawn->logit :
+						    0.0f },
 				    0)) {
 				cursor->is_ready = false; /* the engine ends */
 				break;
@@ -2829,7 +2914,7 @@ static void *stepping_thread(void *argument)
 {
 	struct inference_engine *const engine = argument;
 	const uint32_t slot_count = engine->description.session_slot_count;
-	if (slot_count == 0 || slot_count > SERVING_SESSION_CAPACITY) {
+	if (slot_count == 0 || slot_count > SERVING_SLOTS_MOST) {
 		return NULL;
 	}
 	(void)pthread_mutex_lock(&engine->lock);
@@ -2942,6 +3027,10 @@ static void *stepping_thread(void *argument)
 				(void)pthread_mutex_unlock(&engine->lock);
 			}
 			(void)pthread_mutex_lock(&engine->lock);
+			if (engine->metrics_enabled) {
+				engine_live_iteration(engine);
+				engine_live_publish(engine);
+			}
 			continue;
 		}
 		uint32_t pending =
@@ -2961,6 +3050,10 @@ static void *stepping_thread(void *argument)
 			engine_session_advanced(engine,
 						engine->cursors + pending);
 			(void)pthread_mutex_lock(&engine->lock);
+			if (engine->metrics_enabled) {
+				engine_live_iteration(engine);
+				engine_live_publish(engine);
+			}
 			continue;
 		}
 		uint32_t selected = slot_count;
@@ -2976,17 +3069,28 @@ static void *stepping_thread(void *argument)
 			(void)pthread_cond_wait(&engine->wake, &engine->lock);
 			continue;
 		}
-		/* Landing a full pipeline consumes no owner's turn. Successful submissions advance the cursor themselves. */
+		/* Landing a flight consumes no owner's turn, nor does a take-off that finds no row: on the flights
+		 * path flight_taken_off (its thin rows, wide and full steps) moves the cursor past the owners it takes.
+		 * Here only an images quantum and the single-session path give selected its turn. */
 		const bool landing_only =
 			engine->flight_count != 0 &&
 			(engine->flight_count >= engine->depth ||
 			 engine->checkpoint_barrier);
-		if (engine->description.prefill_prompt_chunks == 0 ||
-		    (!landing_only && !prompt_chunk_ready(engine, selected)))
+		const bool flies =
+			!engine->cursors[selected].images_pending &&
+			(engine->is_batch || engine->depth > 1 ||
+			 engine->wide_rows != 0 || engine->full_rows != 0 ||
+			 engine->description.speculative_depth != 0 ||
+			 (slot_count > 1 && engine->most_rows > 1));
+		if (!flies &&
+		    (engine->description.prefill_prompt_chunks == 0 ||
+		     (!landing_only && !prompt_chunk_ready(engine, selected))))
 			engine->next_slot = (selected + 1) % slot_count;
 		if (engine->failure != OK) {
 			engine->cursors[selected].status = engine->failure;
 		}
+		/* Enable is startup-only. Recheck a concurrent disable at the publication lock. */
+		const bool observe_metrics = engine->metrics_enabled;
 		(void)pthread_mutex_unlock(&engine->lock);
 		struct command_cursor *const selected_cursor =
 			engine->cursors + selected;
@@ -2995,6 +3099,14 @@ static void *stepping_thread(void *argument)
 			 * refill it between these waits and starve an image's next quantum. */
 			while (engine->flight_count != 0) {
 				engine_flight_landed(engine);
+				if (observe_metrics) {
+					(void)pthread_mutex_lock(&engine->lock);
+					if (engine->metrics_enabled) {
+						engine_live_iteration(engine);
+						engine_live_publish(engine);
+					}
+					(void)pthread_mutex_unlock(&engine->lock);
+				}
 			}
 			(void)pthread_mutex_lock(&engine->lock);
 			selected_cursor->status =
@@ -3032,15 +3144,13 @@ static void *stepping_thread(void *argument)
 				}
 				selected_cursor->images_pending = !finished;
 			}
-		} else if (engine->is_batch || engine->depth > 1 ||
-			   engine->wide_rows != 0 || engine->full_rows != 0 ||
-			   engine->description.speculative_depth != 0 ||
-			   (slot_count > 1 && engine->most_rows > 1)) {
+		} else if (flies) {
 			flights_advanced(engine, selected);
 		} else {
 			command_advanced(engine, engine->cursors + selected);
 		}
 		(void)pthread_mutex_lock(&engine->lock);
+		engine_live_iteration(engine);
 		engine_live_publish(engine);
 	}
 	(void)pthread_mutex_unlock(&engine->lock);
@@ -3116,14 +3226,17 @@ result_status engine_create(struct step_driver *driver,
 	       description->batch_step_us[cost_count] != 0)
 		cost_count++;
 	const uint32_t decode_capacity =
-		is_batch ? step_chunk_rows(driver, PROGRAM_BATCH, UINT32_MAX) :
-			   LINEAR_MAXIMUM_ROWS;
+		driver != NULL && is_batch ?
+			step_chunk_rows(driver, PROGRAM_BATCH, UINT32_MAX) :
+			LINEAR_MAXIMUM_ROWS;
 	if (driver == NULL || description == NULL || engine_out == NULL ||
 	    most_rows == 0 || most_rows > decode_capacity ||
-	    (is_batch && (most_rows > STEP_BATCH_MAXIMUM_ROWS ||
-			  step_pipeline_depth(driver) != 1u)) ||
+	    (is_batch &&
+	     (most_rows > STEP_BATCH_MAXIMUM_ROWS ||
+	      step_pipeline_depth(driver) != 1u ||
+	      description->session_slot_count > STEP_BATCH_MAXIMUM_SESSIONS)) ||
 	    description->session_slot_count == 0 ||
-	    description->session_slot_count > SERVING_SESSION_CAPACITY ||
+	    description->session_slot_count > SERVING_SLOTS_MOST ||
 	    description->context_token_limit == 0 ||
 	    description->end_token_id >= description->vocabulary_size ||
 	    description->ignore_eos > 1u ||
@@ -3209,8 +3322,8 @@ result_status engine_create(struct step_driver *driver,
 		LOG_ERROR(
 			"engine: refused: no driver, description or output, rows out of range, or a description "
 			"without slots, context or an end token inside its vocabulary, or with a cone or wide "
-			"rows not its programs', or draft positions or n-gram lengths out of range, or BATCH step costs "
-			"not one a BATCH program");
+			"rows not its programs', or draft positions or n-gram lengths out of range, or BATCH step costs"
+			" not one a BATCH program");
 		return STATUS_INVALID_ARGUMENT;
 	}
 	if (is_batch) {
@@ -3251,7 +3364,13 @@ result_status engine_create(struct step_driver *driver,
 					       (sizeof(struct queued_command) +
 						sizeof(struct command_cursor) +
 						sizeof(struct draft_lookup) +
-						sizeof(struct slot)) +
+						sizeof(struct slot) +
+						sizeof(uint64_t) +
+						sizeof(struct session_clone_metrics) +
+						sizeof(struct engine_slot_stats) +
+						sizeof(struct engine_session_stats) +
+						sizeof(uint32_t) +
+						sizeof(bool)) +
 				       (size_t)row_capacity *
 					       (STEP_PIPELINE_MOST *
 							sizeof(struct step_row_record) +
@@ -3311,8 +3430,20 @@ result_status engine_create(struct step_driver *driver,
 	struct draft_lookup *const lookups =
 		(struct draft_lookup *)(engine->cursors + slot_count);
 	engine->slots = (struct slot *)(lookups + slot_count);
+	/* each table no more aligned than the one before it, as -Wcast-align=strict checks */
+	engine->slot_generations = (uint64_t *)(engine->slots + slot_count);
+	engine->clone_metrics =
+		(struct session_clone_metrics *)(engine->slot_generations +
+						 slot_count);
+	engine->live.slot_room = (uint32_t)slot_count;
+	engine->live.slots =
+		(struct engine_slot_stats *)(engine->clone_metrics +
+					     slot_count);
+	engine->live.sessions =
+		(struct engine_session_stats *)(engine->live.slots +
+						slot_count);
 	struct step_row_record *const flight_rows =
-		(struct step_row_record *)(engine->slots + slot_count);
+		(struct step_row_record *)(engine->live.sessions + slot_count);
 	for (uint32_t index = 0; index < STEP_PIPELINE_MOST; index++) {
 		engine->flights[index].rows =
 			flight_rows + (size_t)index * row_capacity;
@@ -3324,6 +3455,9 @@ result_status engine_create(struct step_driver *driver,
 	engine->draft = engine->draft_positions != 0 ? device_drafted :
 						       lookup_drafted;
 	engine->lookups = draft_words != 0 ? lookups : NULL;
+	engine->slot_taken =
+		(uint32_t *)(engine->results + row_capacity) + draft_words;
+	engine->slot_read_leased = (bool *)(engine->slot_taken + slot_count);
 	if (draft_words != 0) {
 		uint32_t *draft_memory =
 			(uint32_t *)(engine->results + row_capacity);
@@ -3427,6 +3561,15 @@ result_status engine_submit(struct inference_engine *engine,
 	      command->images != NULL)) ||
 	    (command->images != NULL &&
 	     !step_images_supported(engine->driver)) ||
+	    command->control_reserved_zero != 0 ||
+	    (command->reasoning_budget != 0 &&
+	     command->reasoning_tokenizer == NULL) ||
+	    command->sampler_top_k > SAMPLER_MOST_VOCABULARY ||
+	    (command->reasoning_budget != 0 &&
+	     (command->reasoning_end_token >=
+		      engine->description.vocabulary_size ||
+	      command->reasoning_end_token == engine->description.end_token_id ||
+	      command->reasoning_budget >= command->generated_token_limit)) ||
 	    !isfinite(command->sampler_temperature) ||
 	    command->sampler_temperature < 0.0f ||
 	    !(command->sampler_top_p > 0.0f &&

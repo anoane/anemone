@@ -67,7 +67,7 @@ static bool time_component(struct test_linear_card *card,
 	passed = passed &&
 		 test_linear_expect(before != NULL,
 				    "allocate full readback snapshot");
-	if (passed) {
+	if (passed && before != NULL) {
 		memcpy(before, card->received, (size_t)card->work_byte_count);
 		const struct test_card_timing_form
 			forms[TEST_CARD_TIMING_FORMS] = { { &graph, 1 },

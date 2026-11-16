@@ -8,6 +8,14 @@
     "commands": "TAKEN_BY_ALL"
   },
   {
+    "name": "metrics",
+    "variable": "&metrics",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
     "name": "live_stats",
     "variable": "&live_stats_interval_ms",
     "least": "0",
@@ -32,12 +40,132 @@
     "commands": "TAKEN_BY_ALL"
   },
   {
+    "name": "load_piece_mib",
+    "variable": "&load_piece_mib",
+    "least": "0",
+    "most": "LOADER_PIECE_BYTES_MOST / BYTES_PER_MIB",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
     "name": "turbo_load",
     "variable": "&turbo_load",
     "least": "0",
     "most": "1",
     "count": "1",
     "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "load_tuned_weights",
+    "variable": "&load_tuned_weights",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "engram_io",
+    "variable": "&engram_io",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "replica_external",
+    "variable": "&replica_external",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "replica_floor_percent",
+    "variable": "&replica_floor_percent",
+    "least": "0",
+    "most": "LOCAL_DEVICE_PERCENT - 1u",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "engram_ram_percent",
+    "variable": "&engram_ram_percent",
+    "least": "0",
+    "most": "ENGRAM_RAM_PERCENT",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "engram_fit_only",
+    "variable": "&engram_fit_only",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE"
+  },
+  {
+    "name": "engram_cache_mib",
+    "variable": "&engram_cache_mib",
+    "least": "0",
+    "most": "ENGRAM_CACHE_MAXIMUM_BYTES / BYTES_PER_MIB",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "turbo-nvme-engrams",
+    "variable": "&turbo_nvme_engrams",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "engram_step_io",
+    "variable": "&engram_step_io",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "engram_io_threads",
+    "variable": "&engram_io_threads",
+    "least": "1",
+    "most": "STORAGE_FLIGHT_THREADS_PER_COPY_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "engram_spin_us",
+    "variable": "&engram_spin_us",
+    "least": "0",
+    "most": "ENGRAM_STEP_SPIN_US_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "engram_io_pin",
+    "variable": "&engram_io_pin",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "engram_scan_threads",
+    "variable": "&engram_scan_threads",
+    "least": "0",
+    "most": "ENGRAM_DISK_SCAN_THREADS_MOST",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
+  },
+  {
+    "name": "engram_hot_mib",
+    "variable": "&engram_hot_mib",
+    "least": "1",
+    "most": "ENGRAM_HOT_BUDGET_MOST_MIB",
+    "count": "1",
+    "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
   },
   {
     "name": "map_reads",
@@ -59,7 +187,7 @@
     "name": "tp_load_copy_split",
     "variable": "&tp_load_copy_split",
     "least": "0",
-    "most": "1",
+    "most": "TP_LOAD_SPLITS - 1u",
     "count": "1",
     "commands": "TAKEN_BY_ALL"
   },
@@ -324,6 +452,14 @@
     "variable": "&original_dense_staged",
     "least": "0",
     "most": "ANEMONE_DENSE_STAGED_OUTPUTS",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
+    "name": "original_head_offload",
+    "variable": "&original_head_offload",
+    "least": "0",
+    "most": "V41_HEAD_MODE_BANKED",
     "count": "1",
     "commands": "TAKEN_BY_ALL"
   },
@@ -611,7 +747,7 @@
     "name": "batch_verifiers",
     "variable": "batch_verifiers",
     "least": "1",
-    "most": "ANEMONE_SERVING_SESSION_CAPACITY",
+    "most": "ANEMONE_STEP_BATCH_MAXIMUM_SESSIONS",
     "count": "MOST_BATCH_PROGRAMS",
     "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"
   },
@@ -872,6 +1008,14 @@
     "commands": "TAKEN_BY_SERVE"
   },
   {
+    "name": "anthropic_messages",
+    "variable": "&anthropic_messages",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_SERVE"
+  },
+  {
     "name": "session_fork",
     "variable": "&session_fork",
     "least": "0",
@@ -915,7 +1059,7 @@
     "name": "session_slots",
     "variable": "&session_slots",
     "least": "1",
-    "most": "ANEMONE_SERVING_SESSION_CAPACITY",
+    "most": "ANEMONE_SERVING_SLOTS_MOST",
     "count": "1",
     "commands": "TAKEN_BY_SERVE"
   },

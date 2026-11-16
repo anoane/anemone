@@ -7,9 +7,9 @@
  * engine's (kernel_exl3_tc.cu, from the router's job table, exl3_tc_records.h) and the original-API harness's
  * (gnmac_port/kernels/kernel_exl3_tc_moe.cuh, which also routes).
  *
- * Shapes: hidden 5,120; rank intermediate 640 or 512 (the 640/640/512/512 split of 2,304); K3 (bits_x2 6) or K2
- * (bits_x2 4); the mul1 codebook. A matrix is EXL3: tiles [input/16][output/16][8 bits_x2] 16-bit words, FP16
- * suh[input] and svh[output]; y = svh * H128(W^T H128(suh * x)).
+ * Shapes: hidden 5,120; rank intermediate 640 or 512 (the 640/640/512/512 split of 2,304); K2, K2.5, K3 or K4
+ * (bits_x2 4, 5, 6, 8; a half K's ring as exl3_records.h); the mul1 codebook. A matrix is EXL3: tiles
+ * [input/16][output/16][8 bits_x2] 16-bit words, FP16 suh[input] and svh[output]; y = svh * H128(W^T H128(suh * x)).
  *
  * Arithmetic (the order is the contract; a row never depends on another row):
  *   1. gate/up operand: x * suh and H128 in FP64, rounded once to FP32; one power of two 2^e per row and scale group
@@ -49,33 +49,110 @@
 #define TC_MOE_COMBINE_MOST_THREADS 1024
 #define TC_MOE_WARP 32
 #define TC_MOE_FULL_MASK 0xffffffffu
+#define TC_MOE_LANE_MASK (TC_MOE_WARP - 1)
+#define TC_MOE_LAST_LANE (TC_MOE_WARP - 1)
+#define TC_MOE_WARP_SHIFT 5
+#define TC_MOE_HALF_WARP 16                  /* a warp reduction's first butterfly distance */
+#define TC_MOE_LANE_VALUES 4                 /* a lane's values of an H128 block: lane + 32 i */
+#define TC_MOE_TRANSFORM_SCALE 0.08838834764831844055 /* 1/sqrt(128) rounded to FP64 */
+#define TC_MOE_OPERAND_BLOCKS 2              /* H128 blocks a warp of an operand row */
+#define TC_MOE_OPERAND_PROJECTIONS 2         /* a pair's operand rows: gate and up */
+#define TC_MOE_HI_LO_ROWS 2                  /* an operand row's FP16 hi and lo rows */
+#define TC_MOE_FLOAT_BIAS 127
+#define TC_MOE_MANTISSA_BITS 23
+#define TC_MOE_PEAK_EXPONENT 141             /* 127 + 14: a group peak's biased exponent in [2^14, 2^15) */
+#define TC_MOE_MOST_EXPONENT 126             /* 2^e and 2^-e stay normal */
+#define TC_MOE_STEP_MASK (TC_MOE_TILE - 1)   /* k within its k step */
+#define TC_MOE_HALF_STEP_MASK 7
+#define TC_MOE_HALF_STEP_SHIFT 3
+#define TC_MOE_LANE_STEP_VALUES 4            /* a lane's k values of a step: 2 t, 2 t + 1, 2 t + 8, 2 t + 9 */
+/* the codec: a tile's trellis ring and a lane's 16-bit states (bits_x2: twice a weight's bits) */
+#define TC_MOE_BITS_SCALE 2                  /* bits_x2 a weight's bit */
+/* a tile's ring (256 weights) a bits_x2: its bits, 32-bit words and halfwords */
+#define TC_MOE_RING_BITS_A_BITS_X2 128
+#define TC_MOE_RING_WORDS_A_BITS_X2 4
+#define TC_MOE_TILE_HALFWORDS_A_BITS_X2 8
+#define TC_MOE_LANE_HALF_BITS 4              /* an odd bits_x2's half bits before a lane's window */
+#define TC_MOE_STATE_BITS 16                 /* a trellis state */
+#define TC_MOE_STATE_MASK 0xffffu
+#define TC_MOE_WORD_BITS 32
+#define TC_MOE_WORD_BIT_MASK (TC_MOE_WORD_BITS - 1)
+#define TC_MOE_WORD_SHIFT 5
+#define TC_MOE_STATE_SHIFT (TC_MOE_WORD_BITS - TC_MOE_STATE_BITS) /* a state at a word's top */
+#define TC_MOE_MUL1_MULTIPLIER 0x83DCD12Du   /* the mul1 hash */
+#define TC_MOE_BYTE_ONES 0x01010101u         /* dp4a's byte sum */
+#define TC_MOE_MUL1_ACCUMULATOR 0x6400u      /* FP16 1024 */
+#define TC_MOE_LOW_HALVES 0x5410             /* __byte_perm: two words' low halves */
+#define TC_MOE_MUL1_SCALE 0x1eee1eeeu        /* FP16 pairs */
+#define TC_MOE_MUL1_BIAS 0xc931c931u
+/* the m16n8k16 lanes: lane = 4 g + t (g its column, t its quad); d0, d1: output g, d2, d3: output g + 8 */
+#define TC_MOE_QUAD_MASK 3
+#define TC_MOE_COLUMN_SHIFT 2
+#define TC_MOE_MMA_RESULTS 4
+#define TC_MOE_LANE_COLUMNS 2                /* columns 2 t and 2 t + 1 of an n8 group */
+#define TC_MOE_OUTPUT_HALVES 2               /* outputs g and g + 8 */
+#define TC_MOE_HALF_OUTPUTS 8
+#define TC_MOE_GROUP_ROWS 4                  /* an n8 group: 4 rows' hi (columns 0 to 3), then lo */
+#define TC_MOE_GROUP_ROW_MASK (TC_MOE_GROUP_ROWS - 1)
+#define TC_MOE_LO_COLUMN_SHIFT 2             /* column / 4: 0 hi, 1 lo */
+#define TC_MOE_ROUTE_GROUPS 2                /* n8 groups of a route tile */
+#define TC_MOE_HI_QUADS 2                    /* quads 0 and 1 hold hi sums, quad + 2 their lo */
+#define TC_MOE_LO_PARTNER 2                  /* the lane xor of a hi sum's lo */
+#define TC_MOE_PAIRED_SLICES 2               /* an item of two slices */
+#define TC_MOE_STEP_UINT2 4                  /* uint2 of a hi or lo row's k step */
+#define TC_MOE_CHUNK_BYTES 16                /* a cp.async chunk of a ring stage */
+#define TC_MOE_WORD_BYTES 4
+#define TC_MOE_HALFWORD_BYTES 2
+#define TC_MOE_WORD_HALFWORDS 2
+#define TC_MOE_HALFWORD_BITS 16
+#define TC_MOE_PREFETCH_LINE_BYTES 128       /* a lane's L2 prefetch */
+#define TC_MOE_RING_OPEN_STAGES 2            /* the stage read and the stage refilled */
+#define TC_MOE_RING_HALVING 2
+/* the A fragment's registers a0 (output g, inputs 2 t, 2 t + 1), a1 (output g + 8), a2 (inputs + 8), a3 (both), and
+ * a lane's eight trellis states by the register pair they make (tc_moe_fragment's value order) */
+enum tc_moe_fragment_word { TC_MOE_A0, TC_MOE_A1, TC_MOE_A2, TC_MOE_A3, TC_MOE_FRAGMENT_WORDS };
+enum tc_moe_lane_state {
+	TC_MOE_A0_FIRST,
+	TC_MOE_A0_SECOND,
+	TC_MOE_A2_FIRST,
+	TC_MOE_A2_SECOND,
+	TC_MOE_A1_FIRST,
+	TC_MOE_A1_SECOND,
+	TC_MOE_A3_FIRST,
+	TC_MOE_A3_SECOND,
+	TC_MOE_LANE_STATES
+};
 
 /* Per local expert and projection: the trellis, suh and svh device addresses (uint64 [experts][3][3]) and the
  * shape words {input, output, bits_x2, codebook} (int64 [experts][3][4]), the original op's packed tables. */
 /* ---- the codec: a lane's eight trellis states of one 16x16 tile (its ring window), the mul1 values ---- */
 
 template <int bits_x2> struct tc_moe_ring {
-	static constexpr int whole = bits_x2 / 2;
+	static constexpr int whole = bits_x2 / TC_MOE_BITS_SCALE;
 	static constexpr bool odd = (bits_x2 & 1) != 0;
-	static constexpr int ring_bits = 128 * bits_x2;
-	static constexpr int words = 4 * bits_x2;
-	static constexpr int tile_halfwords = 8 * bits_x2;
-	__host__ __device__ static constexpr int relative(int state) { return state * whole + (odd ? (state + 1) / 2 : 0); }
-	static constexpr int window_bits = relative(7) + 16;
-	static constexpr int window_words = (window_bits + 31) / 32;
+	static constexpr int ring_bits = TC_MOE_RING_BITS_A_BITS_X2 * bits_x2;
+	static constexpr int words = TC_MOE_RING_WORDS_A_BITS_X2 * bits_x2;
+	static constexpr int tile_halfwords = TC_MOE_TILE_HALFWORDS_A_BITS_X2 * bits_x2;
+	__host__ __device__ static constexpr int relative(int state)
+	{
+		return state * whole + (odd ? (state + 1) / TC_MOE_BITS_SCALE : 0);
+	}
+	static constexpr int window_bits = relative(TC_MOE_LANE_STATES - 1) + TC_MOE_STATE_BITS;
+	static constexpr int window_words = (window_bits + TC_MOE_WORD_BITS - 1) / TC_MOE_WORD_BITS;
 	/* the largest in-word start over the 32 lanes' fixed window starts (bits_x2 6: 2 words, not 3) */
 	__host__ __device__ static constexpr int most_lane_shift()
 	{
 		int peak = 0;
-		for (int lane = 0; lane < 32; lane++) {
-			int start = (8 * lane + 1) * whole + (odd ? 4 * lane : 0) - 16;
+		for (int lane = 0; lane < TC_MOE_WARP; lane++) {
+			int start = (TC_MOE_LANE_STATES * lane + 1) * whole +
+				    (odd ? TC_MOE_LANE_HALF_BITS * lane : 0) - TC_MOE_STATE_BITS;
 			if (start < 0)
 				start += ring_bits;
-			peak = (start & 31) > peak ? (start & 31) : peak;
+			peak = (start & TC_MOE_WORD_BIT_MASK) > peak ? (start & TC_MOE_WORD_BIT_MASK) : peak;
 		}
 		return peak;
 	}
-	static constexpr int load_words = (most_lane_shift() + window_bits + 31) / 32;
+	static constexpr int load_words = (most_lane_shift() + window_bits + TC_MOE_WORD_BITS - 1) / TC_MOE_WORD_BITS;
 	static_assert(load_words <= words, "the window fits the ring");
 };
 
@@ -85,11 +162,12 @@ template <int bits_x2> struct tc_moe_window {
 	__device__ __forceinline__ explicit tc_moe_window(int lane)
 	{
 		typedef tc_moe_ring<bits_x2> ring;
-		int start = (8 * lane + 1) * ring::whole + (ring::odd ? 4 * lane : 0) - 16;
+		int start = (TC_MOE_LANE_STATES * lane + 1) * ring::whole +
+			    (ring::odd ? TC_MOE_LANE_HALF_BITS * lane : 0) - TC_MOE_STATE_BITS;
 		if (start < 0)
 			start += ring::ring_bits;
-		shift = start & 31;
-		int index = start >> 5;
+		shift = start & TC_MOE_WORD_BIT_MASK;
+		int index = start >> TC_MOE_WORD_SHIFT;
 #pragma unroll
 		for (int load = 0; load < ring::load_words; load++) {
 			word[load] = index;
@@ -98,23 +176,25 @@ template <int bits_x2> struct tc_moe_window {
 	}
 };
 
-template <int offset, int window_words> __device__ __forceinline__ uint32_t tc_moe_state(const uint32_t (&window)[window_words])
+template <int offset, int window_words>
+__device__ __forceinline__ uint32_t
+tc_moe_state(const uint32_t (&window)[window_words])
 {
-	constexpr int word = offset >> 5, bit = offset & 31;
-	if constexpr (bit <= 16)
-		return (window[word] >> (16 - bit)) & 0xffffu;
+	constexpr int word = offset >> TC_MOE_WORD_SHIFT, bit = offset & TC_MOE_WORD_BIT_MASK;
+	if constexpr (bit <= TC_MOE_STATE_SHIFT)
+		return (window[word] >> (TC_MOE_STATE_SHIFT - bit)) & TC_MOE_STATE_MASK;
 	else
-		return __funnelshift_l(window[word + 1], window[word], bit) >> 16;
+		return __funnelshift_l(window[word + 1], window[word], bit) >> TC_MOE_STATE_SHIFT;
 }
 
 /* Two mul1 values as an FP16 pair (low half the first): the byte sum of the hash in the mantissa of 1024 (the dp4a
  * accumulator 0x6400, exact), then one FP16 FMA, round to nearest. */
 __device__ __forceinline__ uint32_t tc_moe_mul1_pair(uint32_t first, uint32_t second)
 {
-	const uint32_t sum_first = __dp4a(first * 0x83DCD12Du, 0x01010101u, 0x6400u);
-	const uint32_t sum_second = __dp4a(second * 0x83DCD12Du, 0x01010101u, 0x6400u);
-	const uint32_t packed = __byte_perm(sum_first, sum_second, 0x5410);
-	const uint32_t scale = 0x1eee1eeeu, bias = 0xc931c931u;
+	const uint32_t sum_first = __dp4a(first * TC_MOE_MUL1_MULTIPLIER, TC_MOE_BYTE_ONES, TC_MOE_MUL1_ACCUMULATOR);
+	const uint32_t sum_second = __dp4a(second * TC_MOE_MUL1_MULTIPLIER, TC_MOE_BYTE_ONES, TC_MOE_MUL1_ACCUMULATOR);
+	const uint32_t packed = __byte_perm(sum_first, sum_second, TC_MOE_LOW_HALVES);
+	const uint32_t scale = TC_MOE_MUL1_SCALE, bias = TC_MOE_MUL1_BIAS;
 	const __half2 value = __hfma2(*(const __half2 *)&packed, *(const __half2 *)&scale, *(const __half2 *)&bias);
 	return *(const uint32_t *)&value;
 }
@@ -124,7 +204,7 @@ __device__ __forceinline__ uint32_t tc_moe_mul1_pair(uint32_t first, uint32_t se
  * the fragment's register pairs are values (0,1), (4,5), (2,3), (6,7). */
 template <int bits_x2>
 __device__ __forceinline__ void tc_moe_fragment(const uint32_t (&words)[tc_moe_ring<bits_x2>::load_words], int shift,
-						uint32_t (&fragment)[4])
+						uint32_t (&fragment)[TC_MOE_FRAGMENT_WORDS])
 {
 	typedef tc_moe_ring<bits_x2> ring;
 	uint32_t window[ring::window_words];
@@ -133,49 +213,51 @@ __device__ __forceinline__ void tc_moe_fragment(const uint32_t (&words)[tc_moe_r
 		const uint32_t next = index + 1 < ring::load_words ? words[index + 1] : 0u;
 		window[index] = __funnelshift_l(next, words[index], shift);
 	}
-	uint32_t state[8];
-	state[0] = tc_moe_state<ring::relative(0), ring::window_words>(window);
-	state[1] = tc_moe_state<ring::relative(1), ring::window_words>(window);
-	state[2] = tc_moe_state<ring::relative(2), ring::window_words>(window);
-	state[3] = tc_moe_state<ring::relative(3), ring::window_words>(window);
-	state[4] = tc_moe_state<ring::relative(4), ring::window_words>(window);
-	state[5] = tc_moe_state<ring::relative(5), ring::window_words>(window);
-	state[6] = tc_moe_state<ring::relative(6), ring::window_words>(window);
-	state[7] = tc_moe_state<ring::relative(7), ring::window_words>(window);
-	fragment[0] = tc_moe_mul1_pair(state[0], state[1]);
-	fragment[1] = tc_moe_mul1_pair(state[4], state[5]);
-	fragment[2] = tc_moe_mul1_pair(state[2], state[3]);
-	fragment[3] = tc_moe_mul1_pair(state[6], state[7]);
+	uint32_t state[TC_MOE_LANE_STATES];
+	state[TC_MOE_A0_FIRST] = tc_moe_state<ring::relative(TC_MOE_A0_FIRST), ring::window_words>(window);
+	state[TC_MOE_A0_SECOND] = tc_moe_state<ring::relative(TC_MOE_A0_SECOND), ring::window_words>(window);
+	state[TC_MOE_A2_FIRST] = tc_moe_state<ring::relative(TC_MOE_A2_FIRST), ring::window_words>(window);
+	state[TC_MOE_A2_SECOND] = tc_moe_state<ring::relative(TC_MOE_A2_SECOND), ring::window_words>(window);
+	state[TC_MOE_A1_FIRST] = tc_moe_state<ring::relative(TC_MOE_A1_FIRST), ring::window_words>(window);
+	state[TC_MOE_A1_SECOND] = tc_moe_state<ring::relative(TC_MOE_A1_SECOND), ring::window_words>(window);
+	state[TC_MOE_A3_FIRST] = tc_moe_state<ring::relative(TC_MOE_A3_FIRST), ring::window_words>(window);
+	state[TC_MOE_A3_SECOND] = tc_moe_state<ring::relative(TC_MOE_A3_SECOND), ring::window_words>(window);
+	fragment[TC_MOE_A0] = tc_moe_mul1_pair(state[TC_MOE_A0_FIRST], state[TC_MOE_A0_SECOND]);
+	fragment[TC_MOE_A1] = tc_moe_mul1_pair(state[TC_MOE_A1_FIRST], state[TC_MOE_A1_SECOND]);
+	fragment[TC_MOE_A2] = tc_moe_mul1_pair(state[TC_MOE_A2_FIRST], state[TC_MOE_A2_SECOND]);
+	fragment[TC_MOE_A3] = tc_moe_mul1_pair(state[TC_MOE_A3_FIRST], state[TC_MOE_A3_SECOND]);
 }
 
 /* H128 of a warp's 128 values (lane holds lane + 32 i) in FP64: butterflies over the lanes, then over i, then the
  * scale 1/sqrt(128) rounded to FP64. */
-__device__ __forceinline__ void tc_moe_hadamard(double (&value)[4], int lane)
+__device__ __forceinline__ void tc_moe_hadamard(double (&value)[TC_MOE_LANE_VALUES], int lane)
 {
 #pragma unroll
 	for (int distance = 1; distance < TC_MOE_WARP; distance <<= 1) {
 		const bool upper = (lane & distance) != 0;
 #pragma unroll
-		for (int index = 0; index < 4; index++) {
+		for (int index = 0; index < TC_MOE_LANE_VALUES; index++) {
 			const double other = __shfl_xor_sync(TC_MOE_FULL_MASK, value[index], distance);
 			value[index] = upper ? __dsub_rn(other, value[index]) : __dadd_rn(value[index], other);
 		}
 	}
 #pragma unroll
-	for (int distance = 1; distance < 4; distance <<= 1) {
-		double next[4];
+	for (int distance = 1; distance < TC_MOE_LANE_VALUES; distance <<= 1) {
+		double next[TC_MOE_LANE_VALUES];
 #pragma unroll
-		for (int index = 0; index < 4; index++) {
+		for (int index = 0; index < TC_MOE_LANE_VALUES; index++) {
 			const double other = value[index ^ distance];
-			next[index] = (index & distance) ? __dsub_rn(other, value[index]) : __dadd_rn(value[index], other);
+			next[index] = (index & distance) ?
+					      __dsub_rn(other, value[index]) :
+					      __dadd_rn(value[index], other);
 		}
 #pragma unroll
-		for (int index = 0; index < 4; index++)
+		for (int index = 0; index < TC_MOE_LANE_VALUES; index++)
 			value[index] = next[index];
 	}
 #pragma unroll
-	for (int index = 0; index < 4; index++)
-		value[index] = __dmul_rn(value[index], 0.08838834764831844055);
+	for (int index = 0; index < TC_MOE_LANE_VALUES; index++)
+		value[index] = __dmul_rn(value[index], TC_MOE_TRANSFORM_SCALE);
 }
 
 /* ---- B operands: FP16 hi and lo rows in MMA lane order, one 2^-e per (row, slice) ---- */
@@ -183,8 +265,9 @@ __device__ __forceinline__ void tc_moe_hadamard(double (&value)[4], int lane)
 /* Lane order of a K-long row: k step k / 16, then lane t's k values 2t, 2t + 1, 2t + 8, 2t + 9. */
 __device__ __forceinline__ int64_t tc_moe_lane_position(int64_t k)
 {
-	const int within = (int)(k & 15);
-	return (k & ~(int64_t)15) + ((within & 7) >> 1) * 4 + ((within >> 3) << 1) + (within & 1);
+	const int within = (int)(k & TC_MOE_STEP_MASK);
+	return (k & ~(int64_t)TC_MOE_STEP_MASK) + ((within & TC_MOE_HALF_STEP_MASK) >> 1) * TC_MOE_LANE_STEP_VALUES +
+	       ((within >> TC_MOE_HALF_STEP_SHIFT) << 1) + (within & 1);
 }
 
 template <int count> __device__ __forceinline__ float tc_moe_warp_peak(const float (&value)[count])
@@ -194,7 +277,7 @@ template <int count> __device__ __forceinline__ float tc_moe_warp_peak(const flo
 	for (int index = 0; index < count; index++)
 		peak = fmaxf(peak, fabsf(value[index]));
 #pragma unroll
-	for (int distance = 16; distance >= 1; distance >>= 1)
+	for (int distance = TC_MOE_HALF_WARP; distance >= 1; distance >>= 1)
 		peak = fmaxf(peak, __shfl_xor_sync(TC_MOE_FULL_MASK, peak, distance));
 	return peak;
 }
@@ -202,15 +285,15 @@ template <int count> __device__ __forceinline__ float tc_moe_warp_peak(const flo
 /* The exponent e that puts peak in [2^14, 2^15) (0 for a zero peak, at most 126 so 2^e and 2^-e stay normal). */
 __device__ __forceinline__ int tc_moe_exponent(float peak)
 {
-	const int biased = (int)(__float_as_uint(peak) >> 23);
-	return peak == 0.0f ? 0 : min(141 - biased, 126);
+	const int biased = (int)(__float_as_uint(peak) >> TC_MOE_MANTISSA_BITS);
+	return peak == 0.0f ? 0 : min(TC_MOE_PEAK_EXPONENT - biased, TC_MOE_MOST_EXPONENT);
 }
 
 template <int count>
 __device__ __forceinline__ void tc_moe_store_halves(const float (&value)[count], int lane, int first, int exponent,
 						    __half *high, __half *low)
 {
-	const float scale = __uint_as_float((uint32_t)(127 + exponent) << 23);
+	const float scale = __uint_as_float((uint32_t)(TC_MOE_FLOAT_BIAS + exponent) << TC_MOE_MANTISSA_BITS);
 #pragma unroll
 	for (int index = 0; index < count; index++) {
 		const int64_t at = tc_moe_lane_position(first + lane + TC_MOE_WARP * index);
@@ -228,7 +311,8 @@ __device__ __forceinline__ void tc_moe_scan_pair(int first, int second, int &fir
 						 int &first_total, int &second_total)
 {
 	__shared__ int warp_first[TC_MOE_WARP], warp_second[TC_MOE_WARP];
-	const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5, warps = blockDim.x >> 5;
+	const int lane = threadIdx.x & TC_MOE_LANE_MASK, warp = threadIdx.x >> TC_MOE_WARP_SHIFT,
+		  warps = blockDim.x >> TC_MOE_WARP_SHIFT;
 	int running_first = first, running_second = second;
 #pragma unroll
 	for (int distance = 1; distance < TC_MOE_WARP; distance <<= 1) {
@@ -239,7 +323,7 @@ __device__ __forceinline__ void tc_moe_scan_pair(int first, int second, int &fir
 			running_second += up_second;
 		}
 	}
-	if (lane == 31) {
+	if (lane == TC_MOE_LAST_LANE) {
 		warp_first[warp] = running_first;
 		warp_second[warp] = running_second;
 	}
@@ -267,33 +351,36 @@ __device__ __forceinline__ void tc_moe_scan_pair(int first, int second, int &fir
 
 /* ---- 1. one (pair, projection) operand row: every thread of a TC_MOE_ROUTE_THREADS block calls it ----
  * Warp w owns H128 blocks 2w and 2w + 1 of the hidden row. scale_k: columns of one 2^e (5,120 short, 1,280 long);
- * split: K slices of one scale group. Operand rows [pair][projection][hi | lo][5,120], 2^-e [pair][projection][slice]. */
+ * split: K slices of one scale group. Operand rows [pair][projection][hi | lo][5,120], 2^-e
+ * [pair][projection][slice]. */
 template <int scale_k, int split>
 __device__ __forceinline__ void tc_moe_operand_row(const __nv_bfloat16 *row, const __half *suh, int64_t pair,
 						   int projection, __half *halves, float *unscale)
 {
-	constexpr int blocks_per_warp = 2, group_blocks = scale_k / TC_MOE_TRANSFORM;
+	constexpr int blocks_per_warp = TC_MOE_OPERAND_BLOCKS, group_blocks = scale_k / TC_MOE_TRANSFORM;
 	constexpr int warps = TC_MOE_ROUTE_THREADS / TC_MOE_WARP, warps_per_group = group_blocks / blocks_per_warp;
 	static_assert(warps * blocks_per_warp * TC_MOE_TRANSFORM == TC_MOE_HIDDEN, "the warps cover the hidden row");
-	static_assert(group_blocks % blocks_per_warp == 0 && warps % warps_per_group == 0 && split <= 32,
+	static_assert(group_blocks % blocks_per_warp == 0 && warps % warps_per_group == 0 && split <= TC_MOE_WARP,
 		      "the warps tile whole scale groups");
 	__shared__ float block_peaks[warps][blocks_per_warp];
-	const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+	const int lane = threadIdx.x & TC_MOE_LANE_MASK, warp = threadIdx.x >> TC_MOE_WARP_SHIFT;
 	const int group = warp / warps_per_group, member = warp % warps_per_group;
 	const int64_t slices = TC_MOE_HIDDEN / scale_k * split;
-	float value[blocks_per_warp][4];
+	float value[blocks_per_warp][TC_MOE_LANE_VALUES];
 #pragma unroll
 	for (int sub = 0; sub < blocks_per_warp; sub++) {
 		const int64_t first = ((int64_t)warp * blocks_per_warp + sub) * TC_MOE_TRANSFORM;
-		double block[4];
+		double block[TC_MOE_LANE_VALUES];
 #pragma unroll
-		for (int index = 0; index < 4; index++) {
+		for (int index = 0; index < TC_MOE_LANE_VALUES; index++) {
 			const int64_t column = first + lane + TC_MOE_WARP * index;
-			block[index] = __dmul_rn((double)__bfloat162float(row[column]), (double)__half2float(suh[column]));
+			block[index] =
+				__dmul_rn((double)__bfloat162float(row[column]),
+					  (double)__half2float(suh[column]));
 		}
 		tc_moe_hadamard(block, lane);
 #pragma unroll
-		for (int index = 0; index < 4; index++)
+		for (int index = 0; index < TC_MOE_LANE_VALUES; index++)
 			value[sub][index] = __double2float_rn(block[index]);
 		const float peak = tc_moe_warp_peak(value[sub]);
 		if (lane == 0)
@@ -307,14 +394,17 @@ __device__ __forceinline__ void tc_moe_operand_row(const __nv_bfloat16 *row, con
 		for (int sub = 0; sub < blocks_per_warp; sub++)
 			group_peak = fmaxf(group_peak, block_peaks[group * warps_per_group + other][sub]);
 	const int exponent = tc_moe_exponent(group_peak);
-	__half *high = halves + (pair * 2 + projection) * 2 * TC_MOE_HIDDEN + (int64_t)group * scale_k;
+	__half *high = halves + (pair * TC_MOE_OPERAND_PROJECTIONS + projection) * TC_MOE_HI_LO_ROWS * TC_MOE_HIDDEN +
+		       (int64_t)group * scale_k;
 #pragma unroll
 	for (int sub = 0; sub < blocks_per_warp; sub++)
-		tc_moe_store_halves(value[sub], lane, (member * blocks_per_warp + sub) * TC_MOE_TRANSFORM, exponent, high,
-				    high + TC_MOE_HIDDEN);
+		tc_moe_store_halves(value[sub], lane,
+				    (member * blocks_per_warp + sub) *
+					    TC_MOE_TRANSFORM,
+				    exponent, high, high + TC_MOE_HIDDEN);
 	if (member == 0 && lane < split)
-		unscale[(pair * 2 + projection) * slices + group * split + lane] =
-			__uint_as_float((uint32_t)(127 - exponent) << 23);
+		unscale[(pair * TC_MOE_OPERAND_PROJECTIONS + projection) * slices + group * split + lane] =
+			__uint_as_float((uint32_t)(TC_MOE_FLOAT_BIAS - exponent) << TC_MOE_MANTISSA_BITS);
 	__syncthreads();
 }
 
@@ -344,9 +434,10 @@ __host__ __device__ constexpr bool tc_moe_uses_ring(int column_tiles, int bits_x
 __host__ __device__ constexpr int tc_moe_ring_stages(int column_tiles, int bits_x2)
 {
 	int stages = TC_MOE_RING_STAGES;
-	while (stages > 2 && tc_moe_step_bytes(column_tiles, bits_x2) * stages * (TC_MOE_LANE_THREADS / TC_MOE_WARP) >
-				     TC_MOE_RING_MOST_BLOCK_BYTES)
-		stages /= 2;
+	while (stages > TC_MOE_RING_OPEN_STAGES &&
+	       tc_moe_step_bytes(column_tiles, bits_x2) * stages * (TC_MOE_LANE_THREADS / TC_MOE_WARP) >
+		       TC_MOE_RING_MOST_BLOCK_BYTES)
+		stages /= TC_MOE_RING_HALVING;
 	return stages;
 }
 __host__ __device__ constexpr int tc_moe_ring_bytes(int column_tiles, int bits_x2)
@@ -357,12 +448,14 @@ __host__ __device__ constexpr int tc_moe_ring_bytes(int column_tiles, int bits_x
 							  0;
 }
 
-__device__ __forceinline__ void tc_moe_mma(const uint32_t (&a)[4], uint2 b, float (&d)[4])
+__device__ __forceinline__ void tc_moe_mma(const uint32_t (&a)[TC_MOE_FRAGMENT_WORDS], uint2 b,
+					   float (&d)[TC_MOE_MMA_RESULTS])
 {
 	asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, "
 	    "{%10, %10, %10, %10};"
-	    : "=f"(d[0]), "=f"(d[1]), "=f"(d[2]), "=f"(d[3])
-	    : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b.x), "r"(b.y), "f"(0.0f));
+	    : "=f"(d[0]), "=f"(d[1]), "=f"(d[TC_MOE_LANE_COLUMNS]), "=f"(d[TC_MOE_LANE_COLUMNS + 1])
+	    : "r"(a[TC_MOE_A0]), "r"(a[TC_MOE_A1]), "r"(a[TC_MOE_A2]), "r"(a[TC_MOE_A3]), "r"(b.x), "r"(b.y),
+	      "f"(0.0f));
 }
 
 /* One warp item: column_tiles n16 output tiles x k_steps k16 steps (one K slice) of one route tile with `groups` n8
@@ -377,63 +470,75 @@ __device__ __forceinline__ void tc_moe_mma(const uint32_t (&a)[4], uint2 b, floa
 #define TC_MOE_STASH_LANES 16 /* the lanes that store sums: quad < 2 */
 template <int column_tiles> __host__ __device__ constexpr int tc_moe_stash_bytes()
 {
-	return column_tiles * 2 * 4 * TC_MOE_STASH_LANES * (int)sizeof(float); /* two n8 groups of 4 values */
+	return column_tiles * TC_MOE_ROUTE_GROUPS * TC_MOE_MMA_RESULTS * TC_MOE_STASH_LANES *
+	       (int)sizeof(float); /* two n8 groups of 4 values */
 }
 /* A first slice's end in a paired item: each sum plus its lo partner's (lane + 2) into the stash by the lanes
  * quad < 2 (value v of lane 4 c + quad at v x 16 + 2 c + quad), every sum from 0 again. */
 template <int groups, int column_tiles>
-__device__ __forceinline__ void tc_moe_stash_sums(float (&sums)[column_tiles][groups][4], float *stash, int quad,
-						  int column)
+__device__ __forceinline__ void tc_moe_stash_sums(float (&sums)[column_tiles][groups][TC_MOE_MMA_RESULTS],
+						  float *stash, int quad, int column)
 {
-	float *const own_stash = stash + 2 * column + quad;
+	float *const own_stash = stash + TC_MOE_HI_QUADS * column + quad;
 #pragma unroll
 	for (int j = 0; j < column_tiles; j++)
 #pragma unroll
 		for (int group = 0; group < groups; group++)
 #pragma unroll
-			for (int index = 0; index < 4; index++) {
-				const float low = __shfl_xor_sync(TC_MOE_FULL_MASK, sums[j][group][index], 2);
-				if (quad < 2)
-					own_stash[((j * groups + group) * 4 + index) * TC_MOE_STASH_LANES] =
-						__fadd_rn(sums[j][group][index], low);
+			for (int index = 0; index < TC_MOE_MMA_RESULTS; index++) {
+				const float low = __shfl_xor_sync(TC_MOE_FULL_MASK, sums[j][group][index],
+								  TC_MOE_LO_PARTNER);
+				if (quad < TC_MOE_HI_QUADS)
+					own_stash[((j * groups + group) * TC_MOE_MMA_RESULTS + index) *
+						  TC_MOE_STASH_LANES] = __fadd_rn(sums[j][group][index], low);
 				sums[j][group][index] = 0.0f;
 			}
 }
 
-template <int groups, int column_tiles, int k_steps, int bits_x2, int load, int item_slices = 1>
-__device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int projection_index, int slice,
-					    int row_of, int rows, const uint16_t *trellis, int64_t tiles_n, int first_tile,
-					    int lane, const tc_moe_window<bits_x2> &window, unsigned char *ring,
-					    float *output, float *stash = nullptr)
+template <int groups, int column_tiles, int k_steps, int bits_x2, int load,
+	  int item_slices = 1>
+__device__ __forceinline__ void
+tc_moe_item(const struct tc_moe_products &p, int projection_index, int slice,
+	    int row_of, int rows, const uint16_t *trellis, int64_t tiles_n,
+	    int first_tile, int lane, const tc_moe_window<bits_x2> &window,
+	    unsigned char *ring, float *output, float *stash = nullptr)
 {
-	static_assert(item_slices == 1 || item_slices == 2, "one or two slices an item");
+	static_assert(item_slices == 1 || item_slices == TC_MOE_PAIRED_SLICES, "one or two slices an item");
 	constexpr int steps = item_slices * k_steps;
 	typedef tc_moe_ring<bits_x2> ring_shape;
-	constexpr int tile_words = ring_shape::tile_halfwords / 2;
+	constexpr int tile_words = ring_shape::tile_halfwords / TC_MOE_WORD_HALFWORDS;
 	constexpr int step_bytes = tc_moe_step_bytes(column_tiles, bits_x2);
 	constexpr int stages = tc_moe_ring_stages(column_tiles, bits_x2);
 	const int first_step = slice * k_steps, slices = p.k_tiles / k_steps;
-	const int64_t row_halves = 2 * (int64_t)p.k_tiles * TC_MOE_TILE;
-	const int quad = lane & 3, column = lane >> 2;
+	const int64_t row_halves = TC_MOE_HI_LO_ROWS * (int64_t)p.k_tiles * TC_MOE_TILE;
+	const int quad = lane & TC_MOE_QUAD_MASK, column = lane >> TC_MOE_COLUMN_SHIFT;
 	/* B: column `column` of group g is the hi (column < 4) or lo row of tile row 4 g + column % 4 */
 	const uint2 *b_source[groups];
 	bool b_present[groups];
 #pragma unroll
 	for (int group = 0; group < groups; group++) {
-		const int row = 4 * group + (column & 3);
+		const int row = TC_MOE_GROUP_ROWS * group + (column & TC_MOE_GROUP_ROW_MASK);
 		b_present[group] = row < rows;
 		const int64_t assignment = __shfl_sync(TC_MOE_FULL_MASK, row_of, b_present[group] ? row : 0);
-		b_source[group] = (const uint2 *)(p.halves + (assignment * p.projections + projection_index) * row_halves +
-						  (column >> 2) * (row_halves / 2) + first_step * TC_MOE_TILE) +
-				  quad;
+		b_source[group] =
+			(const uint2 *)(p.halves +
+					(assignment * p.projections +
+					 projection_index) *
+						row_halves +
+					(column >> TC_MOE_LO_COLUMN_SHIFT) *
+						(row_halves /
+						 TC_MOE_HI_LO_ROWS) +
+					first_step * TC_MOE_TILE) +
+			quad;
 	}
-	float unscale[groups][2]; /* 2^-e of the rows this lane stores: 4 g + 2 (quad % 2) + c (paired: at the end) */
+	/* 2^-e of the rows this lane stores: 4 g + 2 (quad % 2) + c (paired: at the end) */
+	float unscale[groups][TC_MOE_LANE_COLUMNS];
 	if constexpr (item_slices == 1) {
 #pragma unroll
 		for (int group = 0; group < groups; group++) {
 #pragma unroll
-			for (int pair = 0; pair < 2; pair++) {
-				const int row = 4 * group + 2 * (quad & 1) + pair;
+			for (int pair = 0; pair < TC_MOE_LANE_COLUMNS; pair++) {
+				const int row = TC_MOE_GROUP_ROWS * group + TC_MOE_LANE_COLUMNS * (quad & 1) + pair;
 				const int64_t assignment = __shfl_sync(TC_MOE_FULL_MASK, row_of, row < rows ? row : 0);
 				const int64_t own = (assignment * p.projections + projection_index) * slices;
 				unscale[group][pair] = __ldg(p.unscale + own + slice);
@@ -444,12 +549,12 @@ __device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int
 	const int64_t stride = tiles_n * ring_shape::tile_halfwords;
 	uint32_t words[column_tiles][ring_shape::load_words];
 	/* ring: a stage is a step's trellis bytes in 16-byte chunks, lane-strided; fixed per-lane shared read bases */
-	const char *fill = (const char *)step + lane * 16;
+	const char *fill = (const char *)step + lane * TC_MOE_CHUNK_BYTES;
 	const uint32_t ring_base = load == TC_MOE_LOAD_RING ? (uint32_t)__cvta_generic_to_shared(ring) : 0u;
 	uint32_t ring_read[ring_shape::load_words];
 #pragma unroll
 	for (int index = 0; index < ring_shape::load_words; index++)
-		ring_read[index] = ring_base + 4 * window.word[index];
+		ring_read[index] = ring_base + TC_MOE_WORD_BYTES * window.word[index];
 	uint32_t slot = 0; /* the current step's stage offset */
 	const uint32_t *word_pointer[ring_shape::load_words];
 #pragma unroll
@@ -458,32 +563,53 @@ __device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int
 #define TC_MOE_ISSUE(s)                                                                                              \
 	do {                                                                                                         \
 		if ((s) < steps) {                                                                                   \
-			const uint32_t stage = ring_base + lane * 16 + ((s) & (stages - 1)) * step_bytes;            \
-			_Pragma("unroll") for (int chunk = 0; chunk < step_bytes / 16; chunk += 32) if (chunk + lane < \
-													step_bytes / 16) \
-				asm volatile("cp.async.cg.shared.global [%0], [%1], 16;" ::"r"(stage + chunk * 16),   \
-					     "l"(fill + chunk * 16));                                                \
+			const uint32_t stage =                                                                       \
+				ring_base + lane * TC_MOE_CHUNK_BYTES + ((s) & (stages - 1)) * step_bytes;           \
+			_Pragma("unroll") for (int chunk = 0; chunk < step_bytes / TC_MOE_CHUNK_BYTES;               \
+					       chunk += TC_MOE_WARP)                                                 \
+				if (chunk + lane < step_bytes / TC_MOE_CHUNK_BYTES)                                  \
+					asm volatile("cp.async.cg.shared.global [%0], [%1], 16;"                     \
+						     ::"r"(stage + chunk * TC_MOE_CHUNK_BYTES),                      \
+						     "l"(fill + chunk * TC_MOE_CHUNK_BYTES));                        \
 		}                                                                                                    \
 		asm volatile("cp.async.commit_group;");                                                              \
-		fill += stride * 2;                                                                                  \
+		fill += stride * TC_MOE_HALFWORD_BYTES;                                                              \
 	} while (0)
 #define TC_MOE_RING_WORDS(j)                                                                                         \
 	do {                                                                                                         \
 		_Pragma("unroll") for (int index = 0; index < ring_shape::load_words; index++) asm volatile(        \
-			"ld.shared.u32 %0, [%1];" : "=r"(words[j][index]) : "r"(ring_read[index] + slot + (j) * tile_words * 4)); \
+			"ld.shared.u32 %0, [%1];"                                                                    \
+			: "=r"(words[j][index])                                                                      \
+			: "r"(ring_read[index] + slot + (j) * tile_words * TC_MOE_WORD_BYTES));                      \
 	} while (0)
-#define TC_MOE_FETCH(j)                                                                                              \
-	do {                                                                                                         \
-		if constexpr (load == TC_MOE_LOAD_WORDS) {                                                           \
-			_Pragma("unroll") for (int index = 0; index < ring_shape::load_words; index++) words[j][index] = \
-				__ldg(word_pointer[index] + (j) * tile_words);                                      \
-		} else {                                                                                             \
-			_Pragma("unroll") for (int index = 0; index < ring_shape::load_words; index++) {            \
-				const uint16_t *tile = step + (j) * ring_shape::tile_halfwords;                     \
-				words[j][index] = (uint32_t)__ldg(tile + 2 * window.word[index]) |                 \
-						  ((uint32_t)__ldg(tile + 2 * window.word[index] + 1) << 16);      \
-			}                                                                                    \
-		}                                                                                            \
+#define TC_MOE_FETCH(j)                                                        \
+	do {                                                                   \
+		if constexpr (load == TC_MOE_LOAD_WORDS) {                     \
+			_Pragma("unroll") for (int index = 0;                  \
+					       index < ring_shape::load_words; \
+					       index++) words[j][index] =      \
+				__ldg(word_pointer[index] + (j) * tile_words); \
+		} else {                                                       \
+			_Pragma("unroll") for (int index = 0;                  \
+					       index < ring_shape::load_words; \
+					       index++)                        \
+			{                                                      \
+				const uint16_t *tile =                         \
+					step +                                 \
+					(j) * ring_shape::tile_halfwords;      \
+				words[j][index] =                              \
+					(uint32_t)__ldg(                       \
+						tile +                         \
+						TC_MOE_WORD_HALFWORDS *        \
+							window.word[index]) |  \
+					((uint32_t)__ldg(                      \
+						 tile +                        \
+						 TC_MOE_WORD_HALFWORDS *       \
+							 window.word[index] +  \
+						 1)                            \
+					 << TC_MOE_HALFWORD_BITS);             \
+			}                                                      \
+		}                                                              \
 	} while (0)
 	if constexpr (load == TC_MOE_LOAD_RING) {
 #pragma unroll
@@ -498,16 +624,17 @@ __device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int
 #pragma unroll
 	for (int group = 0; group < groups; group++)
 		b_next[group] = b_present[group] ? __ldg(b_source[group]) : make_uint2(0u, 0u);
-	float sums[column_tiles][groups][4];
+	float sums[column_tiles][groups][TC_MOE_MMA_RESULTS];
 #pragma unroll
 	for (int j = 0; j < column_tiles; j++)
 #pragma unroll
 		for (int group = 0; group < groups; group++)
 #pragma unroll
-			for (int index = 0; index < 4; index++)
+			for (int index = 0; index < TC_MOE_MMA_RESULTS; index++)
 				sums[j][group][index] = 0.0f;
 	const char *ahead =
-		(const char *)(step + TC_MOE_PREFETCH_STEPS * stride) + min(lane * 128, step_bytes - 1);
+		(const char *)(step + TC_MOE_PREFETCH_STEPS * stride) +
+		min(lane * TC_MOE_PREFETCH_LINE_BYTES, step_bytes - 1);
 #pragma unroll 1
 	for (int k_step = 0; k_step < steps; k_step++) {
 		const bool more = k_step + 1 < steps;
@@ -516,22 +643,25 @@ __device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int
 		for (int group = 0; group < groups; group++) {
 			b[group] = b_next[group];
 			if (more && b_present[group])
-				b_next[group] = __ldg(b_source[group] + 4 * (k_step + 1));
+				b_next[group] = __ldg(b_source[group] + TC_MOE_STEP_UINT2 * (k_step + 1));
 		}
 		if constexpr (load == TC_MOE_LOAD_RING) {
-			asm volatile("cp.async.wait_group %0;" ::"n"(stages - 2));
+			asm volatile("cp.async.wait_group %0;" ::"n"(stages - TC_MOE_RING_OPEN_STAGES));
 			asm volatile("bar.warp.sync -1;" ::: "memory");
 			slot = (k_step & (stages - 1)) * step_bytes;
 			TC_MOE_RING_WORDS(0);
-			TC_MOE_ISSUE(k_step + stages - 1); /* every lane read the step before's stage before the barrier */
+			TC_MOE_ISSUE(
+				k_step + stages -
+				1); /* every lane read the step before's stage before the barrier */
 		} else {
-			if (lane * 128 < step_bytes + 127 && k_step + TC_MOE_PREFETCH_STEPS < steps)
+			if (lane * TC_MOE_PREFETCH_LINE_BYTES < step_bytes + TC_MOE_PREFETCH_LINE_BYTES - 1 &&
+			    k_step + TC_MOE_PREFETCH_STEPS < steps)
 				asm volatile("prefetch.global.L2 [%0];" ::"l"(ahead));
-			ahead += stride * 2;
+			ahead += stride * TC_MOE_HALFWORD_BYTES;
 			if constexpr (load == TC_MOE_LOAD_WORDS) {
 #pragma unroll
 				for (int index = 0; index < ring_shape::load_words; index++)
-					word_pointer[index] += stride / 2;
+					word_pointer[index] += stride / TC_MOE_WORD_HALFWORDS;
 			} else {
 				step += stride;
 			}
@@ -542,7 +672,7 @@ __device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int
 				if (j + 1 < column_tiles)
 					TC_MOE_RING_WORDS(j + 1);
 			}
-			uint32_t a[4];
+			uint32_t a[TC_MOE_FRAGMENT_WORDS];
 			tc_moe_fragment<bits_x2>(words[j], window.shift, a);
 			if constexpr (load != TC_MOE_LOAD_RING) {
 				if (more)
@@ -550,14 +680,14 @@ __device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int
 			}
 #pragma unroll
 			for (int group = 0; group < groups; group++) {
-				float d[4];
+				float d[TC_MOE_MMA_RESULTS];
 				tc_moe_mma(a, b[group], d);
 #pragma unroll
-				for (int index = 0; index < 4; index++)
+				for (int index = 0; index < TC_MOE_MMA_RESULTS; index++)
 					sums[j][group][index] = __fadd_rn(sums[j][group][index], d[index]);
 			}
 		}
-		if constexpr (item_slices == 2) {
+		if constexpr (item_slices == TC_MOE_PAIRED_SLICES) {
 			if (k_step == k_steps - 1) /* the first slice's end: hi + lo into the stash, the sums from 0 */
 				tc_moe_stash_sums<groups, column_tiles>(sums, stash, quad, column);
 		}
@@ -571,12 +701,12 @@ __device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int
 	}
 	/* lanes quad < 2 hold the hi sums of rows 4 g + 2 quad + {0, 1}, lane quad + 2 the lo sums of the same */
 	const int64_t output_stride = (int64_t)p.n_tiles * TC_MOE_TILE;
-	if constexpr (item_slices == 2) { /* the second slice's 2^-e */
+	if constexpr (item_slices == TC_MOE_PAIRED_SLICES) { /* the second slice's 2^-e */
 #pragma unroll
 		for (int group = 0; group < groups; group++) {
 #pragma unroll
-			for (int pair = 0; pair < 2; pair++) {
-				const int row = 4 * group + 2 * (quad & 1) + pair;
+			for (int pair = 0; pair < TC_MOE_LANE_COLUMNS; pair++) {
+				const int row = TC_MOE_GROUP_ROWS * group + TC_MOE_LANE_COLUMNS * (quad & 1) + pair;
 				const int64_t assignment = __shfl_sync(TC_MOE_FULL_MASK, row_of, row < rows ? row : 0);
 				const int64_t own = (assignment * p.projections + projection_index) * slices;
 				unscale[group][pair] = __ldg(p.unscale + own + slice + 1);
@@ -587,30 +717,41 @@ __device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int
 #pragma unroll
 	for (int group = 0; group < groups; group++) {
 #pragma unroll
-		for (int pair = 0; pair < 2; pair++) {
-			const int row = 4 * group + 2 * (quad & 1) + pair;
+		for (int pair = 0; pair < TC_MOE_LANE_COLUMNS; pair++) {
+			const int row = TC_MOE_GROUP_ROWS * group + TC_MOE_LANE_COLUMNS * (quad & 1) + pair;
 			const int64_t assignment = __shfl_sync(TC_MOE_FULL_MASK, row_of, row < rows ? row : 0);
 			float *const row_output = last_output + assignment * output_stride;
 #pragma unroll
 			for (int j = 0; j < column_tiles; j++) {
 #pragma unroll
-				for (int half = 0; half < 2; half++) {
-					const int index = 2 * half + pair;
-					const float low = __shfl_xor_sync(TC_MOE_FULL_MASK, sums[j][group][index], 2);
-					if (quad < 2 && row < rows)
-						row_output[j * TC_MOE_TILE + 8 * half] =
-							__fmul_rn(__fadd_rn(sums[j][group][index], low), unscale[group][pair]);
+				for (int half = 0; half < TC_MOE_OUTPUT_HALVES; half++) {
+					const int index = TC_MOE_LANE_COLUMNS * half + pair;
+					const float low = __shfl_xor_sync(TC_MOE_FULL_MASK, sums[j][group][index],
+									  TC_MOE_LO_PARTNER);
+					if (quad < TC_MOE_HI_QUADS && row < rows)
+						row_output[j * TC_MOE_TILE +
+							   TC_MOE_HALF_OUTPUTS *
+								   half] =
+							__fmul_rn(
+								__fadd_rn(
+									sums[j]
+									    [group]
+									    [index],
+									low),
+								unscale[group]
+								       [pair]);
 				}
 			}
 		}
 	}
-	if constexpr (item_slices == 2) { /* the first slice from the stash, with its own 2^-e (each lane its writes) */
-		const float *const own_stash = stash + 2 * column + quad;
+	/* the first slice from the stash, with its own 2^-e (each lane its writes) */
+	if constexpr (item_slices == TC_MOE_PAIRED_SLICES) {
+		const float *const own_stash = stash + TC_MOE_HI_QUADS * column + quad;
 #pragma unroll
 		for (int group = 0; group < groups; group++) {
 #pragma unroll
-			for (int pair = 0; pair < 2; pair++) {
-				const int row = 4 * group + 2 * (quad & 1) + pair;
+			for (int pair = 0; pair < TC_MOE_LANE_COLUMNS; pair++) {
+				const int row = TC_MOE_GROUP_ROWS * group + TC_MOE_LANE_COLUMNS * (quad & 1) + pair;
 				const int64_t assignment = __shfl_sync(TC_MOE_FULL_MASK, row_of, row < rows ? row : 0);
 				const float first_unscale = __ldg(
 					p.unscale + (assignment * p.projections + projection_index) * slices + slice);
@@ -619,11 +760,13 @@ __device__ __forceinline__ void tc_moe_item(const struct tc_moe_products &p, int
 #pragma unroll
 				for (int j = 0; j < column_tiles; j++) {
 #pragma unroll
-					for (int half = 0; half < 2; half++) {
-						const int value = (j * groups + group) * 4 + 2 * half + pair;
-						if (quad < 2 && row < rows)
-							row_output[j * TC_MOE_TILE + 8 * half] = __fmul_rn(
-								own_stash[value * TC_MOE_STASH_LANES], first_unscale);
+					for (int half = 0; half < TC_MOE_OUTPUT_HALVES; half++) {
+						const int value = (j * groups + group) * TC_MOE_MMA_RESULTS +
+								  TC_MOE_LANE_COLUMNS * half + pair;
+						if (quad < TC_MOE_HI_QUADS && row < rows)
+							row_output[j * TC_MOE_TILE + TC_MOE_HALF_OUTPUTS * half] =
+								__fmul_rn(own_stash[value * TC_MOE_STASH_LANES],
+									  first_unscale);
 					}
 				}
 			}
@@ -650,25 +793,25 @@ tc_moe_activate_pair(int64_t pair, int64_t intermediate, const float *gate, cons
 	constexpr int chunk = slices < TC_MOE_ACTIVATION_CHUNK ? slices : TC_MOE_ACTIVATION_CHUNK;
 	static_assert(slices % chunk == 0, "whole chunks of slices");
 	__shared__ float warp_peaks[row_blocks];
-	const int lane = threadIdx.x & 31, block = threadIdx.x >> 5;
+	const int lane = threadIdx.x & TC_MOE_LANE_MASK, block = threadIdx.x >> TC_MOE_WARP_SHIFT;
 	const int64_t base = (int64_t)block * TC_MOE_TRANSFORM + lane;
-	double value[4];
+	double value[TC_MOE_LANE_VALUES];
 	if (!mixed || (int64_t)block * TC_MOE_TRANSFORM < width) {
-		float gate_scale[4], up_scale[4], down_scale[4];
+		float gate_scale[TC_MOE_LANE_VALUES], up_scale[TC_MOE_LANE_VALUES], down_scale[TC_MOE_LANE_VALUES];
 #pragma unroll
-		for (int index = 0; index < 4; index++) {
+		for (int index = 0; index < TC_MOE_LANE_VALUES; index++) {
 			gate_scale[index] = __half2float(gate_svh[base + TC_MOE_WARP * index]);
 			up_scale[index] = __half2float(up_svh[base + TC_MOE_WARP * index]);
 			down_scale[index] = __half2float(down_suh[base + TC_MOE_WARP * index]);
 		}
-		double gate_value[4], up_value[4];
+		double gate_value[TC_MOE_LANE_VALUES], up_value[TC_MOE_LANE_VALUES];
 #pragma unroll
 		for (int first = 0; first < slices; first += chunk) {
-			float gate_part[chunk][4], up_part[chunk][4];
+			float gate_part[chunk][TC_MOE_LANE_VALUES], up_part[chunk][TC_MOE_LANE_VALUES];
 #pragma unroll
 			for (int slice = 0; slice < chunk; slice++) {
 #pragma unroll
-				for (int index = 0; index < 4; index++) {
+				for (int index = 0; index < TC_MOE_LANE_VALUES; index++) {
 					const int64_t at = (first + slice) * slice_stride + pair * intermediate + base +
 							   TC_MOE_WARP * index;
 					gate_part[slice][index] = __ldg(gate + at);
@@ -676,7 +819,7 @@ tc_moe_activate_pair(int64_t pair, int64_t intermediate, const float *gate, cons
 				}
 			}
 #pragma unroll
-			for (int index = 0; index < 4; index++) {
+			for (int index = 0; index < TC_MOE_LANE_VALUES; index++) {
 #pragma unroll
 				for (int slice = 0; slice < chunk; slice++) {
 					if (first + slice == 0) {
@@ -694,7 +837,7 @@ tc_moe_activate_pair(int64_t pair, int64_t intermediate, const float *gate, cons
 		tc_moe_hadamard(gate_value, lane);
 		tc_moe_hadamard(up_value, lane);
 #pragma unroll
-		for (int index = 0; index < 4; index++) {
+		for (int index = 0; index < TC_MOE_LANE_VALUES; index++) {
 			double gated = __dmul_rn(gate_value[index], (double)gate_scale[index]);
 			double upped = __dmul_rn(up_value[index], (double)up_scale[index]);
 			value[index] = 0.0;
@@ -710,12 +853,12 @@ tc_moe_activate_pair(int64_t pair, int64_t intermediate, const float *gate, cons
 		tc_moe_hadamard(value, lane);
 	} else {
 #pragma unroll
-		for (int index = 0; index < 4; index++)
+		for (int index = 0; index < TC_MOE_LANE_VALUES; index++)
 			value[index] = 0.0; /* a narrow expert's last block: H128 of zeros */
 	}
-	float rounded[4];
+	float rounded[TC_MOE_LANE_VALUES];
 #pragma unroll
-	for (int index = 0; index < 4; index++)
+	for (int index = 0; index < TC_MOE_LANE_VALUES; index++)
 		rounded[index] = __double2float_rn(value[index]);
 	const float peak = tc_moe_warp_peak(rounded);
 	if (lane == 0)
@@ -726,10 +869,11 @@ tc_moe_activate_pair(int64_t pair, int64_t intermediate, const float *gate, cons
 	for (int warp = 0; warp < row_blocks; warp++)
 		row_peak = fmaxf(row_peak, warp_peaks[warp]);
 	const int exponent = tc_moe_exponent(row_peak);
-	__half *high = down_halves + pair * 2 * intermediate;
+	__half *high = down_halves + pair * TC_MOE_HI_LO_ROWS * intermediate;
 	tc_moe_store_halves(rounded, lane, block * TC_MOE_TRANSFORM, exponent, high, high + intermediate);
 	if (block == 0 && lane < down_slices)
-		down_unscale[pair * down_slices + lane] = __uint_as_float((uint32_t)(127 - exponent) << 23);
+		down_unscale[pair * down_slices + lane] =
+			__uint_as_float((uint32_t)(TC_MOE_FLOAT_BIAS - exponent) << TC_MOE_MANTISSA_BITS);
 	__syncthreads();
 }
 
@@ -739,20 +883,21 @@ template <int slices>
 __device__ __forceinline__ void tc_moe_route_values(const float *down, int64_t slice_stride, int64_t pair,
 						    int64_t first_column, const __half *svh, int lane, double *values)
 {
-	float partial[slices][4];
+	float partial[slices][TC_MOE_LANE_VALUES];
 #pragma unroll
 	for (int slice = 0; slice < slices; slice++)
 #pragma unroll
-		for (int index = 0; index < 4; index++)
+		for (int index = 0; index < TC_MOE_LANE_VALUES; index++)
 			partial[slice][index] =
-				down[slice * slice_stride + pair * TC_MOE_HIDDEN + first_column + lane + TC_MOE_WARP * index];
-	float scale[4];
+				down[slice * slice_stride + pair * TC_MOE_HIDDEN +
+				     first_column + lane + TC_MOE_WARP * index];
+	float scale[TC_MOE_LANE_VALUES];
 #pragma unroll
-	for (int index = 0; index < 4; index++)
+	for (int index = 0; index < TC_MOE_LANE_VALUES; index++)
 		scale[index] = __half2float(svh[first_column + lane + TC_MOE_WARP * index]);
-	double value[4];
+	double value[TC_MOE_LANE_VALUES];
 #pragma unroll
-	for (int index = 0; index < 4; index++) {
+	for (int index = 0; index < TC_MOE_LANE_VALUES; index++) {
 		value[index] = partial[0][index];
 #pragma unroll
 		for (int slice = 1; slice < slices; slice++)
@@ -760,7 +905,7 @@ __device__ __forceinline__ void tc_moe_route_values(const float *down, int64_t s
 	}
 	tc_moe_hadamard(value, lane);
 #pragma unroll
-	for (int index = 0; index < 4; index++)
+	for (int index = 0; index < TC_MOE_LANE_VALUES; index++)
 		values[lane + TC_MOE_WARP * index] = __dmul_rn(value[index], (double)scale[index]);
 }
 

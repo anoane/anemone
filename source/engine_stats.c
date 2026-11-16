@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /* Product counters, independent of the optional diagnostic/timing switches. */
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -17,6 +18,48 @@ uint64_t engine_now_ns(void)
 		       (uint64_t)now.tv_sec * NANOSECONDS_PER_SECOND +
 			       (uint64_t)now.tv_nsec :
 		       0;
+}
+
+result_status engine_stats_metrics_enable(struct inference_engine *engine,
+					  bool enabled)
+{
+	if (engine == NULL)
+		return STATUS_INVALID_ARGUMENT;
+	(void)pthread_mutex_lock(&engine->lock);
+	const result_status status = enabled && (engine->admissions != 0 ||
+						 engine->command_count != 0) ?
+					     STATUS_BUSY_VALUE :
+					     STATUS_OK;
+	if (status == STATUS_OK) {
+		engine->metrics_enabled = enabled;
+		engine->metrics_steps = engine->live.steps_landed;
+		engine->metrics_prefill = engine->live.prefill_tokens;
+		engine->metrics_generated = engine->live.generated_tokens;
+	}
+	(void)pthread_mutex_unlock(&engine->lock);
+	return status;
+}
+
+/* Under the publication lock after each landed step, including drain/restore/session paths. */
+void engine_live_iteration(struct inference_engine *engine)
+{
+	if (!engine->metrics_enabled ||
+	    engine->metrics_steps == engine->worker_live.steps_landed)
+		return;
+	const uint64_t tokens =
+		engine->worker_live.prefill_tokens - engine->metrics_prefill +
+		engine->live.generated_tokens - engine->metrics_generated;
+	uint32_t bucket = 0;
+	static const uint32_t bounds[STATS_ITERATION_BUCKETS] = {
+		1, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384
+	};
+	while (bucket < STATS_ITERATION_BUCKETS && tokens > bounds[bucket])
+		bucket++;
+	engine->live.iteration_tokens[bucket]++;
+	engine->live.iteration_token_sum += tokens;
+	engine->metrics_steps = engine->worker_live.steps_landed;
+	engine->metrics_prefill = engine->worker_live.prefill_tokens;
+	engine->metrics_generated = engine->live.generated_tokens;
 }
 
 void engine_live_step(struct inference_engine *engine,
@@ -49,7 +92,6 @@ void engine_live_step(struct inference_engine *engine,
 		(worker->step_ring_next + 1u) % STATS_STEP_RING;
 	worker->step_ring_count +=
 		worker->step_ring_count < STATS_STEP_RING ? 1u : 0u;
-	uint32_t seen = 0;
 	for (uint32_t index = 0; index < row_count; index++) {
 		const uint32_t owner = rows[index].session_slot;
 		struct command_cursor *const cursor = &engine->cursors[owner];
@@ -66,9 +108,9 @@ void engine_live_step(struct inference_engine *engine,
 					cursor->live_prompt_processed;
 		}
 		if ((uint32_t)rows[index].position < prompt_end &&
-		    (seen & (1u << owner)) == 0) {
+		    cursor->live_chunk_step != worker->steps_landed) {
 			cursor->live_chunks[kind]++;
-			seen |= 1u << owner;
+			cursor->live_chunk_step = worker->steps_landed;
 		}
 		if ((rows[index].flags & STEP_ROW_DRAFTS) != 0) {
 			cursor->live_chunks[STATS_DRAFT_KIND] +=
@@ -162,14 +204,82 @@ result_status engine_stats_slot(struct inference_engine *engine,
 	return OK;
 }
 
+result_status engine_stats_tables(struct engine_stats *stats,
+				  uint32_t slot_count)
+{
+	if (stats == NULL || slot_count == 0 ||
+	    slot_count > SERVING_SLOTS_MOST) {
+		return STATUS_INVALID_ARGUMENT;
+	}
+	struct engine_slot_stats *const slots =
+		calloc(slot_count, sizeof(*slots));
+	struct engine_session_stats *const sessions =
+		calloc(slot_count, sizeof(*sessions));
+	if (slots == NULL || sessions == NULL) {
+		free(slots);
+		free(sessions);
+		return STATUS_OUT_OF_MEMORY;
+	}
+	stats->slot_room = slot_count;
+	stats->slots = slots;
+	stats->sessions = sessions;
+	return OK;
+}
+
+void engine_stats_tables_free(struct engine_stats *stats)
+{
+	if (stats != NULL) {
+		free(stats->slots);
+		free(stats->sessions);
+		stats->slots = NULL;
+		stats->sessions = NULL;
+		stats->slot_room = 0;
+	}
+}
+
+/* input's fields, and count entries of its tables into output's, which keep their place: the caller checked room */
+static void stats_copied(struct engine_stats *output,
+			 const struct engine_stats *input, uint32_t count)
+{
+	struct engine_slot_stats *const slots = output->slots;
+	struct engine_session_stats *const sessions = output->sessions;
+	const uint32_t room = output->slot_room;
+	*output = *input;
+	output->slot_room = room;
+	output->slots = slots;
+	output->sessions = sessions;
+	if (count != 0) {
+		memcpy(slots, input->slots, (size_t)count * sizeof(*slots));
+		memcpy(sessions, input->sessions,
+		       (size_t)count * sizeof(*sessions));
+	}
+}
+
+result_status engine_stats_copy(struct engine_stats *output,
+				const struct engine_stats *input)
+{
+	if (output == NULL || input == NULL ||
+	    (input->slots_total != 0 &&
+	     (output->slots == NULL || output->sessions == NULL ||
+	      output->slot_room < input->slots_total || input->slots == NULL ||
+	      input->sessions == NULL))) {
+		return STATUS_INVALID_ARGUMENT;
+	}
+	stats_copied(output, input, input->slots_total);
+	return OK;
+}
+
 result_status engine_stats_counters(struct inference_engine *engine,
 				    struct engine_stats *stats_out)
 {
-	if (engine == NULL || stats_out == NULL) {
+	if (engine == NULL || stats_out == NULL || stats_out->slots == NULL ||
+	    stats_out->sessions == NULL ||
+	    stats_out->slot_room < engine->description.session_slot_count) {
 		return STATUS_INVALID_ARGUMENT;
 	}
 	(void)pthread_mutex_lock(&engine->lock);
-	*stats_out = engine->live;
+	stats_copied(stats_out, &engine->live,
+		     engine->description.session_slot_count);
 	stats_out->now_ns = engine_now_ns();
 	stats_out->slots_total = engine->description.session_slot_count;
 	stats_out->queued_commands = engine->command_count;

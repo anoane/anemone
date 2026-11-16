@@ -69,6 +69,7 @@
 #define TEST_EXPECTED_BLUE 249u
 #define TEST_MIN_GRID 39u
 #define TEST_MIN_TOKENS 184u
+#define TEST_HUFFMAN_WIDTH 4u
 
 static unsigned failures;
 static void image_test_require(bool condition, const char *case_name)
@@ -107,9 +108,9 @@ static size_t image_test_chunk(uint8_t *output, const char *kind,
 			 image_test_crc(output + TEST_QUAD, count + TEST_QUAD));
 	return count + (size_t)TEST_TRIPLE * TEST_QUAD;
 }
+static const uint8_t test_png_signature[] = { 137, 80, 78, 71, 13, 10, 26, 10 };
 static size_t image_test_png(uint8_t *output)
 {
-	static const uint8_t signature[] = { 137, 80, 78, 71, 13, 10, 26, 10 };
 	static const uint8_t header[] = {
 		0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0
 	};
@@ -139,8 +140,27 @@ static size_t image_test_png(uint8_t *output)
 	}
 	image_test_u32be(zlib + sizeof(zlib) - TEST_QUAD,
 			 (second << TEST_WORD_BITS) | first);
-	memcpy(output, signature, sizeof(signature));
-	size_t length = sizeof(signature);
+	memcpy(output, test_png_signature, sizeof(test_png_signature));
+	size_t length = sizeof(test_png_signature);
+	length += image_test_chunk(output + length, "IHDR", header,
+				   sizeof(header));
+	length += image_test_chunk(output + length, "IDAT", zlib, sizeof(zlib));
+	length += image_test_chunk(output + length, "IEND", NULL, 0);
+	return length;
+}
+/* A TEST_HUFFMAN_WIDTH x 1 RGB PNG whose IDAT is one fixed-Huffman block (RFC 1951 3.2.6): the literals 0 (filter
+ * none), TEST_EXPECTED_RED, _GREEN and _BLUE, then a copy of 9 bytes from 3 back (the other three pixels: the copy
+ * reads what it writes), then the block's end; the zlib header 78 da and the Adler-32 24bf0635 around it. */
+static size_t image_test_huffman_png(uint8_t *output)
+{
+	static const uint8_t header[] = {
+		0, 0, 0, 4, 0, 0, 0, 1, 8, 2, 0, 0, 0
+	};
+	static const uint8_t zlib[] = { 0x78, 0xda, 0x63, 0x10, 0x6c,
+					0xfe, 0x09, 0x47, 0x00, 0x24,
+					0xbf, 0x06, 0x35 };
+	memcpy(output, test_png_signature, sizeof(test_png_signature));
+	size_t length = sizeof(test_png_signature);
 	length += image_test_chunk(output + length, "IHDR", header,
 				   sizeof(header));
 	length += image_test_chunk(output + length, "IDAT", zlib, sizeof(zlib));
@@ -297,6 +317,26 @@ static void image_test_intrinsic(void)
 	status = image_decode(bytes, length, &image);
 	image_test_require(status == STATUS_INVALID_ARGUMENT,
 			   "decompressed-byte limit before inflate");
+	length = image_test_huffman_png(bytes);
+	status = image_decode(bytes, length, &image);
+	image_test_require(status == STATUS_OK &&
+				   image.width == TEST_HUFFMAN_WIDTH &&
+				   image.height == 1,
+			   "fixed-Huffman PNG decode");
+	if (status == STATUS_OK) {
+		bool copied = true;
+		for (unsigned pixel = 0; pixel < TEST_HUFFMAN_WIDTH; ++pixel) {
+			const uint8_t *const rgb =
+				image.pixels + (size_t)pixel * TEST_TRIPLE;
+			copied = copied && rgb[0] == TEST_EXPECTED_RED &&
+				 rgb[1] == TEST_EXPECTED_GREEN &&
+				 rgb[TEST_PAIR] == TEST_EXPECTED_BLUE;
+		}
+		image_test_require(copied, "PNG back-reference RGB values");
+		image_rgb_destroy(&image);
+	}
+	image_test_truncations(bytes, length);
+	image_test_mutations(bytes, length);
 	length = image_test_jpeg(bytes);
 	status = image_decode(bytes, length, &image);
 	image_test_require(status == STATUS_OK && image.width == 1 &&

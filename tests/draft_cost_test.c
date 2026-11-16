@@ -30,6 +30,8 @@
 #define HALF_ACCEPTANCE_WIN_US 1400u
 #define LOSING_FIRST_COST_US 2000u
 #define AMORTIZED_COST_US 2200u
+#define TAIL_DEPTH \
+	2 /* the depth whose tail amortizes the losing first prefix */
 
 static uint32_t failures;
 
@@ -179,11 +181,11 @@ static void ordinary_draw_and_bounds(void)
 	       "depth zero competes using its positive total round cost");
 	fill_probabilities(&policy, HIGH_PROBABILITY, LOW_PROBABILITY);
 	prices_us[1] = AMORTIZED_COST_US;
-	prices_us[2] = AMORTIZED_COST_US;
+	prices_us[TAIL_DEPTH] = AMORTIZED_COST_US;
 	expect(draft_rate_depth(&policy, confidence, 1, false, prices_us,
 				NULL) == 0 &&
-		       draft_rate_depth(&policy, confidence, 2, false,
-					prices_us, NULL) == 2,
+		       draft_rate_depth(&policy, confidence, TAIL_DEPTH, false,
+					prices_us, NULL) == TAIL_DEPTH,
 	       "a losing first prefix does not hide profitable tail amortization");
 	prices_us[1] = HALF_ACCEPTANCE_TIE_US;
 	expect(draft_rate_depth(&policy, confidence, 1, false, prices_us,

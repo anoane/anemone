@@ -16,9 +16,21 @@ REGISTRY = ROOT / "tools/cli/axes.json"
 HEADER = ROOT / "source/cli_axes_data.h"
 DOCUMENT = ROOT / "tools/cli/AXES.md"
 CATALOG = ROOT / "tools/cli/KNOBS.md"
+INVENTORY = ROOT / "tools/cli/inventory.json"  # commands.c's option table: each knob's parser range
 AXIS_MARKER = "<!-- generated-axis-table -->"
 AXIS_NAMES = ("category", "exactness", "concurrency", "focus")
 STRATEGY_FIELDS = ("settings", "serve_settings", "generate_settings")
+SPLITS = ("pp5", "tp4_pro", "tp4_exl3")
+SET_CLASSES = ("same_bits", "draft_only", "lossy")
+EXACT_SESSION_HOLD = ("The exact reference serves one session: use --concurrency=single or leave concurrency "
+                      "unset.")
+NO_SET_CLASS = "No knob set: the GPU split's base over its raw engine defaults."
+BASE_FIELDS = {"route", "exclude", "raw_defaults", "evidence"}
+# The user's choices (9 Nov): the context (default 1M) and the sessions (default as many as fit). No row pins
+# either, with one exception: the exact rows, whose reference recipe keeps its own geometry (one session; PP5's at the
+# official reference's context limit), which is part of what exact means.
+SESSION_KNOBS = ("--context_tokens", "--session_slots")
+SESSION_PINS_EXCEPTION = "exact"  # the exactness value whose rows may pin them
 LITERAL_LIMIT = 4000
 C_LINE_WIDTH = 112
 NUMERICAL_CLASSES = {"same_bits", "draft_only", "lossy", "reference_arithmetic"}
@@ -58,11 +70,70 @@ def strategy_assignments(strategy):
     return {argument for field in STRATEGY_FIELDS for argument in argument_tokens(strategy[field])}
 
 
-def family_rules(registry, family, tier):
-    if family == "original":
-        return [rule for rule in registry.get("original_rules", [])
-                if tier in rule["match"]["exactness"]]
-    return registry.get(tier + "_exl3_rules", [])
+def split_base(registry, split):
+    """A GPU split's base (stage 3): its measured route's knobs without the excluded ones (the axes' own knobs
+    and the measurement-protocol pins) and without each one equal to the split's raw engine default (a null default
+    is automatic, never equal), so it holds only what the raw defaults lack. Every other route knob must declare its
+    raw default. The settings and the serve additions, and the omitted (key, value) pins."""
+    spec = registry["splits"][split]["base"]
+    route = registry["strategies"][spec["route"]]
+    defaults = spec["raw_defaults"]
+    kept, omitted = {}, []
+    for field in STRATEGY_FIELDS:
+        kept[field] = []
+        for argument in argument_tokens(route[field]):
+            key = option_key(argument)
+            if key == "--placement" or key in spec["exclude"]:
+                continue
+            if key not in defaults:
+                raise ValueError(f"a base route knob needs its raw default or an exclusion: {split} {key}")
+            if defaults[key] is not None and argument == f"{key}={defaults[key]}":
+                omitted.append((key, defaults[key]))
+            else:
+                kept[field].append(argument)
+    if kept["generate_settings"] and kept["generate_settings"] != kept["settings"]:
+        raise ValueError(f"a base is one argv for both commands: {split}")
+    return dict(settings=kept["settings"], serve_settings=kept["serve_settings"], generate_settings=None,
+                omitted=list(dict.fromkeys(omitted)))
+
+
+def base_classes(registry, split):
+    """A base's numerical and error class (stage 3 review D6): its route's, since the base runs the route's own
+    knobs over the raw engine defaults, naming the arithmetic it changes from them (TP4_EXL3: relaxed numerics and the
+    BF16 wire)."""
+    route_name = registry["splits"][split]["base"]["route"]
+    route = registry["strategies"][route_name]
+    relaxed = [argument for argument in split_base(registry, split)["settings"] if argument in RELAXED_ARITHMETIC]
+    arithmetic = (f" Its arithmetic is not the raw exact FP32 default: {' '.join(relaxed)} (relaxed numerics and the "
+                  "BF16 wire)." if relaxed else "")
+    return route["numerical_class"], (f"The GPU split's base, route {route_name} over the raw engine defaults: "
+                                      f"{route['error_class']}{arithmetic}")
+
+
+def split_set(registry, split, axis, value):
+    """The knob set of one axis value on one GPU split, or None: its argv for both commands, its serve-only argv and
+    its generate argv (None: the same as settings). A strategy-backed set is that recipe without its dropped knobs; the
+    knobs it yields stay until composition leaves out each one another set of the row gives. A same_as set repeats
+    another value's set of its axis, with its own evidence first."""
+    entry = registry["splits"][split]["sets"].get(axis, {}).get(value)
+    if entry is None:
+        return None
+    if "same_as" in entry:
+        repeated = split_set(registry, split, axis, entry["same_as"])
+        return dict(repeated, same_as=entry["same_as"],
+                    evidence=f"{entry['evidence']} {axis}={entry['same_as']}'s set: {repeated['evidence']}")
+    if "strategy" in entry:
+        strategy = registry["strategies"][entry["strategy"]]
+        keep = lambda field: [argument for argument in argument_tokens(strategy[field])
+                              if option_key(argument) not in entry["drop"]]
+        return dict(entry, settings=keep("settings"), serve_settings=keep("serve_settings"),
+                    generate_settings=keep("generate_settings") or None, yields=entry.get("yields", []),
+                    numerical_class=strategy["numerical_class"], error_class=strategy["error_class"],
+                    raw_only=strategy.get("raw_only", False), lossy=strategy)
+    return dict(entry, settings=argument_tokens(entry["settings"]),
+                serve_settings=argument_tokens(entry.get("serve_settings", [])),
+                generate_settings=argument_tokens(entry["generate_settings"]) if "generate_settings" in entry else None,
+                raw_only=False, lossy=None)
 
 
 def finite_number(value, label):
@@ -240,33 +311,16 @@ def validate_numerical_contracts(registry, allow_synthetic=False):
         assignments = strategy_assignments(strategy)
         if assignments & declared_lossy != set(strategy["lossy_knobs"]):
             raise ValueError(f"undeclared lossy assignment: {name}")
-    for family, tier_name in itertools.product(registry["weight_families"], ("balanced", "exact", "fast")):
-        for rule in family_rules(registry, family, tier_name):
-            strategy = registry["strategies"][rule["strategy"]]
-            if strategy["numerical_class"] == "lossy" and tier_name != "fast":
-                raise ValueError(f"lossy strategy in {tier_name} mapping")
-            candidate = rule.get("qualification_candidate", False)
-            if type(candidate) is not bool:
-                raise ValueError("qualification_candidate must be a boolean")
-            if tier_name == "exact" and "hold" in rule:
-                if (not isinstance(rule["hold"], str) or
-                        (family == "original" and strategy["numerical_class"] != "reference_arithmetic") or
-                        (family == "exl3" and not rule["hold"])):
-                    raise ValueError("exact scope requires original reference arithmetic or a held EXL3 rule")
-                continue
-            if "hold" in rule and not candidate:
-                raise ValueError("a per-rule hold requires an explicit qualification candidate")
-            if candidate:
-                match = rule["match"]
-                domains = {axis["name"]: axis["values"] for axis in registry["axes"]}
-                if (family != "exl3" or tier_name != "balanced" or set(match) != set(AXIS_NAMES) or
-                        any(not isinstance(match[name], list) or len(match[name]) != 1 or
-                            match[name][0] not in domains[name] for name in AXIS_NAMES) or
-                        match["exactness"] != ["balanced"] or
-                        (match["concurrency"] != ["balanced"] and not rule.get("hold")) or
-                        strategy["numerical_class"] not in ("same_bits", "draft_only") or
-                        strategy.get("raw_only", False) or not isinstance(rule.get("hold", ""), str)):
-                    raise ValueError("qualification exception needs a complete current-math balanced tuple")
+    for split, spec in registry["splits"].items():
+        for axis, values in spec["sets"].items():
+            for value in values:
+                entry = split_set(registry, split, axis, value)
+                if entry["numerical_class"] not in SET_CLASSES:
+                    raise ValueError(f"a knob set needs a same-bits, draft-only or lossy class: {split} {axis}={value}")
+                if entry["numerical_class"] == "lossy" and (axis, value) != ("exactness", "fast"):
+                    raise ValueError(f"lossy strategy in {axis}={value} mapping")
+                if entry["raw_only"]:
+                    raise ValueError("raw-only candidate cannot enter an active tuple")
 
 
 def validate_choice_contract(strategy, exactness, hold):
@@ -325,8 +379,272 @@ def option_key(argument):
     return {"--draft": "--speculative", "--speculative_depth": "--draft_positions"}.get(name, name)
 
 
+ROUTE_PARAMETERS = (("GPU split (`--placement`)", "--placement"), ("Pipeline depth (`--pipeline_steps`)", "--pipeline_steps"),
+                    ("Serving slots (`--session_slots`)", "--session_slots"))
+
+
+def route_parameters(strategy):
+    """A route's three parameters, derived from its settings and never stored: the GPU split (--placement, how the GPUs
+    are divided), the pipeline depth (--pipeline_steps, the steps in flight) and the serving slots (--session_slots).
+    Each is the serve value (settings, then serve_settings); a generate value that differs follows in parentheses."""
+    serve = argument_tokens(strategy["settings"]) + argument_tokens(strategy["serve_settings"])
+    generate = argument_tokens(strategy["generate_settings"] or strategy["settings"])
+
+    def value(arguments, key):
+        values = [argument.split("=", 1)[1] for argument in arguments if option_key(argument) == key]
+        return (values[-1].upper() if key == "--placement" else values[-1]) if values else None
+
+    columns = []
+    for _, key in ROUTE_PARAMETERS:
+        served, generated = value(serve, key), value(generate, key)
+        shown = served if served is not None else "default"
+        columns.append(shown + (f" (generate {generated})" if generated is not None and generated != served else ""))
+    return columns
+
+
+def placements_of(recipe):
+    """Every --placement a recipe gives, in either command's argv."""
+    return {argument for field in STRATEGY_FIELDS for argument in argument_tokens(recipe[field])
+            if option_key(argument) == "--placement"}
+
+
+def validate_splits(registry, domains):
+    """One table per GPU split: a knob set per axis value, each knob owned by one axis, holds with reasons."""
+    if tuple(registry.get("splits", {})) != SPLITS:
+        raise ValueError("GPU split tables must be pp5/tp4_pro/tp4_exl3")
+    strategies = registry["strategies"]
+    for split, spec in registry["splits"].items():
+        base = spec.get("base", {})
+        if (set(spec) != {"weight_family", "base", "reference", "sets", "holds"} or
+                spec["weight_family"] not in registry["weight_families"] or set(base) != BASE_FIELDS or
+                base["route"] not in strategies or placements_of(strategies[base["route"]]) != {f"--placement={split}"}
+                or not isinstance(base["evidence"], str) or not base["evidence"].strip() or
+                not isinstance(base["exclude"], list) or not isinstance(base["raw_defaults"], dict) or
+                any(value is not None and not isinstance(value, str) for value in base["raw_defaults"].values())):
+            raise ValueError(f"GPU split table needs a weight family, a base (a route of its own split, exclusions, "
+                             f"raw defaults, evidence), reference, sets and holds: {split}")
+        split_base(registry, split)
+        holds = spec["holds"]
+        if any(axis not in domains or any(value not in domains[axis] or value == "balanced" or
+                                          not isinstance(text, str) or not text.strip()
+                                          for value, text in values.items())
+               for axis, values in holds.items()):
+            raise ValueError(f"a hold names a non-balanced axis value and its reason: {split}")
+        reference = spec["reference"]
+        if reference is None:
+            if not holds.get("exactness", {}).get("exact"):
+                raise ValueError(f"a GPU split without a reference recipe must hold exact: {split}")
+        elif (reference not in strategies or strategies[reference]["numerical_class"] != "reference_arithmetic" or
+              f"--placement={split}" not in argument_tokens(strategies[reference]["settings"]) or
+              placements_of(strategies[reference]) - {f"--placement={split}"}):
+            raise ValueError(f"original reference arithmetic must be a recipe of its own GPU split: {split}")
+        elif not EXACT_ARITHMETIC <= set(argument_tokens(strategies[reference]["settings"])) or \
+                set(argument_tokens(strategies[reference]["settings"])) & RELAXED_ARITHMETIC:
+            # exact never inherits a base's relaxed numerics or BF16 wire (TP4_EXL3's no-axis default runs them)
+            raise ValueError(f"an exact recipe gives --numerics=exact and the FP32 wire: {split}")
+        owners, yielded = {}, []
+        for axis, values in spec["sets"].items():
+            if axis not in domains or axis == "exactness" and set(values) - {"fast"}:
+                raise ValueError(f"knob sets name an axis value; exactness carries only a fast set: {split}")
+            for value, entry in values.items():
+                label = f"{split} {axis}={value}"
+                if value not in domains[axis] or "same_as" in entry and (
+                        value != "balanced" or set(entry) != {"same_as", "evidence"} or
+                        entry["same_as"] not in values or "same_as" in values[entry["same_as"]]):
+                    raise ValueError(f"only a balanced set may repeat another measured value's set: {label}")
+                # Unbounded sessions: the owner's balanced rule (1M context, as many sessions as fit) is the raw
+                # defaults, so a balanced set inserts nothing of its own.
+                if value == "balanced" and "same_as" not in entry:
+                    raise ValueError(f"a balanced set stays empty or repeats a measured value's set: {label}")
+                slots = entry.get("applies_with_session_slots")
+                if slots is not None and (axis != "concurrency" or isinstance(slots, bool) or
+                                          not isinstance(slots, int) or slots < 1):
+                    raise ValueError(f"only a concurrency set applies at a serving slot count, a positive count: "
+                                     f"{label}")
+                if holds.get(axis, {}).get(value):
+                    raise ValueError(f"a held axis value cannot carry a knob set: {label}")
+                if not isinstance(entry.get("evidence"), str) or not entry["evidence"].strip():
+                    raise ValueError(f"a knob set needs its evidence pointer: {label}")
+                if "strategy" in entry:
+                    if (set(entry) - {"strategy", "drop", "yields", "evidence", "requires", "applies_with",
+                                      "applies_with_session_slots"} or
+                            entry["strategy"] not in strategies or not isinstance(entry.get("drop"), list) or
+                            not isinstance(entry.get("yields", []), list)):
+                        raise ValueError(f"a recipe set names a strategy and the knobs it drops: {label}")
+                    recipe = strategies[entry["strategy"]]
+                    keys = {option_key(argument) for field in STRATEGY_FIELDS
+                            for argument in argument_tokens(recipe[field])}
+                    if not set(entry["drop"]) <= keys or placements_of(recipe) - {f"--placement={split}"}:
+                        raise ValueError(f"a recipe set must belong to its GPU split and drop only its own knobs: {label}")
+                    if not set(entry.get("yields", [])) <= keys - set(entry["drop"]):
+                        raise ValueError(f"a recipe set yields only knobs it keeps: {label}")
+                    yielded += [(key, axis, label) for key in entry.get("yields", [])]
+                elif "same_as" not in entry and (  # a repeated set is checked as its own value
+                        set(entry) - {"settings", "serve_settings", "generate_settings", "numerical_class",
+                                      "error_class", "evidence", "requires", "applies_with",
+                                      "applies_with_session_slots"} or
+                        not isinstance(entry.get("error_class"), str) or
+                        any(option_key(argument) == "--placement" for argument in argument_tokens(entry["settings"]))):
+                    raise ValueError(f"an inline set needs settings, a class and no placement: {label}")
+                for other, allowed in [*entry.get("requires", {}).items(), *entry.get("applies_with", {}).items()]:
+                    if (other not in domains or other == axis or not allowed or
+                            any(item not in domains[other] for item in allowed)):
+                        raise ValueError(f"a set may require, or apply only with, values of another axis: {label}")
+                resolved = split_set(registry, split, axis, value)
+                pinned = [key for field in STRATEGY_FIELDS for key in map(option_key, resolved[field] or [])
+                          if key in SESSION_KNOBS]
+                if pinned:
+                    raise ValueError(f"an axis set pins no context or session count (the user's): {label} {pinned[0]}")
+                # Each command's argv: serve's settings and serve additions, generate's own settings.
+                for arguments in (resolved["settings"] + resolved["serve_settings"],
+                                  resolved["generate_settings"] or resolved["settings"]):
+                    keys = [option_key(argument) for argument in arguments]
+                    if len(set(keys)) != len(keys):
+                        raise ValueError(f"duplicate knob destination: {label}")
+                    for key in keys:
+                        if key not in resolved.get("yields", []) and owners.setdefault(key, axis) != axis:
+                            raise ValueError(f"{split}: {key} is set by both {owners[key]} and {axis}")
+        # Stage 3 review D3: a yielded knob is set by its recipe and exactly one other axis (two other axes already
+        # refuse).
+        for key, axis, label in yielded:
+            if owners.get(key, axis) == axis:
+                raise ValueError(f"a recipe set yields a knob only to the one other axis that sets it: {label} {key}")
+
+
+BOUND_FIELDS = {"cap": {"kind", "bound", "bounded", "offset", "rule"},
+                "floor": {"kind", "bound", "value", "under", "bounded", "least", "default", "rule"}}
+
+
+def validate_bounds(registry):
+    knob = lambda key: isinstance(key, str) and re.fullmatch(r"--[a-z_]+", key) is not None
+    for bound in registry.get("cross_axis_bounds", []):
+        kind = bound.get("kind")
+        if (set(bound) != BOUND_FIELDS.get(kind) or not knob(bound["bound"]) or not bound["bounded"] or
+                not all(knob(key) for key in bound["bounded"]) or not isinstance(bound["rule"], str) or
+                not bound["rule"].strip() or (kind == "cap" and type(bound["offset"]) is not int) or
+                (kind == "floor" and (not knob(bound["under"]) or not isinstance(bound["value"], str) or
+                                      type(bound["least"]) is not int or type(bound["default"]) is not int or
+                                      bound["default"] >= bound["least"]))):
+            raise ValueError("a cross-axis bound is a cap (bounding knob, bounded knobs, offset, rule) or a floor "
+                             "(bounding knob and value, the knob it applies under, bounded knobs, least, default, "
+                             "rule)")
+
+
+def parser_least(key):
+    """The least value commands.c's parser takes for a knob (inventory.json), as a number: a named constant is read from
+    its #define in include/anemone (the inventory spells it with the ANEMONE_ prefix)."""
+    entry = next((entry for entry in json.loads(INVENTORY.read_text()) if entry["name"] == key[len("--"):]), None)
+    if entry is None:
+        raise ValueError(f"a bounded knob the parser does not take: {key}")
+    least = entry["least"]
+    if least.isdigit():
+        return int(least)
+    name = least.removeprefix("ANEMONE_")
+    for header in sorted((ROOT / "include/anemone").glob("*.h")):
+        found = re.search(rf"^#define {re.escape(name)} (\d+)u?\b", header.read_text(), re.M)
+        if found:
+            return int(found.group(1))
+    raise ValueError(f"{key}'s least {least} has no numeric #define")
+
+
+def command_arguments(entry, serving):
+    """One source's argv for a command: serve's settings and serve additions, or generate's own settings."""
+    return entry["settings"] + entry["serve_settings"] if serving else entry["generate_settings"] or entry["settings"]
+
+
+def composed_values(used, serving):
+    return {option_key(argument): (argument, f"{axis}={value}") for axis, value, entry in used
+            for argument in command_arguments(entry, serving)}
+
+
+def clamp_bounds(registry, used):
+    """Each declared cross-axis bound is applied at composition, per command. A cap lowers a bounded knob that one
+    source sets above the bounding knob's value - offset, where another source sets the bounding knob. A floor raises
+    a bounded knob below its least (absent: its CLI default) where the composed argv holds the bounding knob at its
+    value and the knob it applies under; an absent knob joins the bounding knob's source. Returns the sources and, per
+    command, one record per bound applied: (source, new argument, old argument, bounding argument, bounding source,
+    "bounded" or "required")."""
+    bounds = registry.get("cross_axis_bounds", [])
+    caps = {}
+    for serving in (True, False):
+        values = composed_values(used, serving)
+        caps[serving] = {key: (int(values[bound["bound"]][0].split("=", 1)[1]) - bound["offset"],
+                               *values[bound["bound"]])
+                         for bound in bounds if bound["kind"] == "cap" and bound["bound"] in values
+                         for key in bound["bounded"]}
+    records = {True: [], False: []}
+
+    def clamp(arguments, serving, label):
+        clamped = []
+        for argument in arguments:
+            name, number = argument.split("=", 1)
+            cap = caps[serving].get(option_key(argument))
+            if cap is not None and number.isdigit() and int(number) > cap[0]:
+                if cap[2] == label:
+                    raise ValueError(f"{label} sets {argument} above its own {cap[1]}")
+                records[serving].append((label, f"{name}={cap[0]}", argument, cap[1], cap[2], "bounded"))
+                argument = f"{name}={cap[0]}"
+            clamped.append(argument)
+        return clamped
+
+    result = []
+    for axis, value, entry in used:
+        label = f"{axis}={value}"
+        settings = clamp(entry["settings"], True, label)
+        generate = clamp(entry["generate_settings"] or entry["settings"], False, label)
+        result.append((axis, value, dict(entry, settings=settings,
+                                         serve_settings=clamp(entry["serve_settings"], True, label),
+                                         generate_settings=generate if entry["generate_settings"] or
+                                         generate != settings else None)))
+    for bound in (bound for bound in bounds if bound["kind"] == "floor"):
+        bounding = f"{bound['bound']}={bound['value']}"
+        applies = {}
+        for serving in (True, False):
+            values = composed_values(result, serving)
+            under = values.get(bound["under"], ("=0",))[0].split("=", 1)[1]
+            applies[serving] = values.get(bound["bound"], ("",))[0] == bounding and under not in ("", "0")
+        if not any(applies.values()):
+            continue
+        if not all(applies.values()):
+            raise ValueError(f"the floor {bounding} holds for one command only")
+        source = composed_values(result, True)[bound["bound"]][1]
+        for key in bound["bounded"]:
+            raised = f"{key}={bound['least']}"
+            present = [(index, field) for index, (_, _, entry) in enumerate(result)
+                       for field in ("settings", "serve_settings", "generate_settings")
+                       if any(option_key(argument) == key for argument in entry[field] or [])]
+            if not present:
+                index = next(index for index, (axis, value, _) in enumerate(result) if f"{axis}={value}" == source)
+                axis, value, entry = result[index]
+                result[index] = (axis, value, dict(entry, settings=entry["settings"] + [raised],
+                                                   generate_settings=entry["generate_settings"] and
+                                                   entry["generate_settings"] + [raised]))
+                for serving in (True, False):
+                    records[serving].append((source, raised, f"{key}={bound['default']}", bounding, source,
+                                             "required"))
+                continue
+            for index, field in present:
+                axis, value, entry = result[index]
+                for argument in entry[field]:
+                    number = argument.split("=", 1)[1]
+                    if option_key(argument) == key and number.isdigit() and int(number) < bound["least"]:
+                        for serving in ((True,) if field == "serve_settings" else (False,) if field ==
+                                        "generate_settings" else (True, False)):
+                            records[serving].append((f"{axis}={value}", raised, argument, bounding, source,
+                                                     "required"))
+                result[index] = (axis, value, dict(entry, **{field: [
+                    raised if option_key(argument) == key and argument.split("=", 1)[1].isdigit() and
+                    int(argument.split("=", 1)[1]) < bound["least"] else argument for argument in entry[field]]}))
+    return result, records
+
+
+def clamp_note(record):
+    _, new, old, bounding, source, verb = record
+    return f"{option_key(old)} {old.split('=', 1)[1]} -> {new.split('=', 1)[1]} ({verb} by {bounding} from {source})"
+
+
 def validate_registry(registry, allow_synthetic=False):
-    if registry["schema_version"] != 1:
+    if registry["schema_version"] != 2:
         raise ValueError("unsupported axis registry schema")
     axes = registry["axes"]
     if tuple(axis["name"] for axis in axes) != AXIS_NAMES:
@@ -354,20 +672,22 @@ def validate_registry(registry, allow_synthetic=False):
         if len(set(serve_keys)) != len(serve_keys):
             raise ValueError(f"duplicate serve destination: {name}")
     domains = {axis["name"]: axis["values"] for axis in axes}
-    rule_sets = [registry.get(tier + "_exl3_rules", []) for tier in domains["exactness"]]
-    rule_sets.append(registry.get("original_rules", []))
-    for rules in rule_sets:
-        for rule in rules:
-            match = rule["match"]
-            if (not match or not set(match) <= set(AXIS_NAMES) or
-                    rule["strategy"] not in registry["strategies"] or
-                    any(not isinstance(allowed, list) or not allowed or len(set(allowed)) != len(allowed) or
-                        any(value not in domains[name] for value in allowed)
-                        for name, allowed in match.items())):
-                raise ValueError("invalid axis selection rule")
-    for rule in registry.get("original_rules", []):
-        if set(rule["match"]) != set(AXIS_NAMES):
-            raise ValueError("original rules must explicitly name all four axes")
+    retained_ids = set()
+    for route in registry.get("retained_routes", []):
+        match = route.get("proposed_axes", {})
+        name = route.get("id", "")
+        if (not re.fullmatch(r"[a-z][a-z0-9_]*", name) or name in retained_ids or
+                route.get("selectable") is not False or route.get("weight_family") not in registry["weight_families"] or
+                set(match) != set(AXIS_NAMES) or
+                any(not isinstance(match[axis], list) or not match[axis] or
+                    len(set(match[axis])) != len(match[axis]) or
+                    any(value not in domains[axis] for value in match[axis]) for axis in AXIS_NAMES) or
+                any(not isinstance(route.get(field), str) or not route[field].strip()
+                    for field in ("knob", "fallback", "constraints", "hold"))):
+            raise ValueError("retained route needs four axes, a hold and fallback; it cannot be selectable")
+        retained_ids.add(name)
+    validate_splits(registry, domains)
+    validate_bounds(registry)
     validate_numerical_contracts(registry, allow_synthetic)
     return registry
 
@@ -395,80 +715,178 @@ def bucket_targets(exactness, concurrency, focus):
     return ", ".join(buckets)
 
 
+def yield_knobs(entry, others):
+    """A recipe set without each knob it yields that another set of the row gives, per command: serve's settings and
+    serve additions against the others' serve argv, generate's argv against theirs."""
+    if not entry.get("yields"):
+        return entry
+    serve_given = {option_key(argument) for other in others for argument in command_arguments(other, True)}
+    generate_given = {option_key(argument) for other in others for argument in command_arguments(other, False)}
+    kept = lambda arguments, given: [argument for argument in arguments
+                                     if option_key(argument) not in given or option_key(argument) not in entry["yields"]]
+    settings = kept(entry["settings"], serve_given)
+    generate = kept(entry["generate_settings"] or entry["settings"], generate_given)
+    return dict(entry, settings=settings, serve_settings=kept(entry["serve_settings"], serve_given),
+                generate_settings=generate if entry["generate_settings"] or generate != settings else None)
+
+
+def compose(registry, split, values):
+    """One row of a GPU split's table: its hold, or the argv its axis values insert (the reference recipe under
+    exact). Each knob comes from one axis value's set; the split's raw engine defaults are the baseline."""
+    spec = registry["splits"][split]
+    selected = dict(zip(AXIS_NAMES, values))
+    if selected["category"] == "vision":
+        return dict(hold=registry["holds"]["vision"], status="held vision")
+    for axis in AXIS_NAMES:
+        hold = spec["holds"].get(axis, {}).get(selected[axis], "")
+        if hold:
+            return dict(hold=hold, status=f"held {axis}={selected[axis]}")
+    if selected["exactness"] == "exact":
+        if selected["concurrency"] != "single":
+            return dict(hold=EXACT_SESSION_HOLD, status="held exact scope")
+        strategy = registry["strategies"][spec["reference"]]
+        return dict(hold="", status="candidate", strategy=spec["reference"],
+                    used=[("exactness", "exact", dict(settings=argument_tokens(strategy["settings"]),
+                                                      serve_settings=argument_tokens(strategy["serve_settings"]),
+                                                      generate_settings=argument_tokens(strategy["generate_settings"])
+                                                      or None, numerical_class=strategy["numerical_class"],
+                                                      error_class=strategy["error_class"],
+                                                      evidence=strategy["evidence"], lossy=None))])
+    used = []
+    for axis in AXIS_NAMES:
+        entry = split_set(registry, split, axis, selected[axis])
+        if entry is None:
+            continue
+        for other, allowed in entry.get("requires", {}).items():
+            if selected[other] not in allowed:
+                return dict(hold=f"{axis}={selected[axis]} on GPU split {split.upper()} needs " +
+                            " or ".join(f"--{other}={item}" for item in allowed) + ".",
+                            status=f"held {axis}={selected[axis]} scope")
+        # a set that applies only with other values of another axis is left out elsewhere (no hold)
+        if any(selected[other] not in allowed for other, allowed in entry.get("applies_with", {}).items()):
+            continue
+        used.append((axis, selected[axis], entry))
+    used = [(axis, value, yield_knobs(entry, [other for other_axis, _, other in used if other_axis != axis]))
+            for axis, value, entry in used]
+    # The split's base: its measured route over the raw defaults, for each knob no selected set gives, per command.
+    base = split_base(registry, split)
+    serve_given = {option_key(argument) for _, _, entry in used for argument in command_arguments(entry, True)}
+    generate_given = {option_key(argument) for _, _, entry in used for argument in command_arguments(entry, False)}
+    settings = [argument for argument in base["settings"] if option_key(argument) not in serve_given]
+    generate = [argument for argument in base["settings"] if option_key(argument) not in generate_given]
+    label = "+".join(f"{axis}={value}" for axis, value, _ in used) or "base"
+    if settings and not generate:
+        raise ValueError(f"the generate sets give every base knob, serve's do not: {split} {values}")
+    if settings or generate or base["serve_settings"]:
+        numerical_class, error_class = base_classes(registry, split)
+        used.append(("base", split, dict(
+            settings=settings, generate_settings=generate if generate != settings else None,
+            serve_settings=[argument for argument in base["serve_settings"] if option_key(argument) not in serve_given],
+            numerical_class=numerical_class, error_class=error_class, evidence=spec["base"]["evidence"], lossy=None)))
+    used, clamps = clamp_bounds(registry, used)
+    return dict(hold="", status="candidate", strategy=label, used=used, clamps=clamps)
+
+
+INACTIVE_DRAFT_NOTE = "(inactive: no DSpark on this route)"
+# An exact recipe's arithmetic: exact numerics, never a relaxed order or the BF16 wire (9 Nov).
+EXACT_ARITHMETIC = {"--numerics=exact"}
+RELAXED_ARITHMETIC = {"--numerics=relaxed", "--tp_wire_bf16=1"}
+
+
+def inactive_sources(used, serving):
+    """The sources whose knobs are all draft knobs on a command without speculation: inserted for a uniform
+    composition, without effect until the route gains DSpark."""
+    speculation = [argument.split("=", 1)[1] for _, _, entry in used for argument in command_arguments(entry, serving)
+                   if option_key(argument) == "--speculative"]
+    if speculation and speculation[-1] != "0":
+        return []
+    return [f"{axis}={value}" for axis, value, entry in used
+            if all(option_key(argument).startswith("--draft_") for argument in command_arguments(entry, serving))]
+
+
+def draft_sources(used, serving):
+    """The sources whose knobs are all draft knobs. Each carries the inactive-draft note, which startup prints only
+    where the final speculation is off: the route's, or an explicit --speculative=0 (stage 3 review D2)."""
+    return [f"{axis}={value}" for axis, value, entry in used
+            if command_arguments(entry, serving) and
+            all(option_key(argument).startswith("--draft_") for argument in command_arguments(entry, serving))]
+
+
+def sources(used, serving):
+    """One line per inserting axis value (or the split's baseline): the knobs it inserts for that command, and on a
+    line of draft knobs only, the inactive-draft note (draft_sources)."""
+    marked = draft_sources(used, serving)
+    return "\n".join(f"{axis}={value}: " +
+                     " ".join(option_key(argument) for argument in command_arguments(entry, serving)) +
+                     (" " + INACTIVE_DRAFT_NOTE if f"{axis}={value}" in marked else "")
+                     for axis, value, entry in used)
+
+
 def make_choices(registry):
+    """Every (GPU split, full tuple) row in split order: the composed argv, class, evidence and hold."""
     tiers = {tier["name"]: tier for tier in registry["tiers"]}
     choices = []
-    rules = {(family, tier): family_rules(registry, family, tier)
-             for family, tier in itertools.product(registry["weight_families"], tiers)}
-    rule_uses = {key: [0 for unused in rows] for key, rows in rules.items()}
-    for values in itertools.product(*(axis["values"] for axis in registry["axes"])):
-        category, exactness, concurrency, focus = values
-        selected = dict(zip(AXIS_NAMES, values))
-        for family in registry["weight_families"]:
-            strategy_name, hold, status = "empty", "", "candidate"
-            family_tier_rules = rules[family, exactness]
-            if tiers[exactness]["hold"]:
-                hold, status = tiers[exactness]["hold"], "held tier"
-            elif category == "vision" and not (family == "exl3" and exactness == "exact"):
-                hold, status = registry["holds"]["vision"], "held vision"
+    for split in SPLITS:
+        family = registry["splits"][split]["weight_family"]
+        for values in itertools.product(*(axis["values"] for axis in registry["axes"])):
+            category, exactness, concurrency, focus = values
+            row = compose(registry, split, values)
+            used = row.get("used", [])
+            settings = [argument for _, _, entry in used for argument in entry["settings"]]
+            generate = [argument for _, _, entry in used
+                        for argument in (entry["generate_settings"] or entry["settings"])]
+            serve = [argument for _, _, entry in used for argument in entry["serve_settings"]]
+            pinned = [option_key(argument) for argument in settings + generate + serve
+                      if option_key(argument) in SESSION_KNOBS]
+            if pinned and exactness != SESSION_PINS_EXCEPTION:
+                raise ValueError(f"a row pins no context or session count (the user's; only exact rows keep their "
+                                 f"reference recipe's): {split} {'/'.join(values)} {pinned[0]}")
+            classes = [entry["numerical_class"] for _, _, entry in used]
+            for _, _, entry in used:
+                validate_choice_contract(entry, exactness, row["hold"])
+            numerical_class = next((name for name in ("reference_arithmetic", "lossy", "draft_only")
+                                    if name in classes), "same_bits")
+            if row["hold"]:
+                error_class = tiers[exactness]["error_class"]
+                evidence = f"GPU split {split.upper()} holds this tuple: {row['hold']} No settings are applied."
+            elif all(axis == "base" for axis, _, _ in used):
+                error_class = " ".join(entry["error_class"] for _, _, entry in used) or NO_SET_CLASS
+                evidence = (f"No axis value of this tuple carries a knob set on GPU split {split.upper()}; its base "
+                            "over the raw engine defaults applies." +
+                            "".join(" " + entry["evidence"] for _, _, entry in used))
             else:
-                matches = [index for index, rule in enumerate(family_tier_rules)
-                           if all(selected[name] in allowed for name, allowed in rule["match"].items())]
-                exceptions = [index for index in matches
-                              if family_tier_rules[index].get("qualification_candidate")]
-                if family == "original" and not matches:
-                    hold, status = registry["holds"]["original"], "held original"
-                elif family == "exl3" and exactness != "exact" and concurrency == "balanced" and not exceptions:
-                    strategy_name = "batch_session"
-                    hold, status = registry["holds"]["compromise"], "held compromise"
-                else:
-                    if len(matches) != 1:
-                        raise ValueError(f"{exactness} {family} tuple has {len(matches)} rules: {values}")
-                    index = matches[0]
-                    rule_uses[family, exactness][index] += 1
-                    rule = family_tier_rules[index]
-                    strategy_name = rule["strategy"]
-                    if rule.get("qualification_candidate") or "hold" in rule:
-                        hold = rule.get("hold", "")
-                        status = "held qualification candidate" if hold else "qualification candidate"
-            strategy = registry["strategies"][strategy_name]
-            validate_choice_contract(strategy, exactness, hold)
-            error_class = tiers[exactness]["error_class"] if hold else strategy["error_class"]
-            if not hold and strategy["numerical_class"] == "lossy":
-                error_class = "lossy; admitted incremental budget and paired fixture/strata limits apply"
-            evidence = strategy["evidence"]
-            if exactness == "exact" and hold:
-                evidence = ("RND_R.md and track_r_v1/FIXES.md distinguish the qualified serial M1 "
-                            "packet proof from production admission. This selected runtime scope is held: " + hold)
-            elif exactness == "fast" and hold:
-                evidence = ("This tuple has no selected qualified lossy strategy; numerical and serving "
-                            "dependency gates remain open. No lossy knob is applied.")
-            elif family == "original" and hold:
-                evidence = ("Legacy serial TP4_PRO and PP5 depth2/5/8 already exist in main7d86c45/S; "
-                            "there is no unmerged O dependency for those paths. This tuple has no admitted "
-                            "original rule: balanced/mixed/vision or prefill/TTFT/envelope evidence is pending. "
-                            "Overlap, original BATCH, wide and chunk-core selectors exist in main75; their joins remain unqualified. Query/dense-shard ports and complete R forms remain separate source dependencies.")
-            if category == "balanced" and exactness != "exact" and not hold:
-                evidence += (" Category balanced is assessed with the scoped full mixed-user benchmark; homogeneous "
-                             "cells do not establish its aggregate or latency objective.")
-            if category == "code" and focus == "balanced" and exactness != "exact" and not hold:
-                floor = registry["performance_envelope"]["limits"]["code_balanced_non_code_rate_vs_own_best_min"]
-                evidence += (f" The proposed non-code rate floor is {100 * floor:.6g}% of each kind's measured best. "
-                             "Default Fraser median/worst TTFT and long-prefill pause deltas must be <=0. "
-                             "These paired comparisons remain pending; no bounded-compromise claim is made yet.")
-            if focus in ("ttft", "prefill") and not hold:
-                evidence += " A phase-specific optimum requires paired phase measurements; a shared setting alone does not establish it."
-            if not hold:
-                evidence += " " + lossy_evidence(strategy, registry["quality_budget"])
-            choices.append(dict(values=values, family=family, strategy=strategy_name,
-                                **{field: "\n".join(argument_tokens(strategy[field]))
-                                   for field in STRATEGY_FIELDS},
+                error_class = " ".join(dict.fromkeys(entry["error_class"] for axis, _, entry in used
+                                                     if axis != "base"))
+                if numerical_class == "lossy":
+                    error_class = "lossy; admitted incremental budget and paired fixture/strata limits apply"
+                evidence = " ".join(f"{axis}={value}: {entry['evidence']}" for axis, value, entry in used
+                                    if axis != "base")
+                for _, _, entry in used:
+                    if entry["numerical_class"] == "lossy":
+                        evidence += " " + lossy_evidence(entry["lossy"], registry["quality_budget"])
+            # A set that applies on serve only at one --session_slots count; elsewhere the row runs its
+            # concurrency=balanced row (startup_axes.c). 0: none.
+            slots_exactly = next((entry["applies_with_session_slots"] for _, _, entry in used
+                                  if entry.get("applies_with_session_slots")), 0)
+            clamps = row.get("clamps", {True: [], False: []})
+            notes = list(dict.fromkeys(clamp_note(record) for record in clamps[True] + clamps[False]))
+            if notes:
+                evidence += " Cross-axis bound applied: " + "; ".join(notes) + "."
+            lines = {serving: "\n".join(" ".join(record[1:]) for record in clamps[serving]) for serving in clamps}
+            if any(" " in field or "\n" in field for records in clamps.values() for record in records
+                   for field in record):
+                raise ValueError("a clamped knob, its bound and its source are single argv words")
+            choices.append(dict(values=values, family=family, split=split, strategy=row.get("strategy", "empty"),
+                                settings="\n".join(settings), serve_settings="\n".join(serve),
+                                generate_settings="\n".join(generate) if generate != settings else "",
                                 buckets=bucket_targets(exactness, concurrency, focus),
-                                error_class=error_class, evidence=evidence.rstrip(), hold=hold, status=status,
-                                numerical_class=strategy["numerical_class"]))
-    for (family, tier), counts in rule_uses.items():
-        if not tiers[tier]["hold"] and any(count == 0 for count in counts):
-            raise ValueError(f"axis registry contains an unused {tier} {family} selection rule")
+                                error_class=error_class, evidence=evidence.rstrip(), hold=row["hold"],
+                                status=row["status"], numerical_class=numerical_class,
+                                sources=sources(used, True), generate_sources=sources(used, False),
+                                clamps=lines[True], generate_clamps=lines[False], bounds=notes,
+                                serve_slots_exactly=slots_exactly,
+                                inactive=list(dict.fromkeys(inactive_sources(used, True) +
+                                                            inactive_sources(used, False)))))
     return choices
 
 
@@ -508,7 +926,8 @@ def header_text(registry, choices, registry_sha256):
     choice_rows = []
     for choice in choices:
         pointers = [intern(choice[field]) for field in
-                    ("settings", "serve_settings", "generate_settings", "buckets", "error_class", "evidence", "hold")]
+                    ("settings", "serve_settings", "generate_settings", "buckets", "error_class", "evidence", "hold",
+                     "sources", "generate_sources", "clamps", "generate_clamps")]
         choice_rows.append((choice, pointers))
     lines = ["/* SPDX-License-Identifier: AGPL-3.0-or-later */",
              "/* Generated by tools/cli/generate_axes.py; do not edit.",
@@ -534,20 +953,121 @@ def header_text(registry, choices, registry_sha256):
         literals = c_literal_lines(text)
         literals[-1] += ";"
         lines += literals + [""]
-    lines += [f"static const char *const axis_quality_budget_text = {budget_pointer};", ""]
+    lines += [f"static const char *const axis_quality_budget_text = {budget_pointer};", "",
+              "/* --placement's engine default (startup_policy.c) and every GPU split with a table. */",
+              f'static const char axis_default_split[] = "{SPLITS[0]}";',
+              f'static const char axis_split_names[] = "{", ".join(SPLITS)}";', ""]
+    # A cap is one entry per bounded knob, with that knob's parser least: it never lowers a knob below it
+    # (stage 3 review D5). A floor keeps its declared least.
+    lines.append("static const struct axis_bound axis_bounds[] = {")
+    for bound in registry.get("cross_axis_bounds", []):
+        floor = bound["kind"] == "floor"
+        for bounded in [bound["bounded"]] if floor else [[key] for key in bound["bounded"]]:
+            least = bound["least"] if floor else parser_least(bounded[0])
+            lines += [f'\t{{ {str(floor).lower()}, "{bound["bound"]}", "{bound.get("value", "")}", '
+                      f'"{bound.get("under", "")}",',
+                      f'\t  "{" ".join(bounded)}", {bound.get("offset", 0)}u, {least}u }},']
+    lines += ["};", ""]
     lines.append("static const struct axis_tier axis_tiers[] = {")
     for name, error_class, hold in tier_rows:
         lines.append(f'\t{{ "{name}", {error_class}, {hold} }},')
     lines += ["};", "", "static const struct axis_choice axis_choices[] = {"]
     for choice, pointers in choice_rows:
         values = ", ".join(json.dumps(value) for value in choice["values"])
-        lines += [f'\t{{ {{ {values} }}, "{choice["family"]}",',
+        lines += [f'\t{{ {{ {values} }}, "{choice["family"]}", "{choice["split"]}",',
                   "\t  " + ", ".join(pointers[:3]) + ",",
-                  "\t  " + ", ".join(pointers[3:]) + " },"]
+                  "\t  " + ", ".join(pointers[3:6]) + ",",
+                  "\t  " + ", ".join(pointers[6:9]) + ",",
+                  "\t  " + ", ".join(pointers[9:]) + f", {choice['serve_slots_exactly']}u }},"]
+    lines += ["};", "", "static const struct axis_base axis_bases[] = {"]
+    for split in SPLITS:
+        base = split_base(registry, split)
+        fields = [split, registry["splits"][split]["base"]["route"],
+                  "\n".join(base["settings"] + base["serve_settings"]),
+                  "\n".join(f"{key}={value}" for key, value in base["omitted"])]
+        lines.append("\t{")
+        for value in fields:
+            literals = c_literal_lines(value)
+            literals[-1] += ","
+            lines += literals
+        lines.append("\t},")
+    lines += ["};", "", "static const struct axis_retained_route axis_retained_routes[] = {"]
+    for route in registry["retained_routes"]:
+        fields = [route["id"], route["weight_family"],
+                  " / ".join(",".join(route["proposed_axes"][axis]) for axis in AXIS_NAMES),
+                  route["knob"], route["fallback"], route["constraints"], route["hold"]]
+        lines.append("\t{")
+        for value in fields:
+            literals = c_literal_lines(value)
+            literals[-1] += ","
+            lines += literals
+        lines.append("\t},")
     lines += ["};", "", "#endif", ""]
     if any(len(line.expandtabs(8)) > 120 for line in lines):
         raise ValueError("generated axis header exceeds the source line width")
     return "\n".join(lines)
+
+
+def split_tables(registry):
+    """Per GPU split: each axis value's knob set, its evidence and the route columns derived from that set."""
+    domains = {axis["name"]: axis["values"] for axis in registry["axes"]}
+    lines = ["", "## GPU split tables", "",
+             "`--placement` picks the GPU split; without it the split is PP5, the engine default. Each selected axis",
+             "value adds its knob set to the split's base. An unset axis takes balanced, so a run without axis flags",
+             "runs the split's all-balanced row, its base. No set pins the context or the slots: the raw defaults",
+             "serve as many sessions of 1M context as fit. `--axes=off` inserts nothing. Each knob belongs to one axis",
+             "per split. Under exact, the split's reference recipe is the whole configuration. Explicit knobs win over",
+             "every set. The last three columns derive from each set's own settings (`default`: the set leaves that",
+             "knob alone).", ""]
+    for split, spec in registry["splits"].items():
+        reference = spec["reference"]
+        lines += [f"### GPU split {split.upper()}", "",
+                  f"Weight family: {spec['weight_family']}. Exact: " +
+                  (f"the reference recipe `{reference}`, with concurrency single or unset." if reference else
+                   "held.") + " Base (from `" + spec["base"]["route"] + "`, for each knob no selected set gives): " +
+                  (" ".join(f"`{argument}`" for argument in split_base(registry, split)["settings"] +
+                            split_base(registry, split)["serve_settings"]) or "none") + ". " +
+                  spec["base"]["evidence"], "",
+                  "| Axis | Value | Knob set | Evidence | " + " | ".join(label for label, _ in ROUTE_PARAMETERS) + " |",
+                  "| --- | --- | --- | --- | --- | --- | --- |"]
+        for axis in AXIS_NAMES:
+            for value in domains[axis]:
+                hold = (registry["holds"]["vision"] if (axis, value) == ("category", "vision") else
+                        spec["holds"].get(axis, {}).get(value, ""))
+                entry = split_set(registry, split, axis, value)
+                if hold:
+                    cells = ["HELD", hold, split.upper(), "-", "-"]
+                elif (axis, value) == ("exactness", "exact"):
+                    cells = [f"`{reference}` (reference recipe)", "The reference recipe's evidence: see Knob values.",
+                             *route_parameters(registry["strategies"][reference])]
+                elif entry is None:
+                    cells = ["(empty)", "-", split.upper(), "default", "default"]
+                else:
+                    knobs = (f"`{entry['strategy']}`" + (" without " + ", ".join(f"`{key}`" for key in entry["drop"])
+                                                         if entry["drop"] else "") +
+                             ("; yields " + ", ".join(f"`{key}`" for key in entry["yields"]) +
+                              " where another set gives them" if entry["yields"] else "")
+                             if "strategy" in entry else
+                             " ".join(f"`{argument}`" for argument in entry["settings"] + entry["serve_settings"]))
+                    if entry.get("requires"):
+                        knobs += "; needs " + ", ".join(f"{other}={'/'.join(allowed)}"
+                                                        for other, allowed in entry["requires"].items())
+                    if entry.get("applies_with"):
+                        knobs += "; only with " + ", ".join(f"{other}={'/'.join(allowed)}"
+                                                            for other, allowed in entry["applies_with"].items())
+                    if entry.get("applies_with_session_slots"):
+                        knobs += (f"; on serve only at exactly `--session_slots={entry['applies_with_session_slots']}`"
+                                  " (otherwise the concurrency=balanced row)")
+                    columns = route_parameters(dict(
+                        settings=[f"--placement={split}", *entry["settings"]], serve_settings=entry["serve_settings"],
+                        generate_settings=[f"--placement={split}", *entry["generate_settings"]]
+                        if entry["generate_settings"] else []))
+                    if entry.get("same_as"):
+                        knobs = f"as {axis}={entry['same_as']}: " + knobs
+                    cells = [knobs, entry["evidence"], *columns]
+                lines.append(f"| {axis} | {value} | " + " | ".join(cells) + " |")
+        lines.append("")
+    return lines
 
 
 def markdown_text(registry, choices, registry_sha256):
@@ -559,20 +1079,43 @@ def markdown_text(registry, choices, registry_sha256):
         lines.append(f"| `--{axis['name']}` | " + " / ".join(axis["values"]) + f" | {axis['meaning']} |")
     lines += ["", "| Exactness tier | Error class | Current admission |", "| --- | --- | --- |"]
     for tier in registry["tiers"]:
-        admission = tier['hold'] or ('Original serial M1 rule below; EXL3 remains held.'
-                                     if tier['name'] == 'exact' else
-                                     'Current-arithmetic candidates; qualification scope below.')
+        admission = tier['hold'] or ("; ".join(
+            f"GPU split {split.upper()}: " + (f"the {registry['splits'][split]['reference']} recipe"
+                                              if registry["splits"][split]["reference"] else "holds exact")
+            for split in SPLITS) + "." if tier['name'] == 'exact' else
+                                     'Current-arithmetic knob sets per GPU split; scope below.')
         lines.append(f"| {tier['name']} | {tier['error_class']} | {admission} |")
-    lines += ["", "Original weights and EXL3 have separate admission records for every full tuple.",
-              "Original official-reference arithmetic is scoped to its admitted serial M1 recipe. EXL3 uses the label",
-              "**reference arithmetic (EXL3: not official-exact)** when compatible forms are qualified.", ""]
+    lines += ["", "Each GPU split has its own table below. Original official-reference arithmetic is scoped to its",
+              "admitted serial M1 recipe. EXL3 uses the label **reference arithmetic (EXL3: not official-exact)** when",
+              "compatible forms are qualified.", ""]
     for note in registry["notes"]:
         lines.append("- " + note)
+    lines += split_tables(registry)
+    lines += ["", "## Retained route proposals", "",
+              "These records are held metadata, never executable resolver settings. Tuple order is",
+              "category / exactness / concurrency / focus; listed values are proposals requiring the stated gates.", ""]
+    for route in registry["retained_routes"]:
+        scope = " / ".join(",".join(route["proposed_axes"][axis]) for axis in AXIS_NAMES)
+        lines += [f"### {route['id']}", "", f"Family: {route['weight_family']}. Proposed: `{scope}`.", "",
+                  f"Branch control: `{route['knob']}`. Old fallback: `{route['fallback']}`.", "",
+                  route["constraints"], "", "HOLD: " + route["hold"], ""]
+    lines += ["", "## Route parameters", "",
+              "Each route is described by three separate parameters, derived from its settings: the GPU split",
+              "(`--placement`: TP4_PRO is tensor parallel across the four CMP 170HX with the RTX PRO 6000 as a pipeline",
+              "stage, PP5 the five GPUs in pipeline, TP4_EXL3 tensor parallel across the four CMP 170HX), the pipeline",
+              "depth (`--pipeline_steps`: the steps in flight) and the serving slots (`--session_slots`). A generate value",
+              "that differs from the serve value follows in parentheses.", "",
+              "| Route | " + " | ".join(label for label, _ in ROUTE_PARAMETERS) + " |", "| --- | --- | --- | --- |"]
+    for name, strategy in registry["strategies"].items():
+        if name != "empty":
+            lines.append(f"| `{name}` | " + " | ".join(route_parameters(strategy)) + " |")
     lines += ["", "## Knob values", ""]
     for name, strategy in registry["strategies"].items():
         if name == "empty":
             continue
+        split, depth, slots = route_parameters(strategy)
         lines += [f"### {name}", "", strategy["description"], "",
+                  f"GPU split: {split}. Pipeline depth: {depth}. Serving slots: {slots}.", "",
                   f"Numerical class: `{strategy['numerical_class']}`. Declared lossy knobs: " +
                   (", ".join(f"`{knob}`" for knob in strategy["lossy_knobs"]) or "none") + ".", "",
                   "Each line below is one argv token; embedded spaces and semicolons stay in that token.", ""]
@@ -583,6 +1126,51 @@ def markdown_text(registry, choices, registry_sha256):
         lines += [strategy["evidence"], ""]
         if strategy["lossy_knobs"]:
             lines += [lossy_evidence(strategy, registry["quality_budget"]), ""]
+    lines += ["## Cross-axis rules", "",
+              "Five kinds of rule join the sets of one row; each is declared in axes.json and applied by the",
+              "generator or, for the slot count, by startup. A cap clamps a knob that one source sets above another",
+              "source's bound; a floor raises a knob below what another source's setting needs; a set may apply only",
+              "with values of another axis, and is left out elsewhere, never refused; a concurrency set may apply on",
+              "serve only at one final `--session_slots` count, and elsewhere the row runs its concurrency=balanced row;",
+              "a recipe may yield one of its knobs to the axis that owns it, so the recipe's measured value runs",
+              "wherever that axis's set of the row gives none. Startup prints each applied cap or floor after its key",
+              "on the `axes from` line.", "", "Caps and floors:", ""]
+    for bound in registry.get("cross_axis_bounds", []):
+        lines.append(f"- {bound['kind']}: `{bound['bound']}`" +
+                     (f"=`{bound['value']}` (under `{bound['under']}`) raises " if bound["kind"] == "floor" else
+                      " bounds ") + ", ".join(f"`{key}`" for key in bound["bounded"]) + ": " + bound["rule"])
+    lines += ["", "Sets that apply only with values of another axis:", ""]
+    lines += [f"- {split.upper()} {axis}={value}: only with " +
+              ", ".join(f"{other}={'/'.join(allowed)}" for other, allowed in entry["applies_with"].items())
+              for split, spec in registry["splits"].items() for axis, values in spec["sets"].items()
+              for value, entry in values.items() if entry.get("applies_with")] or ["- none"]
+    lines += ["", "Sets that apply on serve only at one serving slot count (elsewhere the row runs its",
+              "concurrency=balanced row, and startup says how many sessions fit):", ""]
+    lines += [f"- {split.upper()} {axis}={value}: only at exactly `--session_slots="
+              f"{entry['applies_with_session_slots']}`"
+              for split, spec in registry["splits"].items() for axis, values in spec["sets"].items()
+              for value, entry in values.items() if entry.get("applies_with_session_slots")] or ["- none"]
+    lines += ["", "Recipe knobs yielded to the axis that owns them:", ""]
+    lines += [f"- {split.upper()} {axis}={value} (`{entry['strategy']}`): " +
+              ", ".join(f"`{key}`" for key in entry["yields"])
+              for split, spec in registry["splits"].items() for axis, values in spec["sets"].items()
+              for value, entry in values.items() if entry.get("yields")] or ["- none"]
+    flagged = [choice for choice in choices if choice["bounds"]]
+    lines += ["", f"Rows with an applied cap or floor: {len(flagged) or 'none'}."]
+    for choice in flagged:
+        lines.append(f"- {choice['split'].upper()} " + "/".join(choice["values"]) + ": " + "; ".join(choice["bounds"]))
+    inactive = [choice for choice in choices if choice["inactive"]]
+    lines += ["", "## Inactive draft knobs", "",
+              "Each axis value's set is inserted on every row of its split. A set of draft knobs acts only with "
+              "speculation: its `axes from` line carries",
+              f"`{INACTIVE_DRAFT_NOTE}`, which startup prints only where the final speculation is off (a route "
+              "without DSpark, or an explicit `--speculative=0`). Every base runs DSpark, so the rows below are those "
+              "whose composition has none.", "",
+              f"Rows with inactive draft knobs: {len(inactive) or 'none'}."]
+    for choice in inactive:
+        lines.append(f"- {choice['split'].upper()} " + "/".join(choice["values"]) + ": " +
+                     ", ".join(choice["inactive"]))
+    lines += [""]
     lines += ["## Quality budget", "", registry["quality_budget"]["status"], ""]
     lines += [f"Budget admitted: `{str(registry['quality_budget']['admitted']).lower()}`.",
               "Required strata: " + ", ".join(registry["quality_budget"]["required_strata"]) + ".", "",
@@ -603,22 +1191,18 @@ def markdown_text(registry, choices, registry_sha256):
                   "concurrency-compromise hold. It cannot bypass tier, original-weight, vision or numerical",
                   "gates. A failed envelope returns the rule to a nonempty hold; the margin is not relaxed."]
     lines += ["", "## Complete tuple map", "",
-              f"The map contains {len(choices)} weight-family records across {len(choices) // 2} full tuples.",
-              "A held row never inserts its displayed candidate knobs.", "",
-              "| Category | Exactness | Concurrency | Focus | EXL3 knob set / admission | Original knob set / admission | Seven-bucket targets |",
-              "| --- | --- | --- | --- | --- | --- | --- |"]
+              f"The map contains {len(choices)} rows: {len(SPLITS)} GPU splits by {len(choices) // len(SPLITS)} full "
+              "tuples. Each cell names the axis values whose sets it inserts (raw: none). A held row inserts nothing.",
+              "",
+              "| Category | Exactness | Concurrency | Focus | " + " | ".join(split.upper() for split in SPLITS) +
+              " | Seven-bucket targets |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     grouped = {}
     for choice in choices:
-        grouped.setdefault(choice["values"], {})[choice["family"]] = choice
+        grouped.setdefault(choice["values"], {})[choice["split"]] = choice
     for values, variants in grouped.items():
-        exl3, original = variants["exl3"], variants["original"]
-        exl3_status = exl3["status"] + (f"; candidate `{exl3['strategy']}`" if exl3["strategy"] != "empty" else "")
-        if not exl3["hold"]:
-            label = "qualification candidate" if exl3["status"] == "qualification candidate" else "candidate"
-            exl3_status = f"`{exl3['strategy']}`; {exl3['numerical_class']} {label}"
-        original_status = original["status"] if original["hold"] else (
-            f"`{original['strategy']}`; {original['numerical_class']} candidate; see source-scoped GPU observations")
-        lines.append("| " + " | ".join([*values, exl3_status, original_status, exl3["buckets"]]) + " |")
+        cells = [variants[split]["status"] if variants[split]["hold"] else
+                 variants[split]["strategy"] + f"; {variants[split]['numerical_class']}" for split in SPLITS]
+        lines.append("| " + " | ".join([*values, *cells, variants[SPLITS[0]]["buckets"]]) + " |")
     lines += ["", "Hold conditions:", ""]
     for tier in registry["tiers"]:
         if tier["hold"]:
@@ -655,7 +1239,8 @@ def main():
                 raise SystemExit(f"generated axis output is stale: {path.relative_to(ROOT)}")
         else:
             write_generated(path, generated)
-    print(f"axis registry: {len(choices)} family records; {len(choices) // 2} full tuples; outputs current")
+    print(f"axis registry: {len(choices)} rows; {len(SPLITS)} GPU splits by {len(choices) // len(SPLITS)} full tuples; "
+          "outputs current")
 
 
 def write_generated(path, generated):

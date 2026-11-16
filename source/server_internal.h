@@ -3,20 +3,25 @@
 #ifndef SERVER_INTERNAL_H
 #define SERVER_INTERNAL_H
 
+#include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
 
 #include "anemone/server.h"
 #include "anemone/live_stats.h"
 #include "serving_cursor.h"
+#include "server_metrics.h"
 
-#define SERVER_SESSION_CAPACITY SERVING_SESSION_CAPACITY
-#define NO_CONNECTION SERVER_MOST_CONNECTIONS
-#define WAITING_SNAPSHOT_READY SERVER_SESSION_CAPACITY
-#define NO_WAITING_SNAPSHOT (WAITING_SNAPSHOT_READY + SERVER_SESSION_CAPACITY)
+#define NO_CONNECTION UINT32_MAX /* no connection's index */
+/* a waiting connection's snapshot prerequisite: its slot, READY + its slot once done, or none (any slot count) */
+#define WAITING_SNAPSHOT_READY SERVING_SLOTS_MOST
+#define NO_WAITING_SNAPSHOT (WAITING_SNAPSHOT_READY + SERVING_SLOTS_MOST)
+#define POLLS_BEFORE_CONNECTIONS 3u /* stop, events, listener */
 #define SERVER_IMAGE_IDENTITY_BYTES 32u
 #define SERVER_CACHE_NAMESPACE_BYTES 8192u
 #define SERVER_CACHE_FIELD_BYTES 512u
+#define SERVER_MESSAGES_OUTPUT_ERROR \
+	"unsupported tool output" /* last_error of a Messages adapter failure */
 
 /* Exact, tagged, length-delimited identity, never a credential or a filename hash. Fixed storage is zeroed;
  * only byte_count bytes participate in equality. Integer flags have defined validation when read from disk. */
@@ -37,9 +42,6 @@ struct cache_fork_hint {
 	char bytes[SERVER_CACHE_FIELD_BYTES + 1u];
 };
 
-_Static_assert(SERVER_SESSION_CAPACITY <= STATS_SLOT_CAPACITY,
-	       "connection and statistics storage cover every server slot");
-
 enum phase {
 	PHASE_FREE,
 	PHASE_READING,
@@ -57,6 +59,9 @@ struct connection {
 	double keep_alive_deadline; /* a stream's next event comment, if no piece goes before */
 	bool is_writing; /* output waits to be sent */
 	bool is_head_read;
+	uint32_t metrics_method, metrics_status, metrics_handler;
+	uint64_t metrics_response_bytes;
+	bool metrics_http_done, metrics_http_excluded;
 	bool authenticated_user; /* bound with live.user when the head is authorized; survives key reloads */
 	struct chat_buffer input;
 	struct chat_buffer
@@ -87,21 +92,23 @@ struct connection {
 };
 
 struct active_command {
-	uint32_t connection; /* NO_CONNECTION after disconnect; never rebind to a recycled descriptor */
 	uint32_t *token_ids; /* borrowed by worker until final TAKEN; NULL means free */
+	double metrics_first_seconds, metrics_last_seconds;
+	struct chat_images *images;
+	uint64_t fork_source_generation, fork_destination_generation;
+	struct live_request_record
+		disconnected_live; /* preserved until final TAKEN after its connection closes */
+	uint32_t connection; /* NO_CONNECTION after disconnect; never rebind to a recycled descriptor */
 	uint32_t request_tag;
 	uint32_t prompt_token_count; /* the prompt's tokens, the kept ones among them */
 	uint32_t generated_token_count; /* its token events so far */
 	uint32_t operation; /* 0, or its session command's (front_end_seam.h) */
 	int descriptor; /* a session command's file */
 	uint32_t reach_count; /* a load's: its snapshot's reach */
-	struct chat_images *images;
-	uint8_t image_identity[SERVER_IMAGE_IDENTITY_BYTES];
 	struct cache_namespace cache_namespace;
 	uint32_t fork_source_slot;
-	uint64_t fork_source_generation, fork_destination_generation;
-	struct live_request_record
-		disconnected_live; /* preserved until final TAKEN after its connection closes */
+	bool budgeted_reasoning;
+	uint8_t image_identity[SERVER_IMAGE_IDENTITY_BYTES];
 };
 
 /* What a session slot holds between commands, for the next to keep (prefix reuse): its tokens in order, those of
@@ -123,6 +130,10 @@ struct slot_history {
 };
 
 struct http_server {
+	bool anthropic_messages;
+	uint32_t reasoning_end_token;
+	const char *storage_replica_info;
+	size_t storage_replica_info_bytes;
 	int listener;
 	uint32_t stats_user_count;
 	struct server_keys_record keys; /* owned only by the HTTP poller */
@@ -136,28 +147,35 @@ struct http_server {
 	char *prompt; /* the template's output: the context's tokens at their longest */
 	uint32_t *encoded; /* the context's tokens */
 	uint32_t *histories; /* [session slot][context]: each slot's tokens */
-	struct tokenizer_cache *request_caches[SERVER_SESSION_CAPACITY];
-	struct cache_namespace request_cache_namespaces[SERVER_SESSION_CAPACITY];
+	/* [session slot], the engine's slots each (server_tables) */
+	struct tokenizer_cache **request_caches;
+	struct cache_namespace *request_cache_namespaces;
 	uint32_t next_request_cache; /* rotating replacement on a miss, independent of GPU slot ownership */
-	struct slot_history slot_histories[SERVER_SESSION_CAPACITY];
-	bool slot_read_leased
-		[SERVER_SESSION_CAPACITY]; /* poll-thread donor reservation until the clone final */
+	struct slot_history *slot_histories;
+	bool *slot_read_leased; /* poll-thread donor reservation until the clone final */
 	uint64_t commands_started;
 	/* Shared index storage interleaves bounded per-user FIFOs in arrival order; dispatch selects a user's first.
 	 * User ordinals come from lifetime statistics, so removing/reordering keys cannot rebind queued identities. */
 	uint32_t waiting[SERVER_MOST_WAITING], waiting_count, last_waiting_user;
 	uint32_t queue_depth, user_queue_depth, connection_limit;
-	struct active_command active[SERVER_SESSION_CAPACITY];
+	struct active_command *active;
 	uint32_t next_tag;
 	bool is_stopping;
 	int64_t started_seconds; /* of the server, for the answers' identifiers */
 	bool engine_failed;
-	struct connection connections[SERVER_MOST_CONNECTIONS];
+	struct connection
+		*connections; /* connection_limit of them (server_tables) */
+	struct pollfd *
+		polls; /* POLLS_BEFORE_CONNECTIONS + connection_limit: the run's */
+	uint32_t *polled; /* connection_limit: the connection of each poll behind the first */
 	struct session_store *store; /* the snapshots: NULL without a directory */
 	const char *session_directory; /* the options' */
 	uint64_t session_directory_bytes;
 	double idle_since; /* when the last command ended */
 	struct live_snapshot live;
+	struct engine_stats
+		sampled; /* the poller's copy for the sampler and the metrics, with the run's tables */
+	struct server_metrics metrics;
 	uint32_t finished_next;
 	uint64_t connections_seen;
 	uint32_t live_stats_interval_ms;
@@ -166,7 +184,8 @@ struct http_server {
 	double live_next_seconds, live_sample_seconds;
 	struct live_sampler_record live_sampler;
 	struct live_output *live_output;
-	const char *stats_card_order, *stats_placement; /* immutable while run executes */
+	const char *stats_card_order,
+		*stats_placement; /* immutable while run executes */
 	bool disable_prefix_reuse; /* options: no GPU prefix/session snapshot reuse */
 	uint32_t exact_prefix_reuse;
 	uint32_t session_fork;
@@ -196,6 +215,19 @@ uint32_t server_chosen_session_slot(const struct http_server *server,
 /* The poller owns request metadata and the finished ring. Only the detached output worker may write stderr;
  * it owns its heap mailbox after close, so a blocked terminal can never hold server shutdown or a refresh. */
 void server_stats_open(struct http_server *server, double now);
+/* The run's tables, sized from its engine's slots (description) and the queue depth: the per-slot tables, the
+ * connections (connection_limit = SERVER_CONNECTION_FACTOR * (slots + queue depth) + SERVER_CONNECTION_HEADROOM, each
+ * free) and the polls. OUT_OF_MEMORY or INVALID_ARGUMENT (no slots, or above SERVING_SLOTS_MOST) leaves them NULL.
+ * server_tables_free releases them (NULL-safe). */
+MUST_CHECK result_status server_tables(struct http_server *server);
+void server_tables_free(struct http_server *server);
+/* Whether the run's per-slot and connection tables exist: from server_tables to server_tables_free, which server_run
+ * brackets; nothing before it (server_open, config) or after it (server_close, the stop signal's pipe) reads them.
+ * Every access site that indexes them asserts it in builds with checking hooks (DESIGN_UNBOUNDED_SESSIONS.md §9). */
+bool server_tables_present(const struct http_server *server);
+/* The run's statistics tables (its engine's slots), before server_stats_open; freed by server_stats_tables_free. */
+MUST_CHECK result_status server_stats_tables(struct http_server *server);
+void server_stats_tables_free(struct http_server *server);
 /* Preflight the lifetime username bound before appending any names; false leaves aggregates unchanged. */
 bool server_stats_users_bind(struct http_server *server,
 			     const struct server_keys_record *keys);
@@ -214,10 +246,10 @@ void server_stats_final(struct http_server *server, uint32_t session_slot,
 			const struct generation_event *event, double now);
 void server_stats_output(struct http_server *server,
 			 struct connection *connection);
-void server_stats_refused(struct http_server *server, uint32_t status);
-void server_stats_rejected(struct http_server *server,
-			   struct connection *connection, uint32_t status,
-			   double now);
+/* Records one HTTP refusal; exporter 500s do not enter generation/user request statistics. */
+void server_stats_refused(struct http_server *server,
+			  struct connection *connection, uint32_t status,
+			  double now);
 MUST_CHECK result_status server_stats_json(struct http_server *server,
 					   double now,
 					   struct chat_buffer *output);

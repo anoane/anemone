@@ -37,8 +37,9 @@
  *   - Launches, block[1], block[2] and grid[2] 1, no dynamic shared memory: verify (1, 1) of
  *     VERIFY_MATCHES_THREADS; Markov bias (ceil(vocabulary_size / 8), 1) of DRAFT_MARKOV_THREADS, a
  *     warp an entry (BATCHED: ceil(vocabulary_size / 128), a warp 16 entries of every slot by m16n8k16 instructions
- *     over the 256 values, float32 sums in their order: a draft's arithmetic is its own); confidence (1, STEP_DRAFT_MOST) of DRAFT_CONFIDENCE_THREADS.
- *   - Records: fixed-width members, widest first, no padding, sizes asserted in both languages.
+ *     over the 256 values, float32 sums in their order: a draft's arithmetic is its own); confidence (1,
+ * STEP_DRAFT_MOST) of DRAFT_CONFIDENCE_THREADS.   - Records: fixed-width members, widest first, no padding, sizes
+ * asserted in both languages.
  */
 #ifndef DRAFT_RECORDS_H
 #define DRAFT_RECORDS_H
@@ -64,7 +65,7 @@
 	512u /* bfloat16 [256]: a row of W1 or W2, of the Markov rows */
 #define DRAFT_CONFIDENCE_THREADS 256u
 #define DRAFT_COLLAPSE_ROW_BYTES MODEL_HIDDEN_ROW_BYTES
-/* The flags of a BATCH program's draft walk of one verifier (model_seam.h; tp4_v3_claude), 0 for a thin step's:
+/* The flags of a BATCH program's draft walk of one verifier (model_seam.h; tp4_v3_b), 0 for a thin step's:
  *   ROUND_TABLE: the round of the verifier's session slot s at round_offset + s STEP_ROUND_BYTES (a table of
  *     round_capacity rounds); a verifier without a DRAFTS row writes no round, and its draft's step area and views
  *     hold no row, so no launch of its draft writes state and the confidence writes nothing.
@@ -126,7 +127,8 @@ struct draft_markov_bias_arguments {
 	uint64_t markov_offset; /* written: bfloat16 [256], the Markov row j */
 	uint32_t position; /* j */
 	uint32_t vocabulary_size; /* V: of the logits row and W2's rows */
-	uint32_t embedding_rows; /* W1's rows, the bound of the token: 0 for V (a vocabulary cut: the whole vocabulary) */
+	uint32_t embedding_rows; /* W1's rows, the bound of the token: 0 for V (a vocabulary cut: the whole
+				    vocabulary) */
 	uint32_t flags; /* 0, or DRAFT_BATCHED: the slots of position j (logits and Markov rows 8 a position) */
 };
 

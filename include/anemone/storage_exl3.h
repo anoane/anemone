@@ -40,5 +40,11 @@ enum exl3_read_mode {
 };
 void storage_exl3_read_mode(enum exl3_read_mode mode);
 const struct storage_operations_record *storage_for_path(const char *path);
+/* For device policy (a replica's duplicate-device test, the storage lines and keys): the file whose device holds a
+ * pack's bytes. For an .exl3map, the source of the most logical bytes, copied into output; the map itself when it
+ * holds the most (ties: the lowest source), so a map file on one drive over sources on another is described by
+ * theirs. Any other path, and a map that does not open as reader_open checks it: path itself, output untouched. */
+const char *storage_device_path(const char *path,
+				char output[EXL3_MAP_PATH_BYTES]);
 
 #endif

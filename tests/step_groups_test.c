@@ -89,7 +89,7 @@ static bool stand_in(const struct kernel_launch *launch, uint32_t card,
 		if (engram_gather_entry(engram, table, &ids[table], 1,
 					expected) != STATUS_OK ||
 		    memcmp(arena + GROUP_ENGRAM_OFFSET +
-				   table * ENGRAM_ROW_BYTES,
+				   (size_t)(table * ENGRAM_ROW_BYTES),
 			   expected, sizeof(expected)) != 0)
 			return false;
 	}

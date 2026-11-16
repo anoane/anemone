@@ -144,19 +144,31 @@ static void snapshot_removed(struct session_store *store, uint32_t index)
 static void snapshot_read(struct session_store *store, const char *file_name)
 {
     char path[PATH_CAPACITY];
-    struct snapshot_head head;
+    struct snapshot_head head = { 0 };
     struct stat status;
     const size_t name_length = strlen(file_name) - strlen(SNAPSHOT_SUFFIX);
     struct snapshot *const snapshot = &store->snapshots[store->snapshot_count];
-    if (name_length >= NAME_CAPACITY || store->snapshot_count == MOST_SNAPSHOTS ||
-        snprintf(path, sizeof(path), "%s/%s", store->directory, file_name) >= (int)sizeof(path)) {
-        return;
+    if (name_length >= NAME_CAPACITY ||
+	store->snapshot_count == MOST_SNAPSHOTS ||
+	snprintf(path, sizeof(path), "%s/%s", store->directory, file_name) >=
+		(int)sizeof(path)) {
+	    return;
     }
-    const int descriptor = open(path, O_RDONLY | O_CLOEXEC);
-    const bool has_head = descriptor >= 0 && bytes_moved(descriptor, &head, sizeof(head), 0, false);
-    const bool other_version = has_head && memcmp(head.magic, SNAPSHOT_MAGIC, SNAPSHOT_MAGIC_BYTES) == 0 &&
-                               head.version != SNAPSHOT_VERSION;
-    bool fits = has_head && fstat(descriptor, &status) == 0 &&
+    const int descriptor =
+	    open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+    const bool has_head =
+	    descriptor >= 0 && fstat(descriptor, &status) == 0 &&
+	    S_ISREG(status.st_mode) &&
+	    bytes_moved(descriptor, &head, sizeof(head), 0, false);
+    const bool other_version =
+	    has_head &&
+	    memcmp(head.magic, SNAPSHOT_MAGIC, SNAPSHOT_MAGIC_BYTES) == 0 &&
+	    head.version != SNAPSHOT_VERSION;
+    /* uint32 token_count times four plus this fixed header fits uint64_t.
+     * Compare the hostile payload by subtraction before allocating tokens. */
+    const uint64_t front_bytes =
+	    sizeof(head) + (uint64_t)head.token_count * sizeof(uint32_t);
+    bool fits = has_head &&
 		memcmp(head.magic, SNAPSHOT_MAGIC, SNAPSHOT_MAGIC_BYTES) == 0 &&
 		head.version == SNAPSHOT_VERSION &&
 		head.identity == store->identity && head.token_count != 0 &&
@@ -168,14 +180,15 @@ static void snapshot_read(struct session_store *store, const char *file_name)
 			SERVER_CACHE_NAMESPACE_BYTES &&
 		head.cache_namespace.has_session <= 1 &&
 		head.cache_namespace.bytes[0] < SERVER_CACHE_SCOPES &&
-		head.payload_bytes != 0 &&
-		(uint64_t)status.st_size ==
-			sizeof(head) +
-				(uint64_t)head.token_count * sizeof(uint32_t) +
-				head.payload_bytes;
-    uint32_t *const token_ids = fits ? malloc((size_t)head.token_count * sizeof(uint32_t)) : NULL;
+		head.payload_bytes != 0 && status.st_size > 0 &&
+		(uint64_t)status.st_size > front_bytes &&
+		head.payload_bytes == (uint64_t)status.st_size - front_bytes;
+    uint32_t *const token_ids =
+	    fits ? malloc((size_t)head.token_count * sizeof(uint32_t)) : NULL;
     fits = token_ids != NULL &&
-           bytes_moved(descriptor, token_ids, (size_t)head.token_count * sizeof(uint32_t), sizeof(head), false);
+	   bytes_moved(descriptor, token_ids,
+		       (size_t)head.token_count * sizeof(uint32_t),
+		       sizeof(head), false);
     if (descriptor >= 0) {
         (void)close(descriptor);
     }
@@ -196,45 +209,66 @@ static void snapshot_read(struct session_store *store, const char *file_name)
     store->snapshot_count++;
 }
 
+/* Only the effective owner may replace entries in either session directory. */
+static bool private_directory(const char *path)
+{
+	struct stat status;
+	return (mkdir(path, DIRECTORY_MODE) == 0 || errno == EEXIST) &&
+	       lstat(path, &status) == 0 && S_ISDIR(status.st_mode) &&
+	       status.st_uid == geteuid() &&
+	       (status.st_mode & (S_IWGRP | S_IWOTH)) == 0;
+}
+
 result_status server_sessions_open(struct http_server *server)
 {
-    if (server->session_directory == NULL) {
-        return OK;
-    }
-    struct session_store *const store = calloc(1, sizeof(*store));
-    if (store == NULL) {
-	    return STATUS_OUT_OF_MEMORY;
-    }
-    const bool has_path = snprintf(store->directory, sizeof(store->directory), "%s/%s", server->session_directory,
-                                   SNAPSHOT_SUBDIRECTORY) < (int)sizeof(store->directory);
-    DIR *const directory = !has_path ||
-                          (mkdir(server->session_directory, DIRECTORY_MODE) != 0 && errno != EEXIST) ||
-                          (mkdir(store->directory, DIRECTORY_MODE) != 0 && errno != EEXIST)
-                              ? NULL : opendir(store->directory);
-    if (directory == NULL) {
-	    LOG_ERROR("server: the session directory cannot be opened");
-	    free(store);
-	    return STATUS_INPUT_OUTPUT_ERROR;
-    }
-    store->identity = hash_of(server->description.snapshot_identity ^ HASH_OFFSET,
-                              server->description.front_end_tables, server->description.front_end_table_byte_count);
-    store->byte_budget = server->session_directory_bytes;
-    store->context_limit = server->description.context_token_limit;
-    for (const struct dirent *entry = readdir(directory); entry != NULL; entry = readdir(directory)) {
-        const size_t length = strlen(entry->d_name);
-        char path[PATH_CAPACITY];
-        if (length > strlen(SNAPSHOT_SUFFIX) &&
-            strcmp(entry->d_name + length - strlen(SNAPSHOT_SUFFIX), SNAPSHOT_SUFFIX) == 0) {
-            snapshot_read(store, entry->d_name);
-        } else if (length > strlen(PARTIAL_SUFFIX) &&
-                   strcmp(entry->d_name + length - strlen(PARTIAL_SUFFIX), PARTIAL_SUFFIX) == 0 &&
-                   snprintf(path, sizeof(path), "%s/%s", store->directory, entry->d_name) < (int)sizeof(path)) {
-            (void)unlink(path);                      /* a save that never ended */
-        }
-    }
-    (void)closedir(directory);
-    server->store = store;
-    return OK;
+	if (server->session_directory == NULL) {
+		return OK;
+	}
+	struct session_store *const store = calloc(1, sizeof(*store));
+	if (store == NULL) {
+		return STATUS_OUT_OF_MEMORY;
+	}
+	const bool has_path =
+		snprintf(store->directory, sizeof(store->directory), "%s/%s",
+			 server->session_directory,
+			 SNAPSHOT_SUBDIRECTORY) < (int)sizeof(store->directory);
+	DIR *const directory =
+		!has_path || !private_directory(server->session_directory) ||
+				!private_directory(store->directory) ?
+			NULL :
+			opendir(store->directory);
+	if (directory == NULL) {
+		LOG_ERROR("server: the session directory cannot be opened");
+		free(store);
+		return STATUS_INPUT_OUTPUT_ERROR;
+	}
+	store->identity =
+		hash_of(server->description.snapshot_identity ^ HASH_OFFSET,
+			server->description.front_end_tables,
+			server->description.front_end_table_byte_count);
+	store->byte_budget = server->session_directory_bytes;
+	store->context_limit = server->description.context_token_limit;
+	for (const struct dirent *entry = readdir(directory); entry != NULL;
+	     entry = readdir(directory)) {
+		const size_t length = strlen(entry->d_name);
+		char path[PATH_CAPACITY];
+		if (length > strlen(SNAPSHOT_SUFFIX) &&
+		    strcmp(entry->d_name + length - strlen(SNAPSHOT_SUFFIX),
+			   SNAPSHOT_SUFFIX) == 0) {
+			snapshot_read(store, entry->d_name);
+		} else if (length > strlen(PARTIAL_SUFFIX) &&
+			   strcmp(entry->d_name + length -
+					  strlen(PARTIAL_SUFFIX),
+				  PARTIAL_SUFFIX) == 0 &&
+			   snprintf(path, sizeof(path), "%s/%s",
+				    store->directory,
+				    entry->d_name) < (int)sizeof(path)) {
+			(void)unlink(path); /* a save that never ended */
+		}
+	}
+	(void)closedir(directory);
+	server->store = store;
+	return OK;
 }
 
 void server_sessions_close(struct http_server *server)
@@ -259,7 +293,7 @@ static bool snapshot_matches(int descriptor, const struct session_store *store,
 	struct snapshot_head head;
 	struct stat status;
 	const uint64_t front_bytes = sizeof(head) + (uint64_t)token_bytes;
-	return fstat(descriptor, &status) == 0 &&
+	return fstat(descriptor, &status) == 0 && S_ISREG(status.st_mode) &&
 	       (uint64_t)status.st_size == snapshot->file_bytes &&
 	       snapshot->file_bytes > front_bytes &&
 	       bytes_moved(descriptor, &head, sizeof(head), 0, false) &&
@@ -286,6 +320,7 @@ static bool snapshot_matches(int descriptor, const struct session_store *store,
 static bool session_started(struct http_server *server, uint32_t session_slot,
 			    uint32_t operation, uint32_t snapshot)
 {
+    ASSERT(server_tables_present(server));
     struct session_store *const store = server->store;
     struct slot_history *const history = &server->slot_histories[session_slot];
     const bool is_save = operation == SESSION_SAVE;
@@ -334,7 +369,8 @@ static bool session_started(struct http_server *server, uint32_t session_slot,
 			   token_count);
 	    descriptor = path_of(store, store->saving, PARTIAL_SUFFIX, path) ?
 				 open(path,
-				      O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+				      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC |
+					      O_NOFOLLOW,
 				      FILE_MODE) :
 				 -1;
 	    if (descriptor >= 0 &&
@@ -346,18 +382,22 @@ static bool session_started(struct http_server *server, uint32_t session_slot,
 		    (void)unlink(path);
 		    descriptor = -1;
 	    }
-    } else if (token_ids != NULL && path_of(store, store->snapshots[snapshot].name, SNAPSHOT_SUFFIX, path)) {
-        descriptor = open(path, O_RDONLY | O_CLOEXEC);
-	is_replaced = descriptor >= 0 &&
-		      !snapshot_matches(descriptor, store,
-					&store->snapshots[snapshot], token_ids,
-					token_bytes);
-	if (descriptor >= 0 &&
-	    (is_replaced || lseek(descriptor, payload, SEEK_SET) != payload)) {
-		(void)close(descriptor);
-		descriptor = -1;
-	}
-	store->snapshots[snapshot].last_used = ++store->uses;
+    } else if (token_ids != NULL &&
+	       path_of(store, store->snapshots[snapshot].name, SNAPSHOT_SUFFIX,
+		       path)) {
+	    descriptor =
+		    open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+	    is_replaced = descriptor >= 0 &&
+			  !snapshot_matches(descriptor, store,
+					    &store->snapshots[snapshot],
+					    token_ids, token_bytes);
+	    if (descriptor >= 0 &&
+		(is_replaced ||
+		 lseek(descriptor, payload, SEEK_SET) != payload)) {
+		    (void)close(descriptor);
+		    descriptor = -1;
+	    }
+	    store->snapshots[snapshot].last_used = ++store->uses;
     }
     const uint32_t request_tag = server_next_tag(server);
     const struct session_command command = {
@@ -418,11 +458,13 @@ static bool session_before(struct http_server *server, uint32_t session_slot,
 			   uint32_t kept, const uint8_t *image_identity,
 			   const struct cache_namespace *identity)
 {
-    struct session_store *const store = server->store;
-    const struct slot_history *const history = &server->slot_histories[session_slot];
-    if (store == NULL) {
-        return false;
-    }
+	ASSERT(server_tables_present(server));
+	struct session_store *const store = server->store;
+	const struct slot_history *const history =
+		&server->slot_histories[session_slot];
+	if (store == NULL) {
+		return false;
+	}
     const bool same =
 	    server_cache_namespace_equal(&history->cache_namespace, identity);
     if (history->processed_count - history->saved_count >=
@@ -576,14 +618,16 @@ static void save_ended(struct session_store *store, int descriptor, bool is_save
 bool server_session_final(struct http_server *server, uint32_t session_slot,
 			  const struct generation_event *event)
 {
-    struct active_command *const active = &server->active[session_slot];
-    struct slot_history *const history = &server->slot_histories[session_slot];
-    struct session_store *const store = server->store;
-    const bool is_saved = event->event_kind ==
-			  GENERATION_EVENT_FINISHED_AT_LIMIT;
-    if (active->operation == 0 || store == NULL) {
-        return false;
-    }
+	ASSERT(server_tables_present(server));
+	struct active_command *const active = &server->active[session_slot];
+	struct slot_history *const history =
+		&server->slot_histories[session_slot];
+	struct session_store *const store = server->store;
+	const bool is_saved = event->event_kind ==
+			      GENERATION_EVENT_FINISHED_AT_LIMIT;
+	if (active->operation == 0 || store == NULL) {
+		return false;
+	}
     if (active->operation == SESSION_SAVE) {
 	    save_ended(store, active->descriptor, is_saved);
 	    history->saved_count =

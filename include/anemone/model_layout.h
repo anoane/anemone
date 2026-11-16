@@ -103,12 +103,14 @@
  * one layer fewer, and so on). */
 /* engine.c's exact plan: a full chunk of at least so many rows lies before a tail of at least as many */
 #define MODEL_FULL_CONE_LEAST_ROWS 256u
-#define MODEL_CONE_LAYERS(behind)                                   \
-	(((behind) + MODEL_WINDOW - 2u) / (MODEL_WINDOW - 1u) <     \
-			 MODEL_LAYERS - MODEL_DECODER_FIRST_LAYER ? \
-		 MODEL_LAYERS - MODEL_DECODER_FIRST_LAYER -         \
-			 ((behind) + MODEL_WINDOW - 2u) /           \
-				 (MODEL_WINDOW - 1u) :              \
+/* the rows before its own a row's window reads */
+#define MODEL_WINDOW_BEHIND (MODEL_WINDOW - 1u)
+#define MODEL_CONE_LAYERS(behind)                                      \
+	(((behind) + MODEL_WINDOW_BEHIND - 1u) / MODEL_WINDOW_BEHIND < \
+			 MODEL_LAYERS - MODEL_DECODER_FIRST_LAYER ?    \
+		 MODEL_LAYERS - MODEL_DECODER_FIRST_LAYER -            \
+			 ((behind) + MODEL_WINDOW_BEHIND - 1u) /       \
+				 MODEL_WINDOW_BEHIND :                 \
 		 0u)
 #define MODEL_LOGITS_MOST_ROWS \
 	128u /* ours: a gate's flagged rows (wide_prefill.md 2.1, 8) */

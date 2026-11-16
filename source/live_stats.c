@@ -444,7 +444,7 @@ static void request_engine(struct live_writer *writer,
 	}
 	const struct engine_slot_stats *const current_slot =
 		request->slot < snapshot->engine.slots_total &&
-				request->slot < STATS_SLOT_CAPACITY ?
+				request->slot < snapshot->slot_room ?
 			&snapshot->engine.slots[request->slot] :
 			NULL;
 	const bool same_request =
@@ -749,15 +749,128 @@ static void sessions(struct live_writer *writer,
 	write_text(writer->output, "]");
 }
 
+result_status live_snapshot_tables(struct live_snapshot *snapshot,
+				   uint32_t slot_count, uint32_t request_count)
+{
+	if (snapshot == NULL || slot_count == 0) {
+		return STATUS_INVALID_ARGUMENT;
+	}
+	result_status status =
+		engine_stats_tables(&snapshot->engine, slot_count);
+	snapshot->sessions = calloc(slot_count, sizeof(*snapshot->sessions));
+	snapshot->requests = calloc(request_count != 0 ? request_count : 1u,
+				    sizeof(*snapshot->requests));
+	for (uint32_t window = 0; window < LIVE_WINDOW_COUNT; window++) {
+		snapshot->windows[window].slots = calloc(
+			slot_count, sizeof(*snapshot->windows[window].slots));
+		snapshot->windows[window].slot_room = slot_count;
+		status = snapshot->windows[window].slots == NULL ?
+				 STATUS_OUT_OF_MEMORY :
+				 status;
+	}
+	if (status != STATUS_OK || snapshot->sessions == NULL ||
+	    snapshot->requests == NULL) {
+		live_snapshot_tables_free(snapshot);
+		return status != STATUS_OK ? status : STATUS_OUT_OF_MEMORY;
+	}
+	snapshot->slot_room = slot_count;
+	snapshot->request_room = request_count;
+	return STATUS_OK;
+}
+
+void live_snapshot_tables_free(struct live_snapshot *snapshot)
+{
+	if (snapshot == NULL) {
+		return;
+	}
+	engine_stats_tables_free(&snapshot->engine);
+	free(snapshot->sessions);
+	free(snapshot->requests);
+	snapshot->sessions = NULL;
+	snapshot->requests = NULL;
+	snapshot->slot_room = snapshot->request_room = 0;
+	for (uint32_t window = 0; window < LIVE_WINDOW_COUNT; window++) {
+		free(snapshot->windows[window].slots);
+		snapshot->windows[window].slots = NULL;
+		snapshot->windows[window].slot_room = 0;
+	}
+}
+
+result_status live_snapshot_copy(struct live_snapshot *output,
+				 const struct live_snapshot *input)
+{
+	const uint32_t slots = input != NULL ? input->engine.slots_total : 0;
+	if (input == NULL || output == NULL || slots > output->slot_room ||
+	    input->request_count > output->request_room ||
+	    slots > input->slot_room ||
+	    input->request_count > input->request_room) {
+		return STATUS_INVALID_ARGUMENT;
+	}
+	for (uint32_t window = 0; window < LIVE_WINDOW_COUNT; window++) {
+		if (slots > output->windows[window].slot_room ||
+		    slots > input->windows[window].slot_room) {
+			return STATUS_INVALID_ARGUMENT;
+		}
+	}
+	/* output's tables, which keep their place */
+	struct engine_stats engine = { .slot_room = output->engine.slot_room,
+				       .slots = output->engine.slots,
+				       .sessions = output->engine.sessions };
+	const result_status status = engine_stats_copy(&engine, &input->engine);
+	if (status != STATUS_OK) {
+		return status;
+	}
+	const uint32_t slot_room = output->slot_room,
+		       request_room = output->request_room;
+	struct live_session *const sessions = output->sessions;
+	struct live_request_record *const requests = output->requests;
+	struct live_slot_window *window_slots[LIVE_WINDOW_COUNT];
+	uint32_t window_rooms[LIVE_WINDOW_COUNT];
+	for (uint32_t window = 0; window < LIVE_WINDOW_COUNT; window++) {
+		window_slots[window] = output->windows[window].slots;
+		window_rooms[window] = output->windows[window].slot_room;
+	}
+	*output = *input;
+	output->engine = engine;
+	output->slot_room = slot_room;
+	output->request_room = request_room;
+	output->sessions = sessions;
+	output->requests = requests;
+	for (uint32_t window = 0; window < LIVE_WINDOW_COUNT; window++) {
+		struct live_window_record *const own = &output->windows[window];
+		own->slot_room = window_rooms[window];
+		own->slots = window_slots[window];
+		if (slots != 0) {
+			memcpy(own->slots, input->windows[window].slots,
+			       (size_t)slots * sizeof(*own->slots));
+		}
+	}
+	if (slots != 0) {
+		memcpy(output->sessions, input->sessions,
+		       (size_t)slots * sizeof(*output->sessions));
+	}
+	if (input->request_count != 0) {
+		memcpy(output->requests, input->requests,
+		       (size_t)input->request_count *
+			       sizeof(*output->requests));
+	}
+	return STATUS_OK;
+}
+
 result_status live_stats_json_entry(const struct live_snapshot *snapshot,
 				    struct chat_buffer *output)
 {
 	if (snapshot == NULL || output == NULL ||
-	    snapshot->request_count > LIVE_STATS_REQUEST_CAPACITY ||
+	    snapshot->request_count > snapshot->request_room ||
+	    (snapshot->request_count != 0 && snapshot->requests == NULL) ||
 	    snapshot->finished_count > LIVE_STATS_FINISHED_CAPACITY ||
 	    snapshot->user_count > SERVER_MOST_USERS ||
 	    snapshot->engine.card_count > BACKEND_MAXIMUM_CARDS ||
-	    snapshot->engine.slots_total > STATS_SLOT_CAPACITY) {
+	    snapshot->engine.slots_total > snapshot->slot_room ||
+	    snapshot->engine.slots_total > snapshot->engine.slot_room ||
+	    (snapshot->engine.slots_total != 0 &&
+	     (snapshot->sessions == NULL || snapshot->engine.slots == NULL ||
+	      snapshot->engine.sessions == NULL))) {
 		return STATUS_INVALID_ARGUMENT;
 	}
 	output->count = 0;
@@ -1056,51 +1169,66 @@ static void text_word(struct text_writer *writer, const char *word)
 
 static bool array_has_no_objects(struct json_value value)
 {
-	size_t cursor = value.begin;
-	struct json_value item;
-	while (json_next(value, &cursor, NULL, &item)) {
-		if (item.text[item.begin] == '{' ||
-		    (item.text[item.begin] == '[' &&
-		     !array_has_no_objects(item))) {
-			return false;
-		}
-	}
-	return true;
+	return !json_has_unquoted(value, "{");
 }
 
 static void text_value(struct text_writer *writer, struct json_value value,
 		       uint32_t depth)
 {
+	/* At most 128 frames (6144 bytes on x86-64), owned by this call. */
+	struct text_frame {
+		struct json_value value;
+		size_t cursor;
+		uint64_t index;
+		uint32_t saved_indent;
+		bool entered;
+	} frames[JSON_MAXIMUM_DEPTH];
 	if (depth >= JSON_MAXIMUM_DEPTH) {
-		return; /* the checked document cannot contain a deeper container */
-	}
-	const bool is_object = value.text[value.begin] == '{';
-	const bool is_array = value.text[value.begin] == '[';
-	if (!is_object && !is_array) {
-		text_bytes(writer, value.text + value.begin,
-			   value.end - value.begin);
-		text_word(writer, "\n");
 		return;
 	}
-	if (is_array && array_has_no_objects(value)) {
-		text_bytes(writer, value.text + value.begin,
-			   value.end - value.begin);
-		text_word(writer, "\n");
-		return;
-	}
-	size_t cursor = value.begin;
-	struct json_value key, item;
-	uint64_t index = 0;
-	while (json_next(value, &cursor, &key, &item)) {
+	uint32_t count = 1;
+	frames[0] = (struct text_frame){ .value = value,
+					 .cursor = value.begin,
+					 .saved_indent = writer->indent };
+	while (count != 0) {
+		struct text_frame *const frame = &frames[count - 1u];
+		const bool is_object = frame->value.text[frame->value.begin] ==
+				       '{';
+		const bool is_array = frame->value.text[frame->value.begin] ==
+				      '[';
+		if (!frame->entered) {
+			frame->entered = true;
+			if ((!is_object && !is_array) ||
+			    (is_array && array_has_no_objects(frame->value))) {
+				text_bytes(
+					writer,
+					frame->value.text + frame->value.begin,
+					frame->value.end - frame->value.begin);
+				text_word(writer, "\n");
+				writer->indent = frame->saved_indent;
+				count--;
+				continue;
+			}
+		}
+		struct json_value key, item;
+		if (!json_next(frame->value, &frame->cursor, &key, &item)) {
+			if (frame->index == 0) {
+				text_word(writer, is_object ? "{}\n" : "[]\n");
+			}
+			writer->indent = frame->saved_indent;
+			count--;
+			continue;
+		}
 		if (is_object) {
 			text_bytes(writer, key.text + key.begin + 1u,
 				   key.end - key.begin - JSON_QUOTES_BYTES);
 		} else {
 			char number[NUMBER_BYTES];
-			const int count = snprintf(number, sizeof(number),
-						   "[%" PRIu64 "]", index);
-			if (count > 0 && (size_t)count < sizeof(number)) {
-				text_bytes(writer, number, (size_t)count);
+			const int written = snprintf(number, sizeof(number),
+						     "[%" PRIu64 "]",
+						     frame->index);
+			if (written > 0 && (size_t)written < sizeof(number)) {
+				text_bytes(writer, number, (size_t)written);
 			} else {
 				writer->output->is_short = true;
 			}
@@ -1116,12 +1244,17 @@ static void text_value(struct text_writer *writer, struct json_value value,
 						 saved_indent + INDENT_COLUMNS :
 						 saved_indent;
 		}
-		text_value(writer, item, depth + 1u);
-		writer->indent = saved_indent;
-		index++;
-	}
-	if (index == 0) {
-		text_word(writer, is_object ? "{}\n" : "[]\n");
+		frame->index++;
+		if (count < JSON_MAXIMUM_DEPTH - depth) {
+			frames[count] =
+				(struct text_frame){ .value = item,
+						     .cursor = item.begin,
+						     .saved_indent =
+							     saved_indent };
+			count++;
+		} else {
+			writer->indent = saved_indent;
+		}
 	}
 }
 

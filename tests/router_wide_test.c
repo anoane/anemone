@@ -146,7 +146,10 @@ static void capture_begin(void)
 static void capture_end(char *text, size_t text_capacity)
 {
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, text_capacity - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    text_capacity) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';
@@ -459,7 +462,8 @@ static void test_launches(void)
 				       memcmp(made->argument,
 					      launches[0].argument,
 					      RECORD_BYTES) == 0,
-			       "select, count, place and jobs: their kernels, grids and blocks, one record, zeros behind");
+			       "select, count, place and jobs: their kernels, grids and blocks, one record, zeros "
+			       "behind");
 		}
 	    memcpy(&record, launches[0].argument, sizeof(record));
 	    const struct router_wide_description *const description =
@@ -501,12 +505,16 @@ static void test_small_launches(void)
     for (size_t index = 0; index < COUNT_OF(row_counts); index++) {
         const uint32_t row_count = row_counts[index];
 	case_make(&test_case, row_count, LINEAR_ORDER_REFERENCE);
-	expect(case_prepare(&test_case, wide) == STATUS_OK &&
-		       router_wide_small_prepare(&test_case.description,
-						 test_case.arena_byte_count,
-						 &test_case.kernels,
-						 launches) == STATUS_OK,
-	       "both accepted");
+	const bool accepted =
+		case_prepare(&test_case, wide) == STATUS_OK &&
+		router_wide_small_prepare(&test_case.description,
+					  test_case.arena_byte_count,
+					  &test_case.kernels,
+					  launches) == STATUS_OK;
+	expect(accepted, "both accepted");
+	if (!accepted) {
+		continue;
+	}
 	expect(memcmp(&launches[0], &wide[0], sizeof(launches[0])) == 0 && launches[1].kernel == WIDE_SMALL_HANDLE &&
                    launches[1].grid[DIMENSION_X] == 1 && launches[1].grid[DIMENSION_Y] == 1 &&
                    launches[1].block[DIMENSION_X] == SORT_THREADS &&

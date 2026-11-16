@@ -12,11 +12,11 @@
  *     reasoning_content, tool_calls and tool_call_id kept as the template renders them; name ignored), tools (an
  *     array the template renders on the first message; empty: none), tool_choice ("auto", or "none": the tools are
  *     not rendered), stream, stream_options.include_usage, max_tokens and max_completion_tokens (the smaller),
- *     temperature 0 to 2, top_p in (0, 1], seed (0 to 2^64 - 1), stop (a string or up to CHAT_MOST_STOPS of
- *     1 to CHAT_MOST_STOP_BYTES bytes), n (1), reasoning_effort ("none" and "off" 0, "minimal" and "low" 50,
- *     "medium", "high" and "xhigh" 75, "max" 100, or 0 to 100; 0, "none" and "off" turn thinking off). Null keeps
- *     the default. The canonical 1017 encoder names low, high and max; minimal, medium and xhigh are API aliases.
- *     DeepSeek thinking requires an object
+ *     temperature 0 to 2, top_p in (0, 1], top_k integer 0..SAMPLER_MOST_VOCABULARY (0 off), seed (0 to 2^64 - 1), stop
+ * (a string or up to CHAT_MOST_STOPS of     1 to CHAT_MOST_STOP_BYTES bytes), n (1), reasoning_effort ("none" and "off"
+ * 0, "minimal" and "low" 50,     "medium", "high" and "xhigh" 75, "max" 100, or 0 to 100; 0, "none" and "off" turn
+ * thinking off). Null keeps     the default. The canonical 1017 encoder names low, high and max; minimal, medium and
+ * xhigh are API aliases.     DeepSeek thinking requires an object
  *     holding only type "enabled" or "disabled" (null is malformed). Disabled overrides even a positive effort,
  *     independently of member order; enabled uses the request's effort or server default, refusing zero with 400.
  *     store accepts false only (no stored-response API), parallel_tool_calls true only (no single-call constraint),
@@ -97,7 +97,9 @@ enum chat_route {
 	CHAT_ROUTE_MODELS,
 	CHAT_ROUTE_COMPLETIONS,
 	CHAT_ROUTE_STATS,
-	CHAT_ROUTE_RESPONSES
+	CHAT_ROUTE_RESPONSES,
+	CHAT_ROUTE_METRICS,
+	CHAT_ROUTE_MESSAGES
 };
 
 enum http_status {
@@ -140,6 +142,7 @@ struct chat_request {
 		tools_end; /* the tools array to render, a span of the body (equal: none) */
 	uint64_t seed;
 	uint32_t max_tokens;
+	uint32_t top_k, thinking_budget, thinking_adaptive_share;
 	uint32_t reasoning_effort; /* 0: thinking off; else 1 to 100 */
 	uint32_t draft_usage; /* enum chat_draft_usage */
 	float temperature;
@@ -152,6 +155,7 @@ struct chat_request {
 	bool includes_usage;
 	bool is_seeded; /* seed was given: by the request, or as the server's default */
 	bool uses_model_alias; /* the body named the alias; absent/null model is canonical */
+	bool is_messages; /* native Messages adapter, never an HTTP setting */
 	bool is_responses; /* server route, never an HTTP setting */
 	bool tools_declared; /* nonempty tools, including when tool_choice is none */
 };
@@ -167,9 +171,17 @@ struct chat_refusal {
 
 /* Responses formatting is private; the same answer decoder owns its optional per-connection state. */
 struct server_responses_output;
+struct server_messages_output {
+	uint32_t index;
+	bool text_open, failed, reasoning, active;
+	char *scratch; /* poller-owned existing prompt storage, borrowed synchronously */
+	size_t scratch_capacity;
+};
 
 /* An answer on its way. */
 struct chat_answer {
+	struct server_messages_output messages;
+	uint32_t matched_stop; /* stop_count sentinel until a content stop matches */
 	const struct chat_buffer *
 		pending_responses_fields; /* begin consumes it; owner keeps it until finish */
 	struct server_responses_output
@@ -229,11 +241,18 @@ void chat_answer_begin(struct chat_answer *answer,
 		       const struct chat_request *request,
 		       const char *model_name, const char *identifier,
 		       int64_t created_seconds, uint32_t prompt_token_count);
+bool chat_answer_token_control(struct chat_answer *answer, const char *bytes,
+			       uint32_t byte_count, bool closes_reasoning);
 bool chat_answer_token(struct chat_answer *answer, const char *bytes,
 		       uint32_t byte_count);
 void chat_answer_finish(struct chat_answer *answer, const char *finish_reason);
 void chat_answer_fail(struct chat_answer *answer);
 void chat_answer_free(
 	struct chat_answer *answer); /* its buffers; the record stays */
+
+/* Shared HTTP reason phrase; unknown statuses use the native server-error fallback. */
+void chat_json_body_begin(struct chat_buffer *output);
+void chat_json_body_finish(struct chat_buffer *output, uint32_t status,
+			   const char *extra);
 
 #endif

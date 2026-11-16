@@ -12,6 +12,7 @@
 #define FP8_OUTPUTS_PER_SCALE 32u
 #define FP8_INPUTS_PER_GROUP 32u
 #define MXFP4_INPUTS_PER_GROUP 64u
+#define BYTE_BITS 8u
 #define CODE_BYTES_PER_GROUP 512ull
 #define MXFP4_SCALE_BYTES_PER_GROUP 32ull
 #define MXFP4_WEIGHTS_PER_BYTE 2u
@@ -44,7 +45,7 @@ tensor_shard_prepare(const struct tensor_shard_description *description,
 		const struct matrix_shape_record *const source =
 			&description->source_shape;
 		const uint64_t row_bytes = (uint64_t)source->input_size *
-					   TENSOR_SHARD_PLAIN_BITS / 8u;
+					   TENSOR_SHARD_PLAIN_BITS / BYTE_BITS;
 		if (source->bits_per_weight != TENSOR_SHARD_PLAIN_BITS ||
 		    source->reserved_must_be_zero != 0 ||
 		    source->output_size == 0 || source->input_size == 0 ||

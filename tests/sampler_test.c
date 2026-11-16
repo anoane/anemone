@@ -62,7 +62,7 @@
 #define FLOAT_BYTES 4u
 #define STEP_BLOCK_BYTES 16u                    /* by hand, step_records.h: a block and its rows, sessions, results */
 #define STEP_ROW_BYTES 16u
-#define SESSION_BYTES 16u
+#define SESSION_BYTES 20u
 #define RESULT_BLOCK_BYTES 16u
 #define RESULT_ROW_BYTES 8u
 #define TWO_TO_THE_32 4294967296.0
@@ -154,7 +154,10 @@ static void capture_begin(void)
 static void capture_end(char *text, size_t text_capacity)
 {
     const bool is_open = capture_descriptor >= 0 && error_stream_descriptor >= 0 && fflush(stderr) == 0;
-    const ssize_t byte_count = is_open ? pread(capture_descriptor, text, text_capacity - 1, 0) : -1;
+    const ssize_t byte_count =
+	    is_open ? test_log_capture_read(capture_descriptor, text,
+					    text_capacity) :
+		      -1;
     expect(is_open && dup2(error_stream_descriptor, STDERR_FILENO) == STDERR_FILENO && byte_count >= 0,
            "the temporary file is read back and the error stream restored");
     text[byte_count >= 0 ? (size_t)byte_count : 0] = '\0';

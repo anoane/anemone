@@ -896,7 +896,8 @@ static void test_driver_faults(uint32_t card_index)
 	expect(fault_disarm() == 1, "the fault of the context was reached");
 	expect_failed_card(card, FIRST_TICKET);
 
-	/* an upload whose event the driver does not record: no ticket, though its copy was begun; the card has failed */
+	/* an upload whose event the driver does not record: no ticket, though its copy was begun; the card has failed
+	 * */
 	card = open_card(card_index);
 	expect(fault_arm("backend_cuda_cuEventRecord", 1),
 	       "the fault of the event is armed");

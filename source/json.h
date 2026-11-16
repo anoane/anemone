@@ -93,4 +93,7 @@ void json_write_canonical(struct json_writer *writer,
 			  struct json_scratch *scratch,
 			  struct json_value value);
 
+/* Only for validated JSON: whether any byte in searched occurs outside strings. */
+bool json_has_unquoted(struct json_value value, const char *searched);
+
 #endif

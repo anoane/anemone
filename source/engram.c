@@ -8,12 +8,14 @@
  * shape; the token map stands for a constant that is not in its extent until then. Fault point: engram_memory.
  */
 #include "anemone/engram.h"
+#include "anemone/engram_disk.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #include "anemone/hooks.h"
 #include "anemone/pack_digest.h"
+#include "engram_step.h"
 
 #define ENGRAM_CACHE_LINE_BYTES 64u /* prefetch: one request a line of a row */
 
@@ -24,6 +26,9 @@ static const char *const names[CONSTANT_COUNT] = {"engram.token_map", "engram.pa
     "engram.row_counts", "engram.multipliers", "engram.offsets", "engram.primes"};
 
 struct engram_record {
+	struct engram_disk *disk;
+	struct engram_steps *
+		steps; /* step I/O over the disk store, when the engine runs it */
 	struct engram_description description;
 	const unsigned char *rows
 		[ENGRAM_MAXIMUM_TABLES]; /* attach: where the extent of each table lies */
@@ -190,6 +195,35 @@ result_status engram_open(const struct storage_operations_record *storage,
     return STATUS_OK;
 }
 
+bool engram_hashing_equal(const struct engram_record *left,
+			  const struct engram_record *right)
+{
+	if (left == NULL || right == NULL)
+		return false;
+	const struct engram_description *first = &left->description,
+					*second = &right->description;
+	if (first->table_count != second->table_count ||
+	    first->lookback != second->lookback ||
+	    first->head_count != second->head_count ||
+	    first->rows_per_token != second->rows_per_token ||
+	    first->vocabulary_size != second->vocabulary_size ||
+	    left->pad_id != right->pad_id)
+		return false;
+	const size_t factors = (size_t)first->table_count * first->lookback;
+	const size_t rows = (size_t)first->table_count * first->rows_per_token;
+	return memcmp(first->row_count, second->row_count,
+		      first->table_count * sizeof(first->row_count[0])) == 0 &&
+	       memcmp(left->token_map, right->token_map,
+		      first->vocabulary_size * sizeof(left->token_map[0])) ==
+		       0 &&
+	       memcmp(left->multipliers, right->multipliers,
+		      factors * sizeof(left->multipliers[0])) == 0 &&
+	       memcmp(left->primes, right->primes,
+		      rows * sizeof(left->primes[0])) == 0 &&
+	       memcmp(left->offsets, right->offsets,
+		      rows * sizeof(left->offsets[0])) == 0;
+}
+
 void engram_close(struct engram_record *engram)
 {
 	free(engram);
@@ -209,6 +243,20 @@ result_status engram_attach_entry(struct engram_record *engram,
     }
     engram->rows[table_index] = rows;
     return STATUS_OK;
+}
+
+result_status engram_attach_disk(struct engram_record *engram,
+				 struct engram_disk *disk)
+{
+	const struct engram_description *const description =
+		engram_disk_description(disk);
+	if (engram == NULL || description == NULL ||
+	    memcmp(&engram->description, description, sizeof(*description)) !=
+		    0)
+		return STATUS_INVALID_ARGUMENT;
+	engram->disk = disk;
+	memset((void *)engram->rows, 0, sizeof(engram->rows));
+	return STATUS_OK;
 }
 
 result_status engram_row_ids_entry(const struct engram_record *engram,
@@ -284,10 +332,14 @@ result_status engram_gather_entry(const struct engram_record *engram,
 				  uint32_t table_index, const uint64_t *row_ids,
 				  uint32_t row_count, void *rows_out)
 {
-    if (engram == NULL || row_ids == NULL || rows_out == NULL || table_index >= engram->description.table_count ||
-        engram->rows[table_index] == NULL) {
-	    return STATUS_INVALID_ARGUMENT;
-    }
+	if (engram != NULL && engram->disk != NULL)
+		return engram_disk_gather(engram->disk, table_index, row_ids,
+					  row_count, rows_out);
+	if (engram == NULL || row_ids == NULL || rows_out == NULL ||
+	    table_index >= engram->description.table_count ||
+	    engram->rows[table_index] == NULL) {
+		return STATUS_INVALID_ARGUMENT;
+	}
     TIMER_BEGIN(engram_gather);
     for (uint32_t row_index = 0; row_index < row_count; row_index++) {
         const uint64_t row_id = row_ids[row_index];
@@ -303,4 +355,18 @@ result_status engram_gather_entry(const struct engram_record *engram,
     COUNTER_ADD(engram_gather_bytes, (uint64_t)row_count * ENGRAM_ROW_BYTES);
     TIMER_END(engram_gather);
     return STATUS_OK;
+}
+
+result_status engram_attach_steps(struct engram_record *engram,
+				  struct engram_steps *steps)
+{
+	if (engram == NULL || steps == NULL || engram->disk == NULL)
+		return STATUS_INVALID_ARGUMENT;
+	engram->steps = steps;
+	return STATUS_OK;
+}
+
+struct engram_steps *engram_steps_of(const struct engram_record *engram)
+{
+	return engram != NULL ? engram->steps : NULL;
 }

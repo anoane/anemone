@@ -130,7 +130,7 @@ static void empty_view_flags(void)
 		step_views_write(&driver, &program, bytes, 1, &row, 1);
 		for (uint32_t view = 0; view < VIEWS; view++) {
 			struct step_block header;
-			memcpy(&header, bytes + view * VIEW_BYTES,
+			memcpy(&header, bytes + (size_t)(view * VIEW_BYTES),
 			       sizeof(header));
 			expect(header.sequence == 1 &&
 				       header.row_count ==
@@ -166,6 +166,11 @@ static void growing_provenance(void)
 				 .prefill_prefix_stable = 1 },
 		.exact_prefix_reuse = SERVER_PREFIX_COLD_PLAN
 	};
+	/* the run's per-slot tables, as a run starts them (server_tables) */
+	if (server_tables(&server) != STATUS_OK) {
+		expect(false, "the server takes its tables for one slot");
+		return;
+	}
 	struct slot_history *const history = &server.slot_histories[0];
 	*history = (struct slot_history){
 		.token_count = SOURCE_PROMPT + SOURCE_GENERATED,
@@ -227,6 +232,7 @@ static void growing_provenance(void)
 	expect(server_prefix_kept(&server, 0, tokens, EXTENDED_PROMPT,
 				  no_image) == 0,
 	       "imported state still has no proven canonical provenance");
+	server_tables_free(&server);
 }
 
 int main(void)

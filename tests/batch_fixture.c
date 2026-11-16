@@ -71,8 +71,11 @@
 #define HASH_MULTIPLIER 0x9E3779B97F4A7C15ull /* the function model's mixing */
 #define HASH_SHIFT 29u
 #define DRAW_SHIFT 32u /* a draw reads the hash's high half */
-#define NGRAM_MOST 4u /* the drafter's n-grams (main.c's defaults) */
+#define NGRAM_MOST 4u /* the drafter's n-grams (commands.c's defaults) */
 #define NGRAM_LEAST 2u
+/* the BATCH sampler's race: a state-dependent quarter of the byte vocabulary, every FIXTURE_QUARTERS-th token */
+#define FIXTURE_QUARTER_MASK 3u
+#define FIXTURE_QUARTERS 4u
 
 static struct device_card *cards[CARDS];
 static struct kernel_launch launches[PROGRAMS][CARDS][LAUNCHES];
@@ -164,19 +167,22 @@ static uint32_t function_drawn(const unsigned char *state,
 	if (position == function_end_position) {
 		return TEST_BATCH_END_TOKEN;
 	}
-	if (is_batch && settings->seed == BATCH_END_SEED &&
+	if (is_batch && step_session_seed(settings) == BATCH_END_SEED &&
 	    position == BATCH_END_POSITION) {
 		return TEST_BATCH_END_TOKEN;
 	}
 	if (is_batch) {
 		/* Equal-weight sampler race on a state-dependent quarter of the byte vocabulary.
          * The integer counter and23-bit uniform key are the production sampler's; no schedule state. */
-		const uint32_t bias = state[position % ring_positions] & 3u;
-		const uint64_t seed_key = pack_digest_mix(settings->seed);
+		const uint32_t bias = state[position % ring_positions] &
+				      FIXTURE_QUARTER_MASK;
+		const uint64_t seed_key =
+			pack_digest_mix(step_session_seed(settings));
 		const uint64_t position_key = (uint64_t)position
 					      << SAMPLER_POSITION_SHIFT;
 		uint32_t best = bias, best_uniform = 0;
-		for (uint32_t token = bias; token < BYTE_VALUES; token += 4u) {
+		for (uint32_t token = bias; token < BYTE_VALUES;
+		     token += FIXTURE_QUARTERS) {
 			const uint64_t hash = pack_digest_mix(
 				seed_key ^ ((position_key | token) *
 					    PACK_DIGEST_POSITION_MULTIPLIER));
@@ -196,10 +202,11 @@ static uint32_t function_drawn(const unsigned char *state,
 				     ring_positions] :
 			       0u;
 	}
-	uint64_t hash =
-		((settings->temperature > 0.0f ? settings->seed + 1u : 0u) ^
-		 position) *
-		HASH_MULTIPLIER;
+	uint64_t hash = ((settings->temperature > 0.0f ?
+				  step_session_seed(settings) + 1u :
+				  0u) ^
+			 position) *
+			HASH_MULTIPLIER;
 	for (uint32_t back = 0; back < model_window; back++) {
 		hash = (hash ^
 			(position >= back ?
@@ -321,7 +328,8 @@ static bool device_round_written(const struct step_block *block,
 			      absolute % ring_positions] = (unsigned char)token;
 			token = function_drawn(state, &settings, absolute);
 			const uint32_t rejected =
-				is_batch ? (uint32_t)(settings.seed %
+				is_batch ? (uint32_t)(step_session_seed(
+							      &settings) %
 						      (device_block + 1u)) :
 					   device_rejected_position;
 			token = position == rejected ?
@@ -400,7 +408,7 @@ static bool model_stand_in(const struct kernel_launch *launch,
 		return false; /* card 0's visit again: card 1's rows of its step */
 	}
 	const uint32_t *const script =
-		model_scripts[settings.seed % model_script_count];
+		model_scripts[step_session_seed(&settings) % model_script_count];
 	const struct step_result answer = { .sequence = block.sequence,
 					    .row_count = block.row_count };
 	const bool is_front = record.value == FRONT_VALUE;

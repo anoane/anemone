@@ -77,9 +77,10 @@
 #include "anemone/status.h"
 #include "anemone/draft_policy.h"
 
-#define GENERATION_COMMAND_BYTES 56
+#define GENERATION_COMMAND_BYTES 80
 #define GENERATION_EVENT_BYTES 24
 
+struct text_tokenizer;
 struct generation_command_record {
 	const uint32_t
 		*new_token_ids; /* read after the kept ones; at least one */
@@ -92,8 +93,14 @@ struct generation_command_record {
 	float sampler_top_p; /* 1 keeps every token */
 	uint32_t request_tag; /* returned in every event of this command */
 	uint32_t reserved_must_be_zero;
+	uint32_t sampler_top_k; /* 0: unchanged sampler; else highest-logit k before nucleus */
+	uint32_t reasoning_budget; /* 0: no forced reasoning policy; else includes the closing control token */
+	uint32_t reasoning_end_token; /* actual tokenizer control ID, never inferred from output text */
+	uint32_t control_reserved_zero;
 	const struct chat_images *
 		images; /* immutable request-owned pixels; borrowed until final TAKEN */
+	const struct text_tokenizer *
+		reasoning_tokenizer; /* budgeted commands only; immutable until final TAKEN */
 };
 
 enum generation_event_kind {
@@ -210,10 +217,10 @@ struct engine_description_record {
          * 0. */
 	uint32_t prefill_prefix_stable;
 	/* 1: prompts one at a time in the order their commands came (engine.c's prompt_head): only the oldest command
-	 * still in its prompt takes chunks or prompt rows, so its first token comes after its own prompt rather than after
-	 * every prompt in flight; 0: the owners' turns (each prompt a chunk in turn). Each prompt's chunks are the same.
-	 * PREFILL_ORDER_SHORTEST: of the prompts the one with the fewest rows left goes first (ties: the oldest),
-	 * so a short prompt does not wait behind a long one's prefill, and prompts of one size go as with 1.
+	 * still in its prompt takes chunks or prompt rows, so its first token comes after its own prompt rather than
+	 * after every prompt in flight; 0: the owners' turns (each prompt a chunk in turn). Each prompt's chunks are
+	 * the same. PREFILL_ORDER_SHORTEST: of the prompts the one with the fewest rows left goes first (ties: the
+	 * oldest), so a short prompt does not wait behind a long one's prefill, and prompts of one size go as with 1.
 	 * PREFILL_ORDER_SHORT_ROWS also admits other no-chunk prompt tails whose remaining rows fit a thin
 	 * step's row budget. Whole chunks and the decode cadence are unchanged. */
 	uint32_t prefill_order;
@@ -221,8 +228,9 @@ struct engine_description_record {
 	 * of the oldest's (no prompt waits for ever behind shorter ones); 0: the fewest rows left alone decide */
 	uint32_t prefill_order_wait;
 	/* 0, or with prefill_order (M12's decode cadence): while the head prompt has chunks left, after so many of its
-	 * chunk steps in a row a step of the decoding owners' rows comes first (each step's programs and rows as without
-	 * it: the same bits); 0: the turns alone decide (with prefill_first, the decoding owners wait for the chunks) */
+	 * chunk steps in a row a step of the decoding owners' rows comes first (each step's programs and rows as
+	 * without it: the same bits); 0: the turns alone decide (with prefill_first, the decoding owners wait for the
+	 * chunks) */
 	uint32_t prefill_decode_every;
 	/* Exact plan only: cap whole-granule chunks, retaining the original tail. chunk_rows applies always (also for
 	 * numerical qualification); decode_rows only while another owner can decode, then gives that owner a round
@@ -249,7 +257,8 @@ struct engine_description_record {
 	uint64_t snapshot_identity; /* given: what else a snapshot's bits follow (0: none); create mixes in its own */
 	uint64_t image_math_identity; /* immutable encoder arithmetic identity, mixed only into nonempty image keys */
 	uint32_t hybrid_lookup_min; /* 0: device only; else minimum suffix match; lookup must also beat DSpark's gain */
-	uint32_t draft_trace; /* 1: each device round's session, anchor and proposals to stderr (diagnostics); 0: none */
+	uint32_t draft_trace; /* 1: each device round's session, anchor and proposals to stderr (diagnostics); 0:
+				 none */
 	const struct draft_policy_record *
 		draft_policy; /* NULL: defaults; copied at create, need not outlive it */
 	/* BATCH drivers: a step's microseconds on each of the driver's BATCH programs, fewest rows first; nonzero: each

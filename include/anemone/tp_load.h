@@ -44,32 +44,66 @@
 
 #define TP_LOAD_MAXIMUM_EXTENT_BYTES (2ull << 30u)
 #define TP_LOAD_MAXIMUM_WORKERS 64u
+/* serving's host arena threads beside the cards' load (--tp_load_host_threads), and the load stage's (autotune) */
+#define TP_LOAD_HOST_THREADS_DEFAULT 16u
+/* serving's per-copy cap on the TP load's reads (--tp_load_reads_per_copy): none */
+#define TP_LOAD_READS_PER_COPY_DEFAULT 0u
+/* the copy splits' names (tp_load_split), as a load section records them */
+extern const char *const tp_load_split_names[];
 /* the EXL3 TP4 pack: median GPU extent 13.3 MB, 11 GB in larger ones */
 #define TP_LOAD_WORKER_SLOT_BYTES (64ull << 20u)
 
-/* Turbo load's choice of copy (storage_seam.h: the caller picks the copy of each read), shared by the runs of one
- * load. A pipelined run with copies reads each extent (each chunk of a host extent) first from the copy that would
- * finish it soonest: the fewest bytes in flight per byte a second it has delivered while busy (a copy not yet
- * measured counts as fast as the fastest), a copy with a failed read last; then from the others in order. Every
- * extent is still checked against its digest; a host extent whose striped chunks fail or differ is read again
- * copy by copy. The counters are the copies' totals once the runs are done. NULL: copies in order (the reference). */
+/* Turbo load's choice of copy (storage_seam.h: the caller picks the copy of each read), shared by the two runs of
+ * one load: the host arena's (role HOST) and the cards' (role CARDS). A pipelined run with copies reads each extent
+ * (each chunk of a host extent) first from the copy, among those split lets its role use, that would finish it
+ * soonest: the fewest bytes in flight per byte a second it has delivered while busy (a copy not yet measured counts
+ * as fast as the fastest), a copy with a failed read last; then from the others in order. Every extent is still
+ * checked against its digest; a host extent whose striped chunks fail or differ is read again copy by copy. The
+ * counters are the copies' totals once the runs are done. NULL: copies in order (the reference).
+ *
+ * split (--tp_load_copy_split), with two or more copies (one copy serves both roles):
+ *   0 SOONEST every copy serves both roles.
+ *   1 FIXED   each role reads only its preferred copy, the host arena copy 0 and the cards the last copy (turbo on
+ *             an EXL3 map: the map's contiguous native extents, a flat replica's EXL3 ones), while that copy has not
+ *             failed a read: a middle copy is never read, and a role that finishes first leaves its drive idle.
+ *   2 STEAL   (the default) each role prefers the same copy as under FIXED, held for it while that role has reads
+ *             left to claim and neither role's preferred copy has failed a read; every other copy serves both. Once
+ *             a role's run has claimed its last read, its copy serves the other role too, so no drive idles while
+ *             the other role still reads (request 16, FIXED: copy 1 idle 9.3 s).
+ * Each run marks its role claimed once, on the copies of one load: a load initialises its own copies. */
+enum tp_load_role { TP_LOAD_ROLE_HOST, TP_LOAD_ROLE_CARDS, TP_LOAD_ROLES };
+enum tp_load_split {
+	TP_LOAD_SPLIT_SOONEST,
+	TP_LOAD_SPLIT_FIXED,
+	TP_LOAD_SPLIT_STEAL,
+	TP_LOAD_SPLITS
+};
 struct tp_load_copies {
 	pthread_mutex_t mutex; /* guards everything below while runs read */
 	uint64_t in_flight_bytes[STORAGE_MAXIMUM_COPIES];
 	uint64_t delivered_bytes[STORAGE_MAXIMUM_COPIES];
+	uint64_t role_delivered_bytes
+		[TP_LOAD_ROLES][STORAGE_MAXIMUM_COPIES]; /* the same, per role */
 	uint64_t busy_nanoseconds
 		[STORAGE_MAXIMUM_COPIES]; /* with a read in flight */
 	uint64_t busy_since[STORAGE_MAXIMUM_COPIES];
 	uint32_t reads_in_flight[STORAGE_MAXIMUM_COPIES];
+	uint32_t host_reads_in_flight
+		[STORAGE_MAXIMUM_COPIES]; /* the host role's share of reads_in_flight */
 	uint32_t failed_reads[STORAGE_MAXIMUM_COPIES];
+	uint32_t role_claimed
+		[TP_LOAD_ROLES]; /* 1 once the role's run has claimed its last read */
 	pthread_cond_t
-		read_ended; /* a read waits while its copy has reads_most in flight */
-	uint32_t reads_most; /* reads in flight a copy at most; 0: no limit */
-	/* 1 (two or more copies): host-arena chunks from copy 0 and card extents from the last copy while those have
-	 * not failed (turbo: the map's contiguous native extents, the replica's EXL3 ones); 0: the soonest copy */
-	uint32_t split;
+		read_ended; /* a read waits while the copies it may use have reads_most in flight */
+	uint32_t reads_most; /* reads in flight a copy at most, both roles' (--tp_load_reads_per_copy); 0: no limit */
+	uint32_t host_reads_most; /* the host role's own reads in flight a copy at most (the load stage's readers,
+				   * a load section's); the cards' reads never count against it; 0: no limit */
+	uint32_t split; /* enum tp_load_split */
+	/* Optional measured aggregate shares; zero keeps the original online delivery-rate estimator. */
+	uint32_t tuned_weights[STORAGE_MAXIMUM_COPIES];
 };
-/* reads_most: a drive delivers most with a few large reads at once (RND_H.md, 3 Nov: two per 9100 PRO) */
+/* reads_most: a drive delivers most with a few large reads at once (RND_H.md, 3 Nov: two per 9100 PRO); host_reads_most
+ * starts at 0 */
 MUST_CHECK result_status tp_load_copies_init(struct tp_load_copies *copies,
 					     uint32_t reads_most);
 void tp_load_copies_destroy(struct tp_load_copies *copies);
@@ -135,7 +169,8 @@ MUST_CHECK result_status tp_load_run(const struct tp_load_request *request,
  * others TP_HOST_LOAD_NOWHERE. The plan reports the one caller-owned host arena's required size.
  * No allocation, backend call or full-extent workspace. Pack/map/plan remain immutable and alive through run.
  * Run checks the reader's pack size, copy count and block alignment, and reads directly into that arena in at
- * most CHUNK_BYTES per call. Its address must meet the reader's alignment (pack-block alignment always suffices).
+ * most chunk_bytes per call (0: TP_HOST_LOAD_CHUNK_BYTES; else whole pack blocks, at most
+ * TP_HOST_LOAD_CHUNK_BYTES_MOST). Its address must meet the reader's alignment (pack-block alignment always suffices).
  * Every chunk digest uses word indices from the extent's beginning. A read failure or digest mismatch restarts
  * the whole extent from the next copy, in order; no extent is accepted by mixing chunks from different copies.
  * All counters include retries; requested_bytes includes failed reads, whose delivered byte count is unknown.
@@ -148,7 +183,9 @@ MUST_CHECK result_status tp_load_run(const struct tp_load_request *request,
  * order gives the same digest). Copies are tried per extent in order, as above; on success every counter equals the
  * serial run's, on failure requested_bytes/read_calls may include chunks other threads read meanwhile.
  */
-#define TP_HOST_LOAD_CHUNK_BYTES (16ull << 20u)
+#define TP_HOST_LOAD_CHUNK_BYTES \
+	(16ull << 20u) /* one read, the chunk unless a request names another */
+#define TP_HOST_LOAD_CHUNK_BYTES_MOST (64ull << 20u)
 #define TP_HOST_LOAD_NOWHERE UINT64_MAX
 struct tp_host_load_plan {
 	const struct pack_record *pack;
@@ -159,6 +196,8 @@ struct tp_host_load_plan {
 };
 struct tp_host_load_request {
 	const struct tp_host_load_plan *plan;
+	const uint8_t *
+		external_host_extents; /* optional extent_count bytes; externally owned host-only extents */
 	const struct storage_operations_record *storage;
 	const struct storage_reader *reader;
 	void *host_arena;
@@ -166,6 +205,7 @@ struct tp_host_load_request {
 	uint32_t worker_count; /* 0: the serial run; 1..TP_LOAD_MAXIMUM_WORKERS threads */
 	struct tp_load_copies
 		*copies; /* pipelined runs only; NULL: copies in order */
+	uint64_t chunk_bytes; /* one read: 0 is TP_HOST_LOAD_CHUNK_BYTES */
 };
 struct tp_host_load_result {
 	uint64_t requested_bytes;
@@ -180,5 +220,22 @@ tp_host_load_prepare(const struct pack_record *pack, uint64_t *extent_offsets,
 MUST_CHECK result_status
 tp_host_load_run(const struct tp_host_load_request *request,
 		 struct tp_host_load_result *result_out);
+
+/* The TP host arena (serving's, the load stage's points): byte_count bytes aligned to TP_HOST_ARENA_PAGE_BYTES, a
+ * whole number of them. With external tables (loader.h) an anonymous MAP_NORESERVE mapping one page longer, the arena
+ * aligned inside it; without, posix_memalign's, as before. The caller advises its pages. A byte_count of 0 is an empty
+ * arena (no allocation); STATUS_OUT_OF_MEMORY leaves it empty; tp_host_arena_release frees either kind and empties
+ * it (an empty arena too). */
+#define TP_HOST_ARENA_PAGE_BYTES \
+	(2ull << 20u) /* 2 MiB: small pages cost a TLB walk a row */
+struct tp_host_arena {
+	void *bytes; /* NULL: none */
+	void *mapping; /* the NORESERVE mapping that holds bytes; NULL: posix_memalign's */
+	size_t mapping_bytes, byte_count;
+};
+MUST_CHECK result_status tp_host_arena_allocate(uint64_t byte_count,
+						bool external_tables,
+						struct tp_host_arena *arena);
+void tp_host_arena_release(struct tp_host_arena *arena);
 
 #endif

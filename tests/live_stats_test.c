@@ -5,6 +5,7 @@
 
 #include "anemone/live_stats.h"
 #include "json.h"
+#include "stats_tables.h"
 
 #define SAMPLE_NOW_NS 4000000000ull
 #define SAMPLE_START_NS 1000000000ull
@@ -53,17 +54,28 @@
 #define SAMPLE_REQUEST_WINDOW_PREFILL 5u
 #define SAMPLE_REQUEST_LONG_PREFILL 8u
 #define TABLE_HEADER_LINES 3u
-#define TABLE_FIXTURE_LINES (TABLE_HEADER_LINES + STATS_SLOT_CAPACITY)
+#define TABLE_FIXTURE_LINES (TABLE_HEADER_LINES + TEST_STATS_SLOTS)
 #define TABLE_MANY_REQUESTS 3u
 #define TABLE_HUGE_TOKENS 1000000u
 #define SAMPLE_USER "a_123456789012345678901234567890"
 #define SAMPLE_COMPACT_USER "a_1234567890123~"
 #define TABLE_USER_PAGES 2u
 #define TABLE_FOUR_USERS 4u
+#define TEST_REQUESTS 8u /* the fixture snapshot's request room */
 #define TABLE_COMPACT_USER_WIDTH 16u
 #define TABLE_SHORT_USER_WIDTH 5u
 #define TABLE_WIDE_USER_WIDTH 32u
 #define TABLE_VIEW_WIDTHS 2u
+/* the step plan's two BATCH programs: 8 rows of one verifier, 10 steps of 19.5 ms and a cost of 19.5 ms; 12 rows of
+ * two, no steps yet, a cost of 28.6 ms */
+#define TEST_BATCH_PROGRAMS 2
+#define TEST_FIRST_ROWS 8
+#define TEST_FIRST_COST_US 19500
+#define TEST_FIRST_STEPS 10
+#define TEST_FIRST_STEP_NS 195000000
+#define TEST_SECOND_ROWS 12
+#define TEST_SECOND_VERIFIERS 2
+#define TEST_SECOND_COST_US 28600
 
 static int failures;
 
@@ -108,7 +120,25 @@ static bool test_value(struct json_value value, const char *text)
 
 static void fixture(struct live_snapshot *snapshot)
 {
+	static struct test_stats_tables engine_tables;
+	static struct test_window_tables window_tables;
+	static struct live_session sessions[TEST_STATS_SLOTS];
+	static struct live_request_record requests[TEST_REQUESTS];
 	memset(snapshot, 0, sizeof(*snapshot));
+	memset(&engine_tables, 0, sizeof(engine_tables));
+	memset(&window_tables, 0, sizeof(window_tables));
+	memset(sessions, 0, sizeof(sessions));
+	memset(requests, 0, sizeof(requests));
+	snapshot->engine.slot_room = TEST_STATS_SLOTS;
+	snapshot->engine.slots = engine_tables.slots;
+	snapshot->engine.sessions = engine_tables.sessions;
+	const struct live_window_record windows[LIVE_WINDOW_COUNT] =
+		TEST_WINDOW_TABLES(window_tables);
+	memcpy(snapshot->windows, windows, sizeof(windows));
+	snapshot->slot_room = TEST_STATS_SLOTS;
+	snapshot->sessions = sessions;
+	snapshot->request_room = TEST_REQUESTS;
+	snapshot->requests = requests;
 	snapshot->wall_seconds = SAMPLE_WALL_SECONDS;
 	snapshot->now_seconds = SAMPLE_NOW_SECONDS;
 	snapshot->started_seconds = SAMPLE_START_SECONDS;
@@ -130,7 +160,7 @@ static void fixture(struct live_snapshot *snapshot)
 	snapshot->engine.started_ns = SAMPLE_START_NS;
 	snapshot->engine.generated_tokens = SAMPLE_GENERATED_TOKENS;
 	snapshot->engine.prefill_tokens = SAMPLE_PREFILL_TOKENS;
-	snapshot->engine.slots_total = STATS_SLOT_CAPACITY;
+	snapshot->engine.slots_total = TEST_STATS_SLOTS;
 	snapshot->engine.slots_busy = 1;
 	snapshot->engine.card_count = 1;
 	snapshot->engine.cards[0].busy_ns = SAMPLE_BUSY_NS;
@@ -368,7 +398,7 @@ static void test_sessions(struct live_snapshot *snapshot,
 			       "session snapshot counts, bytes and elapsed milliseconds are present");
 		}
 	}
-	expect(count == STATS_SLOT_CAPACITY,
+	expect(count == TEST_STATS_SLOTS,
 	       "every busy or idle slot gets exactly one session entry");
 	const uint32_t saved_finished = snapshot->finished_count;
 	snapshot->finished_count = 0;
@@ -573,11 +603,15 @@ static void test_batch_programs(struct live_snapshot *snapshot,
 {
 	expect(!contains(json, "batch_programs"),
 	       "no step plan: no batch_programs");
-	snapshot->engine.batch_program_count = 2;
-	snapshot->engine.batch_programs[0] =
-		(struct stats_batch_program){ 8, 1, 19500, 10, 195000000 };
+	snapshot->engine.batch_program_count = TEST_BATCH_PROGRAMS;
+	snapshot->engine.batch_programs[0] = (struct stats_batch_program){
+		TEST_FIRST_ROWS, 1, TEST_FIRST_COST_US, TEST_FIRST_STEPS,
+		TEST_FIRST_STEP_NS
+	};
 	snapshot->engine.batch_programs[1] =
-		(struct stats_batch_program){ 12, 2, 28600, 0, 0 };
+		(struct stats_batch_program){ TEST_SECOND_ROWS,
+					      TEST_SECOND_VERIFIERS,
+					      TEST_SECOND_COST_US, 0, 0 };
 	json->count = 0;
 	expect(live_stats_json_entry(snapshot, json) == STATUS_OK &&
 		       contains(

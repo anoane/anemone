@@ -16,6 +16,7 @@
  * 640 layout throughout; gemm_*_m640_k{3,2} and down_m640 run each tile or position at its expert's width, bitwise the
  * i640 / i512 forms' per route; route, operands and combine read the width with every record.
  */
+#include "anemone/exl3_records.h"
 #include "anemone/exl3_tc_records.h"
 #include "anemone/model_layout.h"
 #include "anemone/router_records.h"
@@ -23,12 +24,16 @@
 #include "kernel_exl3_tcp.cuh"
 
 #define PAIRS_PER_ROW EXL3_TC_PAIRS_PER_ROW
+#define TCP_BITS_X2_A_BYTE 16u /* a byte's 8 bits, twice (bits_x2) */
+#define TCP_WIDE_INTERMEDIATE 640 /* a rank's intermediate slice (the 640/640/512/512 split) */
+#define TCP_NARROW_INTERMEDIATE 512
 static_assert(EXL3_TCP_TILE_ROWS == TCP_TILE_ROWS &&
 		      EXL3_TCP_JOINT_ROWS == TCP_JOINT_ROWS &&
 		      EXL3_TCP_CHUNK_ROWS == TCP_CHUNK_ROWS &&
 		      EXL3_TCP_GEMM_THREADS == TCP_GEMM_THREADS &&
-		      EXL3_TCP_OPERAND_THREADS == 32 * (TC_MOE_HIDDEN / 1024) &&
-		      EXL3_TCP_DOWN_THREADS == 32 * TCP_DOWN_WARPS,
+		      EXL3_TCP_OPERAND_THREADS ==
+			      TC_MOE_WARP * (TC_MOE_HIDDEN / (TCP_SPANS_PER_WARP * TCP_SPAN_VALUES)) &&
+		      EXL3_TCP_DOWN_THREADS == TC_MOE_WARP * TCP_DOWN_WARPS,
 	      "one geometry");
 
 struct tcp_parts { /* the record's workspace (exl3_tc_records.h) */
@@ -42,14 +47,15 @@ tcp_parts_of(const struct exl3_tcp_record &record, unsigned char *arena)
 {
 	struct tcp_parts parts;
 	parts.pairs = (int64_t)record.row_count * PAIRS_PER_ROW;
-	parts.projections = record.row_count <= TCP_JOINT_ROWS ? 2 : 1;
+	parts.projections = record.row_count <= TCP_JOINT_ROWS ? TC_MOE_OPERAND_PROJECTIONS : 1;
 	float *base = (float *)(arena + record.workspace_offset);
 	parts.operand = (__half *)base;
 	parts.down_result = base;
 	parts.gate_result = base + parts.pairs * parts.projections * TC_MOE_HIDDEN;
 	parts.up_result = parts.gate_result + parts.pairs * record.intermediate;
 	parts.unscale = parts.up_result + parts.pairs * record.intermediate;
-	parts.table = (int32_t *)(parts.unscale + (parts.pairs * parts.projections + 3) / 4 * 4);
+	parts.table = (int32_t *)(parts.unscale + (parts.pairs * parts.projections + TCP_ALIGNED_WORDS - 1) /
+							   TCP_ALIGNED_WORDS * TCP_ALIGNED_WORDS);
 	return parts;
 }
 __device__ __forceinline__ const struct router_pick &
@@ -65,7 +71,7 @@ __device__ __forceinline__ uint64_t
 tcp_matrix(const struct exl3_tcp_record &record, unsigned char *arena,
 	   int expert, int projection)
 {
-	return ((const uint64_t *)(arena + record.expert_offsets_offset))[expert * 3 + projection];
+	return ((const uint64_t *)(arena + record.expert_offsets_offset))[expert * TC_MOE_PROJECTIONS + projection];
 }
 __device__ __forceinline__ uint32_t
 tcp_width(const struct exl3_tcp_record &record, int expert)
@@ -77,15 +83,16 @@ __device__ __forceinline__ uint64_t tcp_suh(const struct exl3_tcp_record &record
 					    int projection, uint64_t matrix,
 					    uint32_t width)
 {
-	const uint64_t input = projection < 2 ? TC_MOE_HIDDEN : width;
-	const uint64_t output = projection < 2 ? width : TC_MOE_HIDDEN;
-	return matrix + input * output * record.bits_x2 / 16u;
+	const uint64_t input = projection < TCP_DOWN_PROJECTION ? TC_MOE_HIDDEN : width;
+	const uint64_t output = projection < TCP_DOWN_PROJECTION ? width : TC_MOE_HIDDEN;
+	return matrix + input * output * record.bits_x2 / TCP_BITS_X2_A_BYTE;
 }
 __device__ __forceinline__ uint64_t tcp_svh(const struct exl3_tcp_record &record,
 					    int projection, uint64_t matrix,
 					    uint32_t width)
 {
-	return tcp_suh(record, projection, matrix, width) + (projection < 2 ? TC_MOE_HIDDEN : width) * sizeof(__half);
+	return tcp_suh(record, projection, matrix, width) +
+	       (projection < TCP_DOWN_PROJECTION ? TC_MOE_HIDDEN : width) * sizeof(__half);
 }
 
 /* A pair's local expert, or -1: a full step's row whose output at the record's decoder layer nothing reads takes no
@@ -112,8 +119,8 @@ extern "C" __global__ void __launch_bounds__(TCP_ROUTE_THREADS)
 	const struct tcp_parts parts = tcp_parts_of(record, arena);
 	for (int expert = threadIdx.x; expert < (int)EXL3_TCP_EXPERTS;
 	     expert += blockDim.x)
-		for (int projection = 0; projection < 3; projection++)
-			if ((tcp_matrix(record, arena, expert, projection) & 15) != 0)
+		for (int projection = 0; projection < TC_MOE_PROJECTIONS; projection++)
+			if ((tcp_matrix(record, arena, expert, projection) & TCP_VECTOR_MASK) != 0)
 				__trap();
 	/* half_rows: the gate/up tiles over both halves (tcp_route_paired), the halves' down tiles by retile */
 	if (record.half_rows != 0)
@@ -143,9 +150,9 @@ extern "C" __global__ void __launch_bounds__(EXL3_TCP_OPERAND_THREADS)
 {
 	const struct tcp_parts parts = tcp_parts_of(record, arena);
 	const int first = record.pass == EXL3_TCP_UP ? 1 : 0;
-	const int64_t projections = record.pass == EXL3_TCP_GATE_AND_UP ? 2 : 1;
-	const int32_t *sorted = parts.table + 4;
-	const int64_t tasks = (int64_t)parts.table[0] * projections;
+	const int64_t projections = record.pass == EXL3_TCP_GATE_AND_UP ? TC_MOE_OPERAND_PROJECTIONS : 1;
+	const int32_t *sorted = parts.table + TCP_TABLE_COUNTS;
+	const int64_t tasks = (int64_t)parts.table[TCP_TABLE_ROUTED] * projections;
 	for (int64_t task = blockIdx.x; task < tasks; task += gridDim.x) {
 		const int64_t position = task / projections;
 		const int projection = first + (int)(task % projections);
@@ -156,7 +163,7 @@ extern "C" __global__ void __launch_bounds__(EXL3_TCP_OPERAND_THREADS)
 			(const __half *)(arena + tcp_suh(record, projection,
 							 tcp_matrix(record, arena, expert, projection),
 							 tcp_width(record, expert))),
-			parts.operand + task * 2 * TC_MOE_HIDDEN, parts.unscale + task);
+			parts.operand + task * TC_MOE_HI_LO_ROWS * TC_MOE_HIDDEN, parts.unscale + task);
 	}
 }
 
@@ -178,9 +185,9 @@ tcp_gemm_of(const struct exl3_tcp_record &record, unsigned char *arena)
 					     parts.gate_result;
 	p.out_projection = down ? 0 : parts.up_result - parts.gate_result;
 	/* a part's tiles: the first half's come first (tcp_route's halves) */
-	p.first_tile = record.part == EXL3_TCP_SECOND_HALF ? parts.table[2] : 0;
-	p.end_tile = record.part == EXL3_TCP_FIRST_HALF ? parts.table[2] :
-							  parts.table[1];
+	p.first_tile = record.part == EXL3_TCP_SECOND_HALF ? parts.table[TCP_TABLE_FIRST_TILES] : 0;
+	p.end_tile = record.part == EXL3_TCP_FIRST_HALF ? parts.table[TCP_TABLE_FIRST_TILES] :
+							  parts.table[TCP_TABLE_TILES];
 	return p;
 }
 
@@ -226,88 +233,69 @@ tcp_gemm_hybrid_launch(const struct exl3_tcp_record &record,
 	{                                                                      \
 		tcp_gemm_launch<shape>(record, arena);                         \
 	}
-#define TCP_GATE_UP(inner, bits, two) tcp_gate_up_shape<TC_MOE_HIDDEN, inner, bits, 2, 0, false, two>
+#define TCP_GATE_UP(inner, bits, two) \
+	tcp_gate_up_shape<TC_MOE_HIDDEN, inner, bits, TC_MOE_OPERAND_PROJECTIONS, 0, false, two>
 #define TCP_GATE(inner, bits, two) tcp_gate_up_shape<TC_MOE_HIDDEN, inner, bits, 1, 0, false, two>
 #define TCP_UP(inner, bits, two) tcp_gate_up_shape<TC_MOE_HIDDEN, inner, bits, 1, 1, false, two>
 #define TCP_DOWN(inner, bits, two) tcp_down_shape<TC_MOE_HIDDEN, inner, bits, false, two>
 /* --exl3_expert_rotation: experts of 640 or 512 columns at the 640 shapes */
-#define TCP_GATE_UP_MIXED(bits, two) tcp_gate_up_shape<TC_MOE_HIDDEN, 640, bits, 2, 0, true, two>
-#define TCP_GATE_MIXED(bits, two) tcp_gate_up_shape<TC_MOE_HIDDEN, 640, bits, 1, 0, true, two>
-#define TCP_UP_MIXED(bits, two) tcp_gate_up_shape<TC_MOE_HIDDEN, 640, bits, 1, 1, true, two>
-#define TCP_DOWN_MIXED(bits, two) tcp_down_shape<TC_MOE_HIDDEN, 640, bits, true, two>
+#define TCP_GATE_UP_MIXED(bits, two) \
+	tcp_gate_up_shape<TC_MOE_HIDDEN, TCP_WIDE_INTERMEDIATE, bits, TC_MOE_OPERAND_PROJECTIONS, 0, true, two>
+#define TCP_GATE_MIXED(bits, two) tcp_gate_up_shape<TC_MOE_HIDDEN, TCP_WIDE_INTERMEDIATE, bits, 1, 0, true, two>
+#define TCP_UP_MIXED(bits, two) tcp_gate_up_shape<TC_MOE_HIDDEN, TCP_WIDE_INTERMEDIATE, bits, 1, 1, true, two>
+#define TCP_DOWN_MIXED(bits, two) tcp_down_shape<TC_MOE_HIDDEN, TCP_WIDE_INTERMEDIATE, bits, true, two>
 /* the 640 hybrid (tcp_gemm_hybrid_item): two 256-column blocks of two tiles a warp, then 128 columns of one */
 #define TCP_GEMM_HYBRID(name, projections, first, bits, two, blocks)           \
 	extern "C" __global__ void __launch_bounds__(TCP_GEMM_THREADS, blocks) \
 		name(struct exl3_tcp_record record, unsigned char *arena)      \
 	{                                                                      \
 		tcp_gemm_hybrid_launch<                                        \
-			tcp_shape<TC_MOE_HIDDEN, 640, projections, first, 2,   \
-				  bits, false, true, two>,                     \
-			tcp_shape<TC_MOE_HIDDEN, 640, projections, first, 1,   \
-				  bits, false, false, two> >(record, arena);   \
+			tcp_shape<TC_MOE_HIDDEN, TCP_WIDE_INTERMEDIATE,        \
+				  projections, first, TCP_WIDE_TILES, bits,    \
+				  false, true, two>,                           \
+			tcp_shape<TC_MOE_HIDDEN, TCP_WIDE_INTERMEDIATE,        \
+				  projections, first, 1, bits, false, false,   \
+				  two> >(record, arena);                       \
 	}
-#define TCP_GEMM_FORMS(suffix, two, blocks)                                  \
-	TCP_GEMM(exl3_tcp_gemm_gate_up_i640_k3##suffix,                      \
-		 TCP_GATE_UP(640, 6, two), blocks)                           \
-	TCP_GEMM(exl3_tcp_gemm_gate_i640_k3##suffix, TCP_GATE(640, 6, two),  \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_up_i640_k3##suffix, TCP_UP(640, 6, two),      \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_down_i640_k3##suffix, TCP_DOWN(640, 6, two),  \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_gate_up_i512_k3##suffix,                      \
-		 TCP_GATE_UP(512, 6, two), blocks)                           \
-	TCP_GEMM(exl3_tcp_gemm_gate_i512_k3##suffix, TCP_GATE(512, 6, two),  \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_up_i512_k3##suffix, TCP_UP(512, 6, two),      \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_down_i512_k3##suffix, TCP_DOWN(512, 6, two),  \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_gate_up_i640_k2##suffix,                      \
-		 TCP_GATE_UP(640, 4, two), blocks)                           \
-	TCP_GEMM(exl3_tcp_gemm_gate_i640_k2##suffix, TCP_GATE(640, 4, two),  \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_up_i640_k2##suffix, TCP_UP(640, 4, two),      \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_down_i640_k2##suffix, TCP_DOWN(640, 4, two),  \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_gate_up_i512_k2##suffix,                      \
-		 TCP_GATE_UP(512, 4, two), blocks)                           \
-	TCP_GEMM(exl3_tcp_gemm_gate_i512_k2##suffix, TCP_GATE(512, 4, two),  \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_up_i512_k2##suffix, TCP_UP(512, 4, two),      \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_down_i512_k2##suffix, TCP_DOWN(512, 4, two),  \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_gate_up_m640_k3##suffix,                      \
-		 TCP_GATE_UP_MIXED(6, two), blocks)                          \
-	TCP_GEMM(exl3_tcp_gemm_gate_m640_k3##suffix, TCP_GATE_MIXED(6, two), \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_up_m640_k3##suffix, TCP_UP_MIXED(6, two),     \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_down_m640_k3##suffix, TCP_DOWN_MIXED(6, two), \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_gate_up_m640_k2##suffix,                      \
-		 TCP_GATE_UP_MIXED(4, two), blocks)                          \
-	TCP_GEMM(exl3_tcp_gemm_gate_m640_k2##suffix, TCP_GATE_MIXED(4, two), \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_up_m640_k2##suffix, TCP_UP_MIXED(4, two),     \
-		 blocks)                                                     \
-	TCP_GEMM(exl3_tcp_gemm_down_m640_k2##suffix, TCP_DOWN_MIXED(4, two), \
-		 blocks)                                                     \
-	TCP_GEMM_HYBRID(exl3_tcp_gemm_gate_up_h640_k3##suffix, 2, 0, 6, two, \
-			blocks)                                              \
-	TCP_GEMM_HYBRID(exl3_tcp_gemm_gate_h640_k3##suffix, 1, 0, 6, two,    \
-			blocks)                                              \
-	TCP_GEMM_HYBRID(exl3_tcp_gemm_up_h640_k3##suffix, 1, 1, 6, two,      \
-			blocks)                                              \
-	TCP_GEMM_HYBRID(exl3_tcp_gemm_gate_up_h640_k2##suffix, 2, 0, 4, two, \
-			blocks)                                              \
-	TCP_GEMM_HYBRID(exl3_tcp_gemm_gate_h640_k2##suffix, 1, 0, 4, two,    \
-			blocks)                                              \
-	TCP_GEMM_HYBRID(exl3_tcp_gemm_up_h640_k2##suffix, 1, 1, 4, two, blocks)
+/* a width's forms (width: its entry part, bits: its bits_x2), each at one or two blocks a multiprocessor */
+#define TCP_GEMM_WIDTH(width, bits, suffix, two, blocks)                     \
+	TCP_GEMM(exl3_tcp_gemm_gate_up_i640_##width##suffix,                 \
+		 TCP_GATE_UP(TCP_WIDE_INTERMEDIATE, bits, two), blocks)      \
+	TCP_GEMM(exl3_tcp_gemm_gate_i640_##width##suffix,                    \
+		 TCP_GATE(TCP_WIDE_INTERMEDIATE, bits, two), blocks)         \
+	TCP_GEMM(exl3_tcp_gemm_up_i640_##width##suffix,                      \
+		 TCP_UP(TCP_WIDE_INTERMEDIATE, bits, two), blocks)           \
+	TCP_GEMM(exl3_tcp_gemm_down_i640_##width##suffix,                    \
+		 TCP_DOWN(TCP_WIDE_INTERMEDIATE, bits, two), blocks)         \
+	TCP_GEMM(exl3_tcp_gemm_gate_up_i512_##width##suffix,                 \
+		 TCP_GATE_UP(TCP_NARROW_INTERMEDIATE, bits, two), blocks)    \
+	TCP_GEMM(exl3_tcp_gemm_gate_i512_##width##suffix,                    \
+		 TCP_GATE(TCP_NARROW_INTERMEDIATE, bits, two), blocks)       \
+	TCP_GEMM(exl3_tcp_gemm_up_i512_##width##suffix,                      \
+		 TCP_UP(TCP_NARROW_INTERMEDIATE, bits, two), blocks)         \
+	TCP_GEMM(exl3_tcp_gemm_down_i512_##width##suffix,                    \
+		 TCP_DOWN(TCP_NARROW_INTERMEDIATE, bits, two), blocks)       \
+	TCP_GEMM(exl3_tcp_gemm_gate_up_m640_##width##suffix,                 \
+		 TCP_GATE_UP_MIXED(bits, two), blocks)                       \
+	TCP_GEMM(exl3_tcp_gemm_gate_m640_##width##suffix,                    \
+		 TCP_GATE_MIXED(bits, two), blocks)                          \
+	TCP_GEMM(exl3_tcp_gemm_up_m640_##width##suffix,                      \
+		 TCP_UP_MIXED(bits, two), blocks)                            \
+	TCP_GEMM(exl3_tcp_gemm_down_m640_##width##suffix,                    \
+		 TCP_DOWN_MIXED(bits, two), blocks)                          \
+	TCP_GEMM_HYBRID(exl3_tcp_gemm_gate_up_h640_##width##suffix,          \
+			TC_MOE_OPERAND_PROJECTIONS, 0, bits, two, blocks)    \
+	TCP_GEMM_HYBRID(exl3_tcp_gemm_gate_h640_##width##suffix, 1, 0, bits, \
+			two, blocks)                                         \
+	TCP_GEMM_HYBRID(exl3_tcp_gemm_up_h640_##width##suffix, 1, 1, bits,   \
+			two, blocks)
+#define TCP_GEMM_FORMS(suffix, two, blocks)                          \
+	TCP_GEMM_WIDTH(k2, EXL3_BITS_X2_K2, suffix, two, blocks)     \
+	TCP_GEMM_WIDTH(k2_5, EXL3_BITS_X2_K2_5, suffix, two, blocks) \
+	TCP_GEMM_WIDTH(k3, EXL3_BITS_X2_K3, suffix, two, blocks)
 TCP_GEMM_FORMS(, false, 1)
 TCP_GEMM_FORMS(_b2, true, TCP_GEMM_TWO_BLOCKS)
+#undef TCP_GEMM_WIDTH
 #undef TCP_GEMM_FORMS
 #undef TCP_GEMM_HYBRID
 #undef TCP_GEMM
@@ -325,24 +313,26 @@ __device__ __forceinline__ void
 tcp_down_launch(const struct exl3_tcp_record &record, unsigned char *arena)
 {
 	const struct tcp_parts parts = tcp_parts_of(record, arena);
-	const int32_t *sorted = parts.table + 4;
+	const int32_t *sorted = parts.table + TCP_TABLE_COUNTS;
 	/* a part's sorted positions: the first half's come first (tcp_route's halves) */
 	const int64_t first =
-		record.part == EXL3_TCP_SECOND_HALF ? parts.table[3] : 0;
+		record.part == EXL3_TCP_SECOND_HALF ? parts.table[TCP_TABLE_FIRST_ROUTED] : 0;
 	const int64_t tasks = record.part == EXL3_TCP_FIRST_HALF ?
-				      parts.table[3] :
-				      parts.table[0];
-	for (int64_t position = first + (int64_t)blockIdx.x * TCP_DOWN_WARPS + (threadIdx.x >> 5); position < tasks;
+				      parts.table[TCP_TABLE_FIRST_ROUTED] :
+				      parts.table[TCP_TABLE_ROUTED];
+	for (int64_t position = first + (int64_t)blockIdx.x * TCP_DOWN_WARPS + (threadIdx.x >> TC_MOE_WARP_SHIFT);
+	     position < tasks;
 	     position += (int64_t)gridDim.x * TCP_DOWN_WARPS) {
 		const int expert = (int)tcp_pick(record, arena, sorted[position]).expert;
 		const uint64_t gate = tcp_matrix(record, arena, expert, 0), up = tcp_matrix(record, arena, expert, 1);
-		const uint64_t down = tcp_matrix(record, arena, expert, 2);
+		const uint64_t down = tcp_matrix(record, arena, expert, TCP_DOWN_PROJECTION);
 		const uint32_t width = mixed ? tcp_width(record, expert) : (uint32_t)intermediate;
 		tcp_down_row<intermediate, mixed>(parts.gate_result + position * intermediate,
 						  parts.up_result + position * intermediate,
 						  (const __half *)(arena + tcp_svh(record, 0, gate, width)),
 						  (const __half *)(arena + tcp_svh(record, 1, up, width)),
-						  (const __half *)(arena + tcp_suh(record, 2, down, width)),
+						  (const __half *)(arena +
+								   tcp_suh(record, TCP_DOWN_PROJECTION, down, width)),
 						  record.activation_limit, parts.unscale + position,
 						  width != intermediate);
 	}
@@ -350,17 +340,17 @@ tcp_down_launch(const struct exl3_tcp_record &record, unsigned char *arena)
 extern "C" __global__ void __launch_bounds__(EXL3_TCP_DOWN_THREADS)
 	exl3_tcp_down_i640(struct exl3_tcp_record record, unsigned char *arena)
 {
-	tcp_down_launch<640, false>(record, arena);
+	tcp_down_launch<TCP_WIDE_INTERMEDIATE, false>(record, arena);
 }
 extern "C" __global__ void __launch_bounds__(EXL3_TCP_DOWN_THREADS)
 	exl3_tcp_down_i512(struct exl3_tcp_record record, unsigned char *arena)
 {
-	tcp_down_launch<512, false>(record, arena);
+	tcp_down_launch<TCP_NARROW_INTERMEDIATE, false>(record, arena);
 }
 extern "C" __global__ void __launch_bounds__(EXL3_TCP_DOWN_THREADS)
 	exl3_tcp_down_m640(struct exl3_tcp_record record, unsigned char *arena)
 {
-	tcp_down_launch<640, true>(record, arena);
+	tcp_down_launch<TCP_WIDE_INTERMEDIATE, true>(record, arena);
 }
 
 extern "C" __global__ void __launch_bounds__(EXL3_TCP_COMBINE_THREADS)
@@ -385,8 +375,9 @@ extern "C" __global__ void __launch_bounds__(EXL3_TCP_COMBINE_THREADS)
 				return false;
 			const struct router_pick &pick =
 				tcp_pick(record, arena, pair);
-			*svh = (const __half *)(arena + tcp_svh(record, 2,
-								tcp_matrix(record, arena, (int)pick.expert, 2),
+			*svh = (const __half *)(arena + tcp_svh(record, TCP_DOWN_PROJECTION,
+								tcp_matrix(record, arena, (int)pick.expert,
+									   TCP_DOWN_PROJECTION),
 								tcp_width(record, (int)pick.expert)));
 			*weight = pick.route_weight;
 			return true;

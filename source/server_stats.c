@@ -4,6 +4,7 @@
  * Request identity contains no headers, credentials, messages or tool definitions.
  */
 #include "server_internal.h"
+#include "anemone/hooks.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -33,6 +34,39 @@ struct live_output {
 static void text_copy(char *output, size_t capacity, const char *text)
 {
 	(void)snprintf(output, capacity, "%s", text != NULL ? text : "");
+}
+
+static void live_output_free(struct live_output *output)
+{
+	live_snapshot_tables_free(&output->snapshot);
+	live_snapshot_tables_free(&output->rendering);
+	free(output);
+}
+
+/* a snapshot's request room: every connection's request, and the disconnected active commands */
+static uint32_t request_room(const struct http_server *server)
+{
+	return server->connection_limit +
+	       server->description.session_slot_count;
+}
+
+result_status server_stats_tables(struct http_server *server)
+{
+	const uint32_t slots = server->description.session_slot_count;
+	result_status status = live_snapshot_tables(&server->live, slots,
+						    request_room(server));
+	status = status == OK ? engine_stats_tables(&server->sampled, slots) :
+				status;
+	return status == OK ?
+		       live_sampler_tables(&server->live_sampler, slots) :
+		       status;
+}
+
+void server_stats_tables_free(struct http_server *server)
+{
+	live_snapshot_tables_free(&server->live);
+	engine_stats_tables_free(&server->sampled);
+	live_sampler_tables_free(&server->live_sampler);
 }
 
 static uint32_t user_index(const struct live_snapshot *snapshot,
@@ -104,12 +138,15 @@ static void *output_worker(void *argument)
 			}
 		}
 		stopped = output->stopped;
-		if (!stopped) {
-			*snapshot = output->snapshot;
-			output->pending = false;
-		}
+		const bool copied =
+			!stopped &&
+			live_snapshot_copy(snapshot, &output->snapshot) == OK;
+		output->pending = output->pending && stopped;
 		if (pthread_mutex_unlock(&output->lock) != 0 || stopped) {
 			break;
+		}
+		if (!copied) {
+			continue;
 		}
 		json.count = json.sent = text.count = text.sent = 0;
 		json.is_short = text.is_short = false;
@@ -160,7 +197,7 @@ static void *output_worker(void *argument)
 	(void)close(output->descriptor);
 	(void)pthread_cond_destroy(&output->wake);
 	(void)pthread_mutex_destroy(&output->lock);
-	free(output);
+	live_output_free(output);
 	return NULL;
 }
 
@@ -195,20 +232,25 @@ void server_stats_open(struct http_server *server, double now)
 	if (output == NULL) {
 		return;
 	}
-	if (pthread_mutex_init(&output->lock, NULL) != 0) {
-		free(output);
+	const uint32_t slots = server->description.session_slot_count;
+	if (live_snapshot_tables(&output->snapshot, slots,
+				 request_room(server)) != OK ||
+	    live_snapshot_tables(&output->rendering, slots,
+				 request_room(server)) != OK ||
+	    pthread_mutex_init(&output->lock, NULL) != 0) {
+		live_output_free(output);
 		return;
 	}
 	if (pthread_cond_init(&output->wake, NULL) != 0) {
 		(void)pthread_mutex_destroy(&output->lock);
-		free(output);
+		live_output_free(output);
 		return;
 	}
 	pthread_attr_t attributes;
 	if (pthread_attr_init(&attributes) != 0) {
 		(void)pthread_cond_destroy(&output->wake);
 		(void)pthread_mutex_destroy(&output->lock);
-		free(output);
+		live_output_free(output);
 		return;
 	}
 	output->is_json = server->live_stats_json;
@@ -232,7 +274,7 @@ void server_stats_open(struct http_server *server, double now)
 		}
 		(void)pthread_cond_destroy(&output->wake);
 		(void)pthread_mutex_destroy(&output->lock);
-		free(output);
+		live_output_free(output);
 	}
 }
 
@@ -268,9 +310,11 @@ MUST_CHECK static result_status snapshot_taken(struct http_server *server,
 					       double now,
 					       struct live_snapshot *snapshot)
 {
-	*snapshot = server->live;
-	const result_status status =
-		engine_stats_snapshot(server->engine, &snapshot->engine);
+	ASSERT(server_tables_present(server));
+	result_status status = live_snapshot_copy(snapshot, &server->live);
+	status = status == OK ? engine_stats_snapshot(server->engine,
+						      &snapshot->engine) :
+				status;
 	if (status != OK) {
 		return status;
 	}
@@ -358,13 +402,18 @@ MUST_CHECK static result_status snapshot_taken(struct http_server *server,
 result_status server_stats_json(struct http_server *server, double now,
 				struct chat_buffer *output)
 {
-	struct live_snapshot *const snapshot = malloc(sizeof(*snapshot));
+	ASSERT(server_tables_present(server));
+	struct live_snapshot *const snapshot = calloc(1, sizeof(*snapshot));
 	if (snapshot == NULL) {
 		return STATUS_OUT_OF_MEMORY;
 	}
-	result_status status = snapshot_taken(server, now, snapshot);
+	result_status status = live_snapshot_tables(
+		snapshot, server->description.session_slot_count,
+		request_room(server));
+	status = status == OK ? snapshot_taken(server, now, snapshot) : status;
 	status = status == OK ? live_stats_json_entry(snapshot, output) :
 				status;
+	live_snapshot_tables_free(snapshot);
 	free(snapshot);
 	return status;
 }
@@ -376,10 +425,9 @@ void server_stats_sample(struct http_server *server, double now)
 	}
 	server->live_sample_seconds =
 		now + (double)LIVE_SAMPLE_PERIOD_NS / NANOSECONDS_PER_SECOND;
-	struct engine_stats counters;
-	if (engine_stats_counters(server->engine, &counters) == OK &&
-	    live_sampler_take(&server->live_sampler, &counters) == OK) {
-		server->live.engine = counters;
+	if (engine_stats_counters(server->engine, &server->sampled) == OK &&
+	    live_sampler_take(&server->live_sampler, &server->sampled) == OK &&
+	    engine_stats_copy(&server->live.engine, &server->sampled) == OK) {
 		server->live_sample_seconds = (double)server->live_sampler.next_sample_ns / NANOSECONDS_PER_SECOND;
 	}
 }
@@ -410,6 +458,7 @@ void server_stats_queued(struct http_server *server,
 {
 	struct live_request_record *const request = &connection->live;
 	connection->live_is_request = true;
+	server_metrics_admitted(server, connection);
 	request->options = connection->request;
 	request->tools_declared = connection->request.tools_declared;
 	request->rendered_prompt_tokens = connection->token_count;
@@ -431,6 +480,7 @@ void server_stats_started(struct http_server *server,
 			  uint32_t kept, double now)
 {
 	struct live_request_record *const request = &connection->live;
+	ASSERT(server_tables_present(server));
 	const struct slot_history *const history =
 		&server->slot_histories[session_slot];
 	request->slot = session_slot;
@@ -462,6 +512,7 @@ void server_stats_started(struct http_server *server,
 static uint32_t request_finished(struct http_server *server,
 				 const struct live_request_record *request)
 {
+	server_metrics_finished(server, request);
 	const uint32_t index = server->finished_next;
 	server->live.finished[index] = *request;
 	server->finished_next = (index + 1u) % LIVE_STATS_FINISHED_CAPACITY;
@@ -472,9 +523,9 @@ static uint32_t request_finished(struct http_server *server,
 	return index;
 }
 
-void server_stats_rejected(struct http_server *server,
-			   struct connection *connection, uint32_t status,
-			   double now)
+static void server_stats_rejected(struct http_server *server,
+				  struct connection *connection,
+				  uint32_t status, double now)
 {
 	const uint32_t user = user_index(&server->live, connection->live.user);
 	if (user < server->live.user_count) {
@@ -516,6 +567,7 @@ void server_stats_disconnected(struct http_server *server,
 void server_stats_final(struct http_server *server, uint32_t session_slot,
 			const struct generation_event *event, double now)
 {
+	ASSERT(server_tables_present(server));
 	struct active_command *const active = &server->active[session_slot];
 	struct connection *const connection =
 		active->connection != NO_CONNECTION ?
@@ -524,6 +576,11 @@ void server_stats_final(struct http_server *server, uint32_t session_slot,
 	struct live_request_record *const request =
 		connection != NULL ? &connection->live :
 				     &active->disconnected_live;
+	/* A Messages adapter failure (unsupported tool output answered with api_error) cancels the engine command,
+	 * but it is the server's error, as on the engine-error path, not a client cancellation. The failure is marked
+	 * on the request record, which a connection closed before this final event hands to disconnected_live. */
+	const bool adapter_failed =
+		strcmp(request->last_error, SERVER_MESSAGES_OUTPUT_ERROR) == 0;
 	if (engine_stats_slot(server->engine, session_slot, &request->engine) !=
 	    OK) {
 		text_copy(request->last_error, sizeof(request->last_error),
@@ -532,8 +589,10 @@ void server_stats_final(struct http_server *server, uint32_t session_slot,
 	request->finished_seconds = now;
 	request->phase_seconds = now;
 	text_copy(request->phase, sizeof(request->phase), "finishing");
-	const bool failed = event->event_kind == GENERATION_EVENT_FAILED;
-	const bool cancelled = event->event_kind == GENERATION_EVENT_CANCELLED;
+	const bool failed = event->event_kind == GENERATION_EVENT_FAILED ||
+			    adapter_failed;
+	const bool cancelled = !failed &&
+			       event->event_kind == GENERATION_EVENT_CANCELLED;
 	const bool stopped_visibly =
 		(connection != NULL && connection->answer.stop_matched) ||
 		strcmp(request->finish_reason, "stop") == 0 ||
@@ -562,7 +621,9 @@ void server_stats_final(struct http_server *server, uint32_t session_slot,
 		  reason);
 	if (failed) {
 		text_copy(request->last_error, sizeof(request->last_error),
-			  status_text((result_status)event->status));
+			  event->event_kind == GENERATION_EVENT_FAILED ?
+				  status_text((result_status)event->status) :
+				  SERVER_MESSAGES_OUTPUT_ERROR);
 	}
 	const uint32_t index = request_finished(server, request);
 	server->live.sessions[session_slot].last_request = *request;
@@ -597,8 +658,17 @@ void server_stats_output(struct http_server *server,
 	}
 }
 
-void server_stats_refused(struct http_server *server, uint32_t status)
+void server_stats_refused(struct http_server *server,
+			  struct connection *connection, uint32_t status,
+			  double now)
 {
+	/* Exporter failures are not generation failures or refusals of the authenticated user's work. */
+	if (connection->head.route == CHAT_ROUTE_METRICS &&
+	    status == HTTP_SERVER_ERROR) {
+		return;
+	}
+	server_metrics_refused(server, connection->head.route, status);
+	server_stats_rejected(server, connection, status, now);
 	server->live.refused_503 += status == HTTP_UNAVAILABLE ? 1u : 0u;
 	server->live.refused_400 += status == HTTP_BAD_REQUEST ? 1u : 0u;
 	server->live.refused_auth +=

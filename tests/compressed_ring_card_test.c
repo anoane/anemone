@@ -96,7 +96,7 @@ static bool okay(result_status status, const char *what)
 
 static bool opened(void)
 {
-	uint32_t count = 0, selected[RANKS], found = 0;
+	uint32_t count = 0, selected[RANKS] = { 0 }, found = 0;
 	if (!okay(backend->card_count(&count), "card inventory"))
 		return false;
 	for (uint32_t index = 0; index < count; index++) {

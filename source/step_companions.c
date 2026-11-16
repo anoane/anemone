@@ -61,7 +61,8 @@ result_status step_groups_attach(struct step_driver *driver,
 	    driver == NULL || programs == NULL || program_count == 0 ||
 	    program_count != driver->program_count ||
 	    driver->companion_segments != NULL || driver->sequence != 0 ||
-	    driver->pipeline != NULL || driver->graphs_attempted)
+	    driver->pipeline != NULL || driver->graphs_attempted ||
+	    driver->flight_bank_count != 0)
 		return STATUS_INVALID_ARGUMENT;
 	if (driver->image_programs != NULL ||
 	    driver->programs[0]->expert_pause_count != 0)

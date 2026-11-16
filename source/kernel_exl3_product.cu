@@ -18,6 +18,7 @@
  * compiler already emits for the retained kernel. No arithmetic changes. */
 #include <cuda_fp16.h>
 #include "anemone/exl3_records.h"
+#include "kernel_exl3_ring.cuh"
 #include "anemone/linear_records.h"
 
 #define DECODE_C_WARP 32u
@@ -43,7 +44,7 @@
 #define DECODE_C_TWO_OUTPUT_TILES 2
 #define DECODE_C_FOUR_OUTPUT_TILES 4
 
-template <uint32_t bits>
+template <uint32_t bits_x2>
 __device__ static __forceinline__ uint32_t decode_c_pair(uint64_t window,
 							 uint32_t low_shift,
 							 uint32_t high_shift)
@@ -107,7 +108,7 @@ decode_c_load(struct decode_c_stage<tiles, groups> *stage,
 	}
 }
 
-template <uint32_t bits, uint32_t tiles, uint32_t groups>
+template <uint32_t bits_x2, uint32_t tiles, uint32_t groups>
 __device__ static __forceinline__ void
 decode_c_compute(const struct decode_c_stage<tiles, groups> *stage,
 		 const uint32_t *symbol_shift,
@@ -125,7 +126,7 @@ decode_c_compute(const struct decode_c_stage<tiles, groups> *stage,
 					DECODE_C_HIGH_COLUMN_BIT +
 				(fragment / DECODE_C_PAIR) *
 					DECODE_C_HIGH_ROW_BIT;
-			weights[fragment] = decode_c_pair<bits>(
+			weights[fragment] = decode_c_pair<bits_x2>(
 				window, symbol_shift[element],
 				symbol_shift[element + 1u]);
 		}
@@ -212,7 +213,7 @@ struct decode_c_place {
 	uint32_t pair_count;
 };
 
-template <uint32_t bits, uint32_t slices, uint32_t tiles, uint32_t groups,
+template <uint32_t bits_x2, uint32_t slices, uint32_t tiles, uint32_t groups,
 	  bool coherent>
 __device__ static void decode_c_product_core(const struct decode_c_place *place,
 					     unsigned char *arena)
@@ -251,18 +252,16 @@ __device__ static void decode_c_product_core(const struct decode_c_place *place,
 					    inputs) +
 			lane_place + (uint64_t)first * operand_words_per_tile;
 	}
-	const uint32_t ring_bits = EXL3_TILE_VALUES * bits;
-	const uint32_t ring_words = ring_bits / EXL3_WORD_BITS;
-	const uint32_t begin = ((lane * DECODE_C_VALUES_PER_LANE + 1u) * bits +
-				ring_bits - EXL3_STATE_BITS) %
-			       ring_bits;
+	typedef exl3_lane_ring<bits_x2> ring;
+	const uint32_t ring_words = ring::ring_words;
+	const uint32_t begin = ring::begin(lane);
 	const uint32_t word = begin / EXL3_WORD_BITS;
 	const uint32_t next_word = (word + 1u) % ring_words;
 	const uint32_t shift = begin % EXL3_WORD_BITS;
 	uint32_t symbol_shift[DECODE_C_VALUES_PER_LANE];
 	for (uint32_t symbol = 0; symbol < DECODE_C_VALUES_PER_LANE; symbol++)
 		symbol_shift[symbol] = EXL3_WORD_BITS + EXL3_STATE_BITS -
-				       shift - symbol * bits;
+				       shift - ring::offset(symbol);
 	const uint32_t output_tiles = outputs / EXL3_TILE;
 	/* Words between consecutive K tiles of one output tile. */
 	const uint64_t tile_stride = (uint64_t)output_tiles * ring_words;
@@ -294,8 +293,8 @@ __device__ static void decode_c_product_core(const struct decode_c_place *place,
 			&stage_b, word_pointer + tile_stride,
 			successor_pointer + tile_stride, operand_pointer,
 			ring_words, true);
-		decode_c_compute<bits, tiles, groups>(&stage_a, symbol_shift,
-						      accumulators);
+		decode_c_compute<bits_x2, tiles, groups>(&stage_a, symbol_shift,
+							 accumulators);
 		word_pointer += DECODE_C_PREFETCH_STEPS * tile_stride;
 		successor_pointer += DECODE_C_PREFETCH_STEPS * tile_stride;
 		for (uint32_t group = 0; group < groups; group++)
@@ -305,12 +304,12 @@ __device__ static void decode_c_product_core(const struct decode_c_place *place,
 			decode_c_load<tiles, groups, coherent>(
 				&stage_a, word_pointer, successor_pointer,
 				operand_pointer, ring_words, false);
-		decode_c_compute<bits, tiles, groups>(&stage_b, symbol_shift,
-						      accumulators);
+		decode_c_compute<bits_x2, tiles, groups>(&stage_b, symbol_shift,
+							 accumulators);
 	}
 	if (step < steps)
-		decode_c_compute<bits, tiles, groups>(&stage_a, symbol_shift,
-						      accumulators);
+		decode_c_compute<bits_x2, tiles, groups>(&stage_a, symbol_shift,
+							 accumulators);
 	__shared__ float partial[slices][tiles][groups][DECODE_C_WARP]
 				[DECODE_C_CHAINS];
 	for (uint32_t tile = 0; tile < tiles; tile++)
@@ -350,7 +349,7 @@ __device__ static void decode_c_product_core(const struct decode_c_place *place,
 	}
 }
 
-template <uint32_t bits, bool down, uint32_t slices, uint32_t tiles,
+template <uint32_t bits_x2, bool down, uint32_t slices, uint32_t tiles,
 	  uint32_t groups>
 __device__ static void exl3_decode_c_product(struct exl3_expert_record record,
 					     unsigned char *arena)
@@ -376,44 +375,35 @@ __device__ static void exl3_decode_c_product(struct exl3_expert_record record,
 		       (blockIdx.z == 0 ? job->gate_offset : job->up_offset);
 	place.operand_offset = record.operands_offset;
 	place.product_offset = record.products_offset;
-	decode_c_product_core<bits, slices, tiles, groups, false>(&place,
-								  arena);
+	decode_c_product_core<bits_x2, slices, tiles, groups, false>(&place,
+								     arena);
 }
 
-#define EXL3_DECODE_C_ENTRY(name, bits, down, slices, tiles, groups)      \
-	extern "C" __global__ void name(struct exl3_expert_record record, \
-					unsigned char *arena)             \
-	{                                                                 \
-		exl3_decode_c_product<bits, down, slices, tiles, groups>( \
-			record, arena);                                   \
+#define EXL3_DECODE_C_ENTRY(name, bits_x2, down, slices, tiles, groups)      \
+	extern "C" __global__ void name(struct exl3_expert_record record,    \
+					unsigned char *arena)                \
+	{                                                                    \
+		exl3_decode_c_product<bits_x2, down, slices, tiles, groups>( \
+			record, arena);                                      \
 	}
-#define EXL3_DECODE_C_FAMILY_STAMP(tiles, groups)                          \
-	EXL3_DECODE_C_ENTRY(exl3_c_gate_up_k2_t##tiles##_g##groups,        \
-			    EXL3_MINIMUM_BITS, false, EXL3_PRODUCT_SLICES, \
-			    tiles, groups)                                 \
-	EXL3_DECODE_C_ENTRY(exl3_c_gate_up_k3_t##tiles##_g##groups,        \
-			    EXL3_MAXIMUM_BITS, false, EXL3_PRODUCT_SLICES, \
-			    tiles, groups)                                 \
-	EXL3_DECODE_C_ENTRY(exl3_c_down_k2_t##tiles##_g##groups,           \
-			    EXL3_MINIMUM_BITS, true, EXL3_PRODUCT_SLICES,  \
-			    tiles, groups)                                 \
-	EXL3_DECODE_C_ENTRY(exl3_c_down_k3_t##tiles##_g##groups,           \
-			    EXL3_MAXIMUM_BITS, true, EXL3_PRODUCT_SLICES,  \
-			    tiles, groups)
-/* The explicit eight-partial alternative (relaxed preparation only). */
-#define EXL3_DECODE_C_RELAXED_STAMP(tiles, groups)                         \
-	EXL3_DECODE_C_ENTRY(exl3_c_gate_up_k2_s8_t##tiles##_g##groups,     \
-			    EXL3_MINIMUM_BITS, false, EXL3_RELAXED_SLICES, \
-			    tiles, groups)                                 \
-	EXL3_DECODE_C_ENTRY(exl3_c_gate_up_k3_s8_t##tiles##_g##groups,     \
-			    EXL3_MAXIMUM_BITS, false, EXL3_RELAXED_SLICES, \
-			    tiles, groups)                                 \
-	EXL3_DECODE_C_ENTRY(exl3_c_down_k2_s8_t##tiles##_g##groups,        \
-			    EXL3_MINIMUM_BITS, true, EXL3_RELAXED_SLICES,  \
-			    tiles, groups)                                 \
-	EXL3_DECODE_C_ENTRY(exl3_c_down_k3_s8_t##tiles##_g##groups,        \
-			    EXL3_MAXIMUM_BITS, true, EXL3_RELAXED_SLICES,  \
-			    tiles, groups)
+/* A width's products (four contiguous K partials), and the explicit eight-partial alternative (relaxed preparation
+ * only). */
+#define EXL3_DECODE_C_WIDTH(width, bits_x2, order, slices, tiles, groups)      \
+	EXL3_DECODE_C_ENTRY(                                                   \
+		exl3_c_gate_up_##width##order##_t##tiles##_g##groups, bits_x2, \
+		false, slices, tiles, groups)                                  \
+	EXL3_DECODE_C_ENTRY(exl3_c_down_##width##order##_t##tiles##_g##groups, \
+			    bits_x2, true, slices, tiles, groups)
+#define EXL3_DECODE_C_WIDTHS(order, slices, tiles, groups)                     \
+	EXL3_DECODE_C_WIDTH(k2, EXL3_BITS_X2_K2, order, slices, tiles, groups) \
+	EXL3_DECODE_C_WIDTH(k2_5, EXL3_BITS_X2_K2_5, order, slices, tiles,     \
+			    groups)                                            \
+	EXL3_DECODE_C_WIDTH(k3, EXL3_BITS_X2_K3, order, slices, tiles, groups) \
+	EXL3_DECODE_C_WIDTH(k4, EXL3_BITS_X2_K4, order, slices, tiles, groups)
+#define EXL3_DECODE_C_FAMILY_STAMP(tiles, groups) \
+	EXL3_DECODE_C_WIDTHS(, EXL3_PRODUCT_SLICES, tiles, groups)
+#define EXL3_DECODE_C_RELAXED_STAMP(tiles, groups) \
+	EXL3_DECODE_C_WIDTHS(_s8, EXL3_RELAXED_SLICES, tiles, groups)
 #define EXL3_DECODE_C_FAMILY(tiles, groups) \
 	EXL3_DECODE_C_FAMILY_STAMP(tiles, groups)
 #define EXL3_DECODE_C_RELAXED(tiles, groups) \
@@ -424,6 +414,8 @@ EXL3_DECODE_C_FAMILY(DECODE_C_FOUR_OUTPUT_TILES, 1)
 
 EXL3_DECODE_C_RELAXED(DECODE_C_TWO_OUTPUT_TILES, 1)
 EXL3_DECODE_C_RELAXED(DECODE_C_FOUR_OUTPUT_TILES, 1)
+#undef EXL3_DECODE_C_WIDTHS
+#undef EXL3_DECODE_C_WIDTH
 #undef EXL3_DECODE_C_RELAXED_STAMP
 #undef EXL3_DECODE_C_FAMILY_STAMP
 #undef EXL3_DECODE_C_RELAXED

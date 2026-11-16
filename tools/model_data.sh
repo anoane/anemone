@@ -25,6 +25,6 @@ convert=$script_directory/convert
 "$python" "$convert/make_pack.py" verify "$destination/original.anemone" --jobs "$jobs"
 (cd "$destination" && sha256sum -c "$repository/docs/user/model-data/outputs.sha256")
 "$python" "$convert/make_hybrid.py" "$official" "$exl3" "$destination/hybrid"
-"$python" "$convert/make_virtual_pack.py" --native "$destination/original.anemone" --hybrid "$destination/hybrid" --output "$destination/model.exl3map"
+"$python" "$convert/make_virtual_pack.py" --native "$destination/original.anemone" --hybrid "$destination/hybrid" --exl3-config "$exl3/quantization_config.json" --output "$destination/model.exl3map"
 (cd "$destination" && sha256sum tokenizer.bin original.anemone model.exl3map > SHA256SUMS)
 echo "Prepared $destination; retain the original pack, hybrid links and EXL3 source shards at their absolute paths."

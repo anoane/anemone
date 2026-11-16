@@ -541,7 +541,8 @@ int main(void)
 		storage_direct.reader_open(copy_paths, 1, &single_copy_reader);
 	if (first_status != STATUS_OK) {
 		expect_status(first_status, STATUS_OK, "one copy opens");
-		give_up("no copy opens: the current directory must take direct reads (O_DIRECT), on a drive within the limit");
+		give_up("no copy opens: the current directory must take direct reads (O_DIRECT), on a drive within "
+		        "the limit");
 	}
 	if (storage_direct.reader_describe(single_copy_reader, &description) !=
 		    STATUS_OK ||

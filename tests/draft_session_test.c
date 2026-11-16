@@ -7,6 +7,7 @@
 
 #include "draft_session.h"
 #include "engine_internal.h"
+#include "byte_identity.h"
 
 #define LOW_ESTIMATE 200u
 #define HIGH_ESTIMATE 800u
@@ -92,7 +93,7 @@ static bool batch_shape_costs(struct inference_engine *engine,
 			return false;
 	engine_draft_depths(engine, flight, taken, PLANNING_OWNERS, caps);
 	if (caps[0] != PLANNING_DRAFTS || caps[1] != PLANNING_DRAFTS ||
-	    memcmp(before, engine->cursors, sizeof(before)) != 0)
+	    !bytes_identical(before, engine->cursors, sizeof(before)))
 		return false;
 	engine->most_rows = PLANNING_SMALL_ROWS;
 	engine_draft_depths(engine, flight, taken, PLANNING_OWNERS, caps);

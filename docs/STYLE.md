@@ -12,13 +12,14 @@ exempt from the lint and the analysers; the rules apply to it by review.
   name says what the thing is, in full words: `expert_index`, not `idx`. (full words: by review)
 - No bare numbers: only 0 and 1 may appear in code. Every other number gets its name in an object-like `#define`,
   an enumerator or a `static const` table. (a printable character used as a number: by review)
-- At most 120 columns to a line; the layout is building_blocks/.clang-format's (the Linux format) wherever a file
-  is formatted. No count of lines (the owner, 2026-10-25): write only the code that is needed, in the fewest moving
+- At most 120 columns to a line; the layout is the repository's `.clang-format` (the Linux format) wherever a
+  file is formatted. No count of lines (the owner, 2026-10-25): write only the code that is needed, in the fewest moving
   parts the architecture allows: no speculative generality, no duplication, no thousand lines where better logic
   needs a hundred. Less code is easier to keep correct, to maintain and to make fast. Engine files are
   `include/anemone/<name>` and
   `source/<name>`, tests are `tests/<name>`, all `.c`, `.h`, `.cu` or `.cuh`; nothing else lies beside them.
-- `source/main.c` is the program; every other source file is linked into it and into every test. A test is
+- `source/main.c` holds only the program's `main()`; every other source file, `source/commands.c` (the commands)
+  among them, is linked into the program and into every test. A test is
   `tests/<name>_test.c`; one that needs the cards is `tests/<name>_card_test.c`, built with the others and run by
   `make card_tests`. What tests share (`tests/<name>.c`, `.h`) is prefixed `test_` in its names.
 - No escape hatch: `NOLINT`, `cppcheck-suppress`, `#pragma GCC diagnostic`, `system_header` or `optimize`, the
@@ -28,13 +29,62 @@ exempt from the lint and the analysers; the rules apply to it by review.
   (`include/anemone/*_seam.h`) until it has two users. (by review)
 
 ## What every function does
-- It checks every input, size, bound and return value: bad input is an `anemone_status`, never a crash. (by
+- It checks every input, size, bound and return value: bad input is a `result_status`, never a crash. (by
   review; a status that nobody looks at does not compile)
-- If it can fail it returns `ANEMONE_MUST_CHECK anemone_status`. On failure it leaves every scalar output
-  untouched; the contents of a caller's buffer it was filling are unspecified and must not be used. (by review)
+- If it can fail it returns `MUST_CHECK result_status` (`include/anemone/status.h`). On failure it leaves every
+  scalar output untouched; the contents of a caller's buffer it was filling are unspecified and must not be used.
+  (by review)
 - It allocates nothing on the token path: what a card holds is placed at load, at fixed offsets. Every wait has a
-  deadline. Its failure paths can be reached by a test: an `ANEMONE_FAULT_POINT` stands where the outside world
-  can fail. (by review)
+  deadline. Its failure paths can be reached by a test: a `FAULT_POINT(name)` (`include/anemone/hooks.h`) stands
+  where the outside world can fail. (by review)
+
+## Quality, safety and security bar
+The owner's bar (2026-11-07): code of the highest quality, written to MISRA C practice, secure, audited, reviewed,
+free of known defects, memory-efficient and small. The engine follows MISRA C:2012 (with its amendments) as a
+practice, not a certification claim: where a rule is enforced by `make check` it is unmarked, otherwise it is
+marked (by review) until `make analysis` runs a MISRA checker. Kernels follow the kernel rules below instead.
+- Behaviour is defined: nothing relies on undefined, unspecified or implementation-defined behaviour beyond what
+  Linux on x86-64 and the CUDA driver interface document. Every conversion that can change a value is explicit
+  and its range proven where it is written (essential types; `-Wconversion` holds the rest).
+- Control flow is plain: no recursion, so every stack is bounded; every loop and every wait has a bound or a
+  deadline; every `switch` handles every enumerator; `goto` only jumps forward to a cleanup or refusal label of
+  the same function (the one deviation from advisory rule 15.1). No side effect in the right operand of `&&`/`||`,
+  in `sizeof`, or in a hook's argument; `++` and `--` stand alone. (by review)
+- Types and pointers: no unions; type punning only through `memcpy`; pointer arithmetic stays inside one object;
+  a cast between object pointer types goes only to or from `unsigned char *` or `void *` with alignment proven;
+  every parameter that is not written is `const`; everything not exported is `static`. (by review)
+- External input is hostile: every byte from a socket, request, file, pack or environment is validated against
+  named limits (body size, nesting depth, string length, counts, enum ranges) before use. Every size computation
+  that can overflow is checked before it is used to allocate, index or copy. Parsers of external input have fuzz
+  cases under `tests/` run with the sanitizers. (by review)
+- Library use is bounded: no `strcpy`, `strcat`, `sprintf`, `strtok`, `atoi`/`atof`/`atol`, `gets`,
+  `setjmp`/`longjmp`; text goes through `snprintf` with its result checked, or `memcpy` with checked sizes.
+  (by review until the lint refuses the names)
+- Secrets: key comparison is constant-time; a key is never logged, echoed in an error, placed in a label or kept
+  in a buffer longer than its check; failed authentication reveals nothing about which part failed. (by review)
+- Memory: what the engine holds is sized from named constants and placed at load; nothing is allocated per token
+  or per request on the serving path; every load-time allocation has its failure path and one owner that frees
+  it. A new table, cache or buffer states its peak bytes in its comment and in the change's report. Prefer
+  streaming over buffering a whole body. (by review)
+- Footprint: one implementation per concept, table-driven where data says it better than code, no dead code,
+  no copy of a helper that exists. A change reports its added and removed lines and the release binary's size
+  difference. (by review)
+- Bug free means no known defect is merged: every finding of the analysers, the sanitizers, the fuzz cases and
+  the reviews is fixed before the merge, or recorded as a deviation (rule, scope, reason, the test that covers
+  it) in this section. (by review)
+
+### Retained frontend storage deviation
+The shared HTTP/Chat frontend predates this bar and retains bounded dynamic `chat_buffer` storage for input,
+normalized JSON, DSML arguments and pending output, plus the existing Chat/template reader workspaces. It may grow
+those buffers during admission or formatting; this is a scoped deviation from the load-only frontend allocation
+rule, not permission for token-worker or device allocation. Input and normalized bodies are limited to32MiB and
+pending output to64MiB. The Messages adapter stores formatter state inline, reuses existing answer buffers and the
+poller's already allocated prompt scratch, and adds no direct allocator or per-token table. Its temporary views
+have one synchronous poll-thread owner. Allocation failures remain server errors; size/complexity limits are
+client errors. Coverage: server_messages_test (including chat_memory injection), the hostile/oversized/socket
+cases in messages_contract_test.py, and the release/sanitizer host suites. The engine, sampler and reasoning policy
+allocate nothing per request/token. A complete pool conversion of the inherited frontend is outside this change;
+its bounded ownership and default wire behavior are retained.
 
 ## Builds
 | Build | Checking hooks | Timing hooks | Compiled with |
@@ -75,10 +125,13 @@ exempt from the lint and the analysers; the rules apply to it by review.
   kernel-build hash. (by review until the first kernel brings these to `make check`)
 
 ## Before a commit
-1. `make check` passes on the server: lint, header_check, analysis, tests in all four builds, and self_test, which
-   shows each of these checks failing once on a case under `tests/check_cases/`. A change to the backend, a kernel
-   or the loader also passes `make card_tests`.
-2. A second reader has tried to refute the file: its contract, its checks, its numbers.
+1. `make check` passes on the server: lint, header_check, analysis, tests in all four builds, python_tests,
+   release_audit and self_test, which shows each of these checks failing once on a case under `tests/check_cases/`.
+   A change to the backend, a kernel or the loader also passes `make card_tests`.
+2. A second reader has tried to refute the file: its contract, its checks, its numbers. Before a merge the
+   change is audited independently along correctness, default-path identity, security, memory and contract;
+   each finding is confirmed or refuted on the code, and every confirmed one is fixed or recorded as a deviation.
+   Kernels additionally pass `compute-sanitizer` memcheck, racecheck, initcheck and synccheck.
 3. The commit is authored by the owner's identity; its subject says what changed and nothing else. (by review)
 
 ## What never enters the repository (by review)

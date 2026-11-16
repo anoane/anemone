@@ -81,6 +81,8 @@
 #define TEST_MIXED_MEDIUM_ROWS 256u
 #define TEST_ORIGINAL_WIDE_ROWS 128u
 #define TEST_ORIGINAL_WIDE_VARIANTS 2u
+#define TEST_ORIGINAL_PROGRAMS 3 /* the original recipe's BATCH, WIDE and FULL programs */
+#define TEST_GRID_Z 2 /* a launch grid's third dimension */
 #define TEST_ORIGINAL_CORE_ROWS 128u
 #define TEST_ORIGINAL_CORE_VARIANTS 2u
 #define TEST_ORIGINAL_CORE_KEYS 640u
@@ -342,7 +344,8 @@ static bool driver_engram_create(struct fixture *fixture)
 	fixture->engram_bytes = bytes;
 	const struct engram_description *const description =
 		engram_description_of(fixture->engram);
-	return description->table_count == ENGRAM_TABLES &&
+	return description != NULL &&
+	       description->table_count == ENGRAM_TABLES &&
 	       description->rows_per_token == ENGRAM_ROWS &&
 	       description->vocabulary_size == MODEL_VOCABULARY_VALUE;
 }
@@ -1393,7 +1396,8 @@ static void check_original_wide_records(const struct execution_program *program,
 						       record.rank == card &&
 						       record.mode ==
 							       EXACT_RING_GATHER,
-					       "every original slab gathers its owner rectangle into canonical rows with unchanged banks");
+					       "every original slab gathers its owner rectangle into canonical rows "
+					       "with unchanged banks");
 				}
 			}
 		}
@@ -1526,7 +1530,8 @@ static void check_original_wide_experts(const struct pack_record *pack)
 						       models[1]
 							       ->stages[card]
 							       ->ring_rows,
-				       "legacy hidden storage stays at eight rows and wide storage does not widen ring banks");
+				       "legacy hidden storage stays at eight rows and wide storage does not widen "
+				       "ring banks");
 			}
 		}
 		expect(models[0]->recipe_identity == models[1]->recipe_identity,
@@ -1582,7 +1587,8 @@ static void check_original_wide_experts(const struct pack_record *pack)
 							&program, &groups);
 					expect(extra_status == STATUS_OK &&
 						       program != NULL,
-					       "original wide option retains THIN admission and prepares the complete FULL native PRO path");
+					       "original wide option retains THIN admission and prepares the complete "
+					       "FULL native PRO path");
 					if (extra_status == STATUS_OK &&
 					    program != NULL)
 						check_original_wide_records(
@@ -1608,7 +1614,8 @@ static void check_original_wide_experts(const struct pack_record *pack)
 					       &program, &groups) ==
 						       STATUS_INVALID_ARGUMENT &&
 					       program == NULL,
-				       "program admission rejects a missing gathered hidden range before preparing work");
+				       "program admission rejects a missing gathered hidden range before preparing "
+				       "work");
 			}
 		}
 	}
@@ -1688,13 +1695,14 @@ check_original_core_normalized(const struct execution_program *baseline,
 			       core.heads_per_block == heads &&
 			       launch->grid[0] == candidate->row_count &&
 			       launch->grid[1] * heads == MODEL_HEADS_VALUE &&
-			       launch->grid[2] ==
+			       launch->grid[TEST_GRID_Z] ==
 				       (scores ?
 						ATTENTION_CORE_KEYS /
 							ATTENTION_CORE_TILE_KEYS :
 						MODEL_HEAD_DIMS /
 							ATTENTION_CORE_TILE_DIMS),
-		       "chunk reference cores keep fixed 640-key score extent, 4096-slot ring and full-head CTA geometry");
+		       "chunk reference cores keep fixed 640-key score extent, 4096-slot ring and full-head CTA "
+		       "geometry");
 		uint32_t matched = 0;
 		bool covered[LINEAR_WIDE_MOST_ROWS / LINEAR_MAXIMUM_ROWS] = {
 			false
@@ -1746,8 +1754,8 @@ check_original_core_normalized(const struct execution_program *baseline,
 			expect(slab_launch->grid[0] == LINEAR_MAXIMUM_ROWS &&
 				       slab_launch->grid[1] ==
 					       launch->grid[1] &&
-				       slab_launch->grid[2] ==
-					       launch->grid[2] &&
+				       slab_launch->grid[TEST_GRID_Z] ==
+					       launch->grid[TEST_GRID_Z] &&
 				       memcmp(slab_launch->block, launch->block,
 					      sizeof(launch->block)) == 0 &&
 				       slab_launch->dynamic_shared_byte_count ==
@@ -1759,7 +1767,8 @@ check_original_core_normalized(const struct execution_program *baseline,
 				       slab_launch->branch == launch->branch &&
 				       memcmp(&slab, &normalized,
 					      sizeof(slab)) == 0,
-			       "normalized core records differ only in STEP view and row rebases; pool/512-pick/rotation/sink/cone/context fields and geometry stay literal");
+			       "normalized core records differ only in STEP view and row rebases; "
+			       "pool/512-pick/rotation/sink/cone/context fields and geometry stay literal");
 			matched++;
 		}
 		expect(matched == slabs,
@@ -1981,7 +1990,8 @@ static void check_original_chunk_core(const struct pack_record *pack)
 						&groups[variant]);
 				expect(status == STATUS_OK &&
 					       programs[variant] != NULL,
-				       "original core and partial-group fallback programs prepare with both flag settings");
+				       "original core and partial-group fallback programs prepare with both flag "
+				       "settings");
 				prepared = prepared && status == STATUS_OK &&
 					   programs[variant] != NULL;
 			}
@@ -2201,7 +2211,8 @@ static void check_original_batch_refusals(
 		expect(v41_tp2_model_create(pack, &invalid, &untouched) ==
 				       STATUS_INVALID_ARGUMENT &&
 			       untouched == NULL,
-		       "original BATCH refuses a missing opt-in or an unqualified role, arithmetic or joined optimization");
+		       "original BATCH refuses a missing opt-in or an unqualified role, arithmetic or joined "
+		       "optimization");
 	}
 }
 
@@ -2277,7 +2288,8 @@ check_original_batch_records(const struct execution_program *program,
 						       arguments.step_offset ==
 							       area->views[target_samplers]
 								       .block_offset,
-					       "each target slab reads its own dynamic step view and writes one distinct result header");
+					       "each target slab reads its own dynamic step view and writes one "
+					       "distinct result header");
 					target_samplers++;
 				}
 			} else if (strcmp(kernel.function_name,
@@ -2330,7 +2342,8 @@ check_original_batch_records(const struct execution_program *program,
 						       expected_step &&
 					       arguments.draft_views_offset ==
 						       expected_views,
-				       "each verifier reads the slab results and prepares its separate legacy five-row draft block");
+				       "each verifier reads the slab results and prepares its separate legacy "
+				       "five-row draft block");
 				if (verifies < V41_DATA_ORIGINAL_BATCH_SESSIONS)
 					draft_steps[verifies] =
 						arguments.draft_step_offset;
@@ -2356,7 +2369,8 @@ check_original_batch_records(const struct execution_program *program,
 							V41_DATA_ORIGINAL_BATCH_SESSIONS ||
 						arguments.draft_step_offset ==
 							draft_steps[confidences]),
-				       "each confidence retains its verifier block and publishes its owner's table entry");
+				       "each confidence retains its verifier block and publishes its owner's table "
+				       "entry");
 				confidences++;
 			}
 		}
@@ -2392,9 +2406,9 @@ static void check_original_batch(const struct pack_record *pack)
 								      NULL };
 	struct execution_program *thin[TEST_ORIGINAL_WIDE_VARIANTS] = { NULL,
 									NULL };
-	struct execution_program *owned[3] = { NULL, NULL, NULL };
-	const struct execution_program *programs[3] = { NULL, NULL, NULL };
-	struct step_companion_program groups[3] = { 0 };
+	struct execution_program *owned[TEST_ORIGINAL_PROGRAMS] = { NULL, NULL, NULL };
+	const struct execution_program *programs[TEST_ORIGINAL_PROGRAMS] = { NULL, NULL, NULL };
+	struct step_companion_program groups[TEST_ORIGINAL_PROGRAMS] = { 0 };
 	test_host_memory_backend_reset(CARDS, HOST_BYTES);
 	bool complete = true;
 	for (uint32_t card = 0; card < CARDS; card++) {
@@ -2474,7 +2488,8 @@ static void check_original_batch(const struct pack_record *pack)
 					       models[1]
 						       ->canonical->cards[card]
 						       .arena_byte_count,
-				       "original BATCH adds no CMP arena bytes and retains the old eight-row gather banks");
+				       "original BATCH adds no CMP arena bytes and retains the old eight-row gather "
+				       "banks");
 		}
 		struct v41_tp2_program_description build = { 0 };
 		complete = v41_tp2_model_program_description(
@@ -2545,7 +2560,8 @@ static void check_original_batch(const struct pack_record *pack)
 							       COUNT_OF(rows),
 							       true) ==
 						       STATUS_OK,
-				       "cold row admission accepts one active last-slot owner with seven inactive slots and all eight owners");
+				       "cold row admission accepts one active last-slot owner with seven inactive "
+				       "slots and all eight owners");
 				status = step_pipeline_start(driver, 1u);
 				expect(status == STATUS_OK,
 				       "original BATCH retains the eager single-flight declaration");
@@ -2644,7 +2660,8 @@ static void check_original_batch_nonoriginal_pack(void)
 						 &untouched) ==
 				       STATUS_UNSUPPORTED &&
 			       untouched == NULL,
-		       "original BATCH rejects EXL3 expert payload metadata in both the CMP prefix and native PRO tail");
+		       "original BATCH rejects EXL3 expert payload metadata in both the CMP prefix and native PRO "
+		       "tail");
 	}
 	pack_close(pack);
 }

@@ -104,6 +104,10 @@ static const char *header_flaw(struct pack_header *header,
 		       NULL;
 }
 
+/* The rule of a matrix whose width its format defines but this build does not decode: the pack is unsupported. */
+static const char unsupported_width_rule[] =
+	"its format decodes its bits_per_weight in this build";
+
 /* What is wrong with what a tensor of a known element type says it holds, by the first rule it breaks, or NULL.
  * plain_byte_count is the product of its dimensions times the size of an element, or UINT64_MAX beyond 64 bits. */
 static const char *content_flaw(const struct pack_tensor *tensor,
@@ -119,6 +123,10 @@ static const char *content_flaw(const struct pack_tensor *tensor,
 	    .bits_per_weight = tensor->bits_per_weight
     };
     uint64_t stored_byte_count = 0;
+    const result_status stored_status =
+	    format == NULL ?
+		    STATUS_INVALID_ARGUMENT :
+		    format->stored_byte_count(&shape, &stored_byte_count);
     if (tensor->weight_format == WEIGHT_FORMAT_NONE) {
 	    return plain_byte_count == UINT64_MAX ||
 				   tensor->byte_count != plain_byte_count ?
@@ -133,7 +141,9 @@ static const char *content_flaw(const struct pack_tensor *tensor,
 		   "as a matrix of a weight format it has two dimensions" :
 	   tensor->element_type != PACK_ELEMENT_UINT8 ?
 		   "as a matrix of a weight format its elements are UINT8" :
-	   format->stored_byte_count(&shape, &stored_byte_count) != STATUS_OK ?
+	   stored_status == STATUS_UNSUPPORTED ?
+		   unsupported_width_rule :
+	   stored_status != STATUS_OK ?
 		   "its format stores its two dimensions and its bits_per_weight" :
 	   tensor->byte_count != stored_byte_count ?
 		   "its byte count is what its format stores for its shape" :
@@ -228,7 +238,8 @@ MUST_CHECK static result_status check_tables(struct pack_record *pack,
 			    0;
 	    const bool type_is_known = tensor->element_type <
 				       PACK_ELEMENT_TYPE_COUNT;
-	    /* as plain elements; saturates at UINT64_MAX, which no tensor in an extent has: an extent is whole blocks */
+	    /* as plain elements; saturates at UINT64_MAX, which no tensor in an extent has: an extent is whole
+	     * blocks */
 	    uint64_t product =
 		    type_is_known ? element_byte_counts[tensor->element_type] :
 				    0;
@@ -282,6 +293,15 @@ MUST_CHECK static result_status check_tables(struct pack_record *pack,
 				sizeof(tensor->reserved_zero)) ?
 				 "its reserved words are zero" :
 				 NULL;
+	if (rule == unsupported_width_rule) {
+		LOG_ERROR("unsupported pack: tensor %" PRIu32
+			  " of weight format %" PRIu32
+			  " stores bits_per_weight %" PRIu32
+			  ", a width this build does not decode",
+			  tensor_index, tensor->weight_format,
+			  tensor->bits_per_weight);
+		return STATUS_UNSUPPORTED;
+	}
 	if (rule != NULL) {
 		LOG_ERROR("corrupt pack: tensor %" PRIu32
 			  " breaks the rule: %s",

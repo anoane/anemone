@@ -52,7 +52,8 @@ struct v41_tp2_model_description {
 	enum bb_exl3_product_order
 		exl3_product_order; /* cold QUAD_ALL only; zero preserves four-part order */
 	bool head_shards; /* default off, QUAD_ALL only: the target head and sampler cut by outputs over the ranks */
-	bool exact_dense; /* default off, exact QUAD_ALL only: the attention's wq_b/wo_a/wo_b output shards, 2 gathers */
+	bool exact_dense; /* default off, exact QUAD_ALL only: the attention's wq_b/wo_a/wo_b output shards, 2
+			     gathers */
 	bool draft_shards; /* default off, with head_shards: the draft's head, Markov bias and sampler cut too */
 	bool draft_layers; /* default off, BF16 recipe, with draft_shards, no batch: the draft's layers TP (stage.h) */
 	bool batch; /* default off, QUAD_ALL or explicit original_batch: BATCH programs can be prepared */
@@ -77,9 +78,11 @@ struct v41_tp2_model_description {
 	bool exl3_wide_entry; /* EXL3 tensor layers, chunked steps: the experts once over the chunk (both recipes) */
 	bool exl3_tc_moe; /* default off, BF16 recipe EXL3 tensor layers: GNmac's tensor-core MoE (exl3_tc.h) */
 	uint32_t exl3_tc_product_blocks; /* decode TC product grid: 0 keeps the measured geometry */
-	uint32_t exl3_expert_rotation; /* default 0, with exl3_tc_moe: per-expert chunk rotation 1 or 2 (exl3_tc_records.h) */
+	uint32_t exl3_expert_rotation; /* default 0, with exl3_tc_moe: per-expert chunk rotation 1 or 2
+					  (exl3_tc_records.h) */
 	bool head_mma; /* default off, BF16 recipe: the head products on the tensor cores (kernel_head_mma) */
-	bool trunk_mma; /* default off, BF16 recipe: thin BF16-row trunk products on the tensor cores (kernel_trunk_mma) */
+	bool trunk_mma; /* default off, BF16 recipe: thin BF16-row trunk products on the tensor cores
+			   (kernel_trunk_mma) */
 	bool trunk_mma_fused; /* with trunk_mma: the _64 form adds its own splits (model_v41_tp2_stage.h) */
 	bool trunk_mma_thin_splits; /* with trunk_mma: the _64 form's splits the thin form's (model_v41_tp2_stage.h) */
 	bool router_mma; /* default off, BF16 recipe: a BATCH step's router by split-K MMAs (model_v41_tp2_stage.h) */
@@ -101,9 +104,10 @@ struct v41_tp2_model_description {
 	bool piece_rings; /* BF16 rings over 64-row pieces in wide steps (model_v41_tp2_stage.h) */
 	bool trunk_shape_slices; /* thin trunk products at their shard shape's measured slice count (same bits) */
 	bool bf16_slab_rings; /* default off, BF16 recipe chunked steps: the attention summed a slab at a time (ring) */
-	uint32_t wide_exchange; /* BF16 recipe chunked steps: a piece's ordered push by many CTAs, V41_DATA_TP_EXCHANGE_*
-				   (model_v41_tp2_stage.h; the same bits) */
-	uint32_t split_overlap; /* default 0, BF16 recipe chunked steps: layers in two halves, sums beside work (stage.h) */
+	uint32_t wide_exchange; /* BF16 recipe chunked steps: a piece's ordered push by many CTAs,
+				   V41_DATA_TP_EXCHANGE_* (model_v41_tp2_stage.h; the same bits) */
+	uint32_t split_overlap; /* default 0, BF16 recipe chunked steps: layers in two halves, sums beside work
+				   (stage.h) */
 	uint32_t split_least_rows; /* split_overlap: chunks of fewer rows whole (model_v41_tp2_stage.h) */
 	bool launches_untrimmed; /* --tp_launch_trims=0: the launches as before 3 November (model_v41_tp2_stage.h) */
 	uint32_t full_split_overlap; /* the full programs' split_overlap mode; 0: split_overlap's (stage.h) */
@@ -120,6 +124,7 @@ struct v41_tp2_model_description {
 };
 
 struct v41_tp2_model_load_request {
+	const uint8_t *external_host_extents;
 	const struct backend_operations *backend;
 	struct device_card *const *cards;
 	const struct storage_operations_record *storage;
@@ -129,8 +134,11 @@ struct v41_tp2_model_load_request {
 	/* 0: the serial loads (host arena, then the cards); N: both at once, each on N threads (tp_load.h) */
 	uint32_t load_threads;
 	uint32_t load_reads_per_copy; /* load_threads != 0: reads in flight a copy at most; 0: no limit */
+	uint32_t load_host_reads_per_copy; /* load_threads != 0: the host arena's own cap (tp_load.h host_reads_most) */
 	uint32_t load_host_threads; /* load_threads != 0: the host arena's threads; 0: load_threads */
 	uint32_t load_copy_split; /* load_threads != 0: tp_load.h's tp_load_copies.split */
+	uint64_t load_piece_bytes; /* the host arena's read (tp_load.h chunk_bytes): 0 is TP_HOST_LOAD_CHUNK_BYTES */
+	uint32_t load_copy_weights[STORAGE_MAXIMUM_COPIES];
 };
 
 struct v41_tp2_model {
@@ -144,16 +152,17 @@ struct v41_tp2_model {
 	struct tp_load_result gpu_result;
 	struct tp_host_load_result host_result;
 	uint64_t *extent_offsets; /* owned preparation map; host_offsets publishes it only after successful load */
-	void *host_arena;
+	void *host_arena; /* host_memory's bytes once ready, else NULL */
+	struct tp_host_arena host_memory; /* owns host_arena (tp_load.h) */
 	const uint64_t *
 		host_offsets; /* NULL until ready; internal host_load.extent_offsets owns the allocation */
 	uint64_t host_bytes;
 	uint64_t recipe_identity;
-		uint64_t output_workspace_bytes;
-		struct tp_load_copies
-			copies; /* load_threads != 0: what each copy delivered (tp_load.h) */
-		bool load_attempted;
-		bool ready;
+	uint64_t output_workspace_bytes;
+	struct tp_load_copies
+		copies; /* load_threads != 0: what each copy delivered (tp_load.h) */
+	bool load_attempted;
+	bool ready;
 };
 
 MUST_CHECK result_status
@@ -166,6 +175,12 @@ void v41_tp2_model_destroy(struct v41_tp2_model *model);
 MUST_CHECK result_status
 v41_tp2_model_load(struct v41_tp2_model *model,
 		   const struct v41_tp2_model_load_request *request);
+
+/* Load-time sampler table attachment. The created head-sharded model, open cards and backend callbacks
+ * satisfy model_load's validated request contract. No payload is read and no metadata is retained. */
+MUST_CHECK result_status v41_tp2_model_sampler_peers_attach(
+	const struct v41_tp2_model *model,
+	const struct v41_tp2_model_load_request *request);
 
 /* Description borrowing this model; program preparation remains separately owned/qualified.
  * QUAD_ALL publishes four actual cards and NULL inactive slot4. Refusal leaves the output unchanged. */

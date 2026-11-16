@@ -281,10 +281,10 @@ static uint64_t next_random(void)
 
 static struct chat_template_options options_of(unsigned flags)
 {
-	return (struct chat_template_options){ DEFAULT_EFFORT,
-					       (flags & THINKING) != 0,
-					       (flags & DROPS) != 0,
-					       (flags & CONTINUES) != 0 };
+	return (struct chat_template_options){
+		DEFAULT_EFFORT, (flags & THINKING) != 0, (flags & DROPS) != 0,
+		(flags & CONTINUES) != 0, false
+	};
 }
 
 static MUST_CHECK result_status render(const char *messages,
@@ -554,9 +554,11 @@ static void test_arguments_and_limits(void)
     size_t length = 0;
     enum { MOST_ARRAYS = JSON_MAXIMUM_DEPTH - ARRAYS_AROUND_A_FORMAT };
     const struct chat_template_options effort_too_low = { LOWEST_EFFORT - 1,
-							  true, true, false };
+							  true, true, false,
+							  false };
     const struct chat_template_options effort_too_high = { HIGHEST_EFFORT + 1,
-							   true, true, false };
+							   true, true, false,
+							   false };
     const char *const one = "[{\"role\":\"user\",\"content\":\"u\"}]";
     expect(chat_template_render(one, strlen(one), NULL, 0, &effort_too_low,
 				prompt, PROMPT_CAPACITY, &length) == INVALID &&

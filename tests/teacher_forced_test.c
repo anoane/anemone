@@ -264,10 +264,8 @@ static uint32_t folder_check(const char *folder, enum test_teacher_forced_mode m
     struct test_capture *capture = NULL;
     struct test_synthetic_row *const input = calloc(LAYERS, sizeof(struct test_synthetic_row));
     float *const logit_row = calloc(MODEL_VOCABULARY_VALUE, sizeof(float));
-    uint32_t differing = test_capture_open(folder, &capture) == STATUS_OK &&
-					 input != NULL && logit_row != NULL ?
-				 0 :
-				 1u;
+    uint32_t differing = test_capture_open(folder, &capture) == STATUS_OK && input != NULL && logit_row != NULL &&
+                         values != NULL ? 0 : 1u;
     for (uint32_t position = 0; differing == 0 && position < POSITIONS; position++) {
         const int64_t token = test_synthetic_token_at(position);
         test_synthetic_embedding_row(position, &input[0]);
@@ -432,29 +430,31 @@ static void program_copy(const struct test_synthetic_program *made, struct test_
     for (uint32_t card = 0; card < CARDS; card++) {
         copy->cards[card].launches = copy->launches[card];
     }
-    copy->program = (struct execution_program){ copy->cards,
-						copy->segments,
-						copy->hand_offs,
-						made->program.limits,
-						CARDS,
-						TEST_SYNTHETIC_SEGMENTS,
-						TEST_SYNTHETIC_HAND_OFFS,
-						1,
-						1,
-						NULL,
-						NULL,
-						0,
-						0,
-						PROGRAM_THIN,
-						0,
-						NULL,
-						0,
-						0,
-						0,
-						0,
-						NULL,
-						NULL,
-						TEST_SYNTHETIC_SEGMENTS };
+    copy->program = (struct execution_program){
+        .cards = copy->cards,
+        .segments = copy->segments,
+        .hand_offs = copy->hand_offs,
+        .limits = made->program.limits,
+        .card_count = CARDS,
+        .segment_count = TEST_SYNTHETIC_SEGMENTS,
+        .hand_off_count = TEST_SYNTHETIC_HAND_OFFS,
+        .row_count = 1,
+        .result_card = 1,
+        .expert_pauses = NULL,
+        .host_expert_offsets = NULL,
+        .expert_pause_count = 0,
+        .host_expert_count = 0,
+        .kind = PROGRAM_THIN,
+        .lease_count = 0,
+        .session_ranges = NULL,
+        .session_range_count = 0,
+        .front_segment_count = 0,
+        .cone_rows = 0,
+        .checkpoint_count = 0,
+        .checkpoints = NULL,
+        .leases = NULL,
+        .draft_segment_first = TEST_SYNTHETIC_SEGMENTS
+    };
 }
 
 /* The cards opened again for a run: their arenas zero, the backend's counts from zero, the program's handles. */

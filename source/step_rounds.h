@@ -43,8 +43,11 @@ struct step_round_description {
 
 struct step_round_table {
 	struct step_round rounds[STEP_BATCH_MAXIMUM_SESSIONS];
-	uint32_t valid_mask;
+	uint32_t valid_mask; /* indexed by session slot */
 };
+#define STEP_ROUND_MASK_BITS 32u /* valid_mask's bits, one a session slot */
+_Static_assert(STEP_BATCH_MAXIMUM_SESSIONS <= STEP_ROUND_MASK_BITS,
+	       "a BATCH round mask (uint32_t) holds every BATCH session slot");
 
 MUST_CHECK result_status
 step_rounds_validate(const struct step_round_description *description,

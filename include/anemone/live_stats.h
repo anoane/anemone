@@ -28,9 +28,6 @@
 #define LIVE_STATS_LEAST_COLUMNS 40u
 #define LIVE_STATS_MOST_COLUMNS 240u
 #define LIVE_STATS_FINISHED_CAPACITY 8u
-/* Sending requests and disconnected active commands can outlive the waiting queue. */
-#define LIVE_STATS_REQUEST_CAPACITY \
-	(SERVER_MOST_CONNECTIONS + STATS_SLOT_CAPACITY)
 #define LIVE_STATS_MODEL_BYTES 256u
 #define LIVE_STATS_CLIENT_BYTES 80u
 #define LIVE_STATS_PHASE_BYTES 16u
@@ -41,32 +38,32 @@
 #define LIVE_STATS_CARD_ORDER_BYTES 256u
 
 struct live_request_record {
-	char user[SERVER_USER_BYTES]; /* authenticated name; "-" with no key file */
-	uint32_t slot; /* UINT32_MAX while queued without a slot */
-	uint32_t request_tag;
-	char identifier[CHAT_IDENTIFIER_CAPACITY];
-	char client[LIVE_STATS_CLIENT_BYTES];
-	char model[LIVE_STATS_MODEL_BYTES];
 	struct chat_request options;
-	bool tools_declared;
-	char phase[LIVE_STATS_PHASE_BYTES];
 	double arrival_seconds; /* monotonic */
 	double phase_seconds;
 	double queue_wait_seconds;
 	double finished_seconds; /* 0 until done; freezes elapsed and phase times */
-	uint32_t rendered_prompt_tokens;
-	uint32_t reused_tokens;
-	uint32_t reused_slot_tokens;
-	uint32_t reused_snapshot_tokens;
-	uint32_t reused_checkpoint_tokens;
 	uint64_t reasoning_tokens;
 	uint64_t content_tokens;
 	uint64_t tool_call_tokens;
 	uint64_t bytes_sent;
 	uint64_t events_sent;
+	struct engine_slot_stats engine;
+	uint32_t slot; /* UINT32_MAX while queued without a slot */
+	uint32_t request_tag;
+	uint32_t rendered_prompt_tokens;
+	uint32_t reused_tokens;
+	uint32_t reused_slot_tokens;
+	uint32_t reused_snapshot_tokens;
+	uint32_t reused_checkpoint_tokens;
+	char user[SERVER_USER_BYTES]; /* authenticated name; "-" with no key file */
+	char identifier[CHAT_IDENTIFIER_CAPACITY];
+	char client[LIVE_STATS_CLIENT_BYTES];
+	char model[LIVE_STATS_MODEL_BYTES];
+	bool tools_declared;
+	char phase[LIVE_STATS_PHASE_BYTES];
 	char finish_reason[LIVE_STATS_REASON_BYTES];
 	char last_error[LIVE_STATS_ERROR_BYTES];
-	struct engine_slot_stats engine;
 };
 
 /* Lifetime completed totals plus current requests at snapshot time. Removed usernames retain their totals.
@@ -109,13 +106,28 @@ struct live_snapshot {
 	uint64_t cancelled_requests;
 	struct engine_stats engine;
 	struct live_window_record windows[LIVE_WINDOW_COUNT];
-	struct live_session sessions[STATS_SLOT_CAPACITY];
+	/* By session slot (slot_room) and by request (request_room: sending requests and disconnected active commands
+	 * can outlive the waiting queue), sized when a run starts (live_snapshot_tables). A snapshot owns its tables
+	 * and those of its engine statistics and windows: copy one with live_snapshot_copy, never by assignment. */
+	uint32_t slot_room, request_room;
+	struct live_session *sessions;
 	uint32_t request_count;
-	struct live_request_record requests[LIVE_STATS_REQUEST_CAPACITY];
+	struct live_request_record *requests;
 	uint32_t finished_count;
 	struct live_request_record finished[LIVE_STATS_FINISHED_CAPACITY];
 };
 
+/* Zeroed tables of slot_count slots (the engine statistics', the windows' and the sessions) and request_count
+ * requests, taken at create; live_snapshot_tables_free releases them (NULL-safe). */
+MUST_CHECK result_status live_snapshot_tables(struct live_snapshot *snapshot,
+					      uint32_t slot_count,
+					      uint32_t request_count);
+void live_snapshot_tables_free(struct live_snapshot *snapshot);
+/* Every field of input into output, whose tables keep their place and take input's entries (slots_total of each
+ * slot table, request_count requests). INVALID_ARGUMENT, output untouched: a NULL snapshot or output tables shorter
+ * than those counts. */
+MUST_CHECK result_status live_snapshot_copy(struct live_snapshot *output,
+					    const struct live_snapshot *input);
 MUST_CHECK result_status live_stats_json_entry(
 	const struct live_snapshot *snapshot, struct chat_buffer *output);
 /* The running executable's GNU ELF build id in lowercase hexadecimal, or "unavailable" if absent. */

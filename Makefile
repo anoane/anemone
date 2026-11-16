@@ -152,16 +152,23 @@ KERNEL_HOOKS_kernels_checked := -DCHECKING_HOOKS_ENABLED=1
 NVCC_FLAGS := -O3 -std=c++17 -Iinclude --fmad=false -Werror all-warnings \
               -Xcompiler -Wall,-Wextra,-Wconversion,-Wshadow,-Werror \
               -Xptxas -v,--warn-on-spills,--warn-on-local-memory-usage,--warning-as-error
-# The PRO's own arithmetic (class 120 native, backend_seam.h; main.c's default): the kernel files whose sums
+# The PRO's own arithmetic (class 120 native, backend_seam.h; commands.c's default): the kernel files whose sums
 # emulate class 80 on class 120 are built a second time for sm_120a with LINEAR_CLASS_FORMS, as <file>_native,
-# the module a card of that class takes (linear.c, attention_core.c). The plain sm_120a builds stay class 120's
-# emulation (--pro_emulation=1), the sm_80 builds class 80's own.
+# the module a card of that class takes (linear.c, attention_core.c, exl3.c). The plain sm_120a builds stay class
+# 120's emulation (--pro_emulation=1), the sm_80 builds class 80's own.
 NATIVE_KERNEL_SOURCES := source/kernel_trunk_linear.cu source/kernel_expert_linear.cu source/kernel_attention_core.cu \
-                         source/kernel_index_scan.cu source/kernel_attention_output.cu
-# The trunk and expert ordered/relaxed modules use class 80's operands and are never selected on the PRO.
+                         source/kernel_index_scan.cu source/kernel_attention_output.cu source/kernel_exl3.cu \
+                         source/kernel_exl3_wide.cu
+# The trunk and expert ordered/relaxed modules use class 80's operands and are never selected on the PRO. The EXL3
+# tensor-parallel products (kernel_exl3_product) serve only the CMP ranks of TP4_EXL3: a PRO in a tensor-parallel
+# stage would need them converted to kernel_exl3_mma.cuh as kernel_exl3.cu is.
 SM_80_ONLY_KERNEL_SOURCES := source/kernel_trunk_relaxed.cu source/kernel_expert_relaxed.cu source/kernel_exl3_tc.cu source/kernel_exl3_tcp.cu \
-                            source/kernel_head_mma.cu source/kernel_trunk_mma.cu
-KERNEL_SOURCES_OF = $(if $(filter sm_80,$(1)),$(KERNEL_SOURCES),$(filter-out $(SM_80_ONLY_KERNEL_SOURCES),$(KERNEL_SOURCES)))
+                            source/kernel_exl3_product.cu source/kernel_head_mma.cu source/kernel_trunk_mma.cu
+# kernel_exl3_wide's products do not fit class 120's emulation of class 80 without local memory: class 120 takes them
+# in its own arithmetic only (*_native), and its emulation kernel_exl3's retained products, the same words (exl3.c).
+NATIVE_ONLY_KERNEL_SOURCES := source/kernel_exl3_wide.cu
+KERNEL_SOURCES_OF = $(if $(filter sm_80,$(1)),$(KERNEL_SOURCES),\
+    $(filter-out $(SM_80_ONLY_KERNEL_SOURCES) $(NATIVE_ONLY_KERNEL_SOURCES),$(KERNEL_SOURCES)))
 KERNEL_MODULES_OF = $(foreach architecture,$(KERNEL_ARCHITECTURES),\
     $(patsubst source/%.cu,build/$(1)/$(architecture)/%.cubin,$(call KERNEL_SOURCES_OF,$(architecture)))) \
     $(patsubst source/%.cu,build/$(1)/sm_120a/%_native.cubin,$(NATIVE_KERNEL_SOURCES))

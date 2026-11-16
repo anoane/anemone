@@ -46,7 +46,7 @@ official_rope_prepare(const struct official_rope_description *description,
 	const struct checked_range ranges[] = {
 		{ "input", &description->input, bytes, false },
 		{ "rotation", &description->rotation,
-		  (uint64_t)description->rows * OFFICIAL_ROPE_WIDTH *
+		  (uint64_t)description->rows * (uint64_t)OFFICIAL_ROPE_WIDTH *
 			  sizeof(float),
 		  false },
 		{ "output", &description->output, bytes, false }

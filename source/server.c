@@ -39,6 +39,7 @@
 #include "anemone/model_seam.h"
 #include "server_internal.h"
 #include "server_responses.h"
+#include "server_messages.h"
 #include "serving_cursor.h"
 
 #define OK STATUS_OK
@@ -55,7 +56,6 @@
 #define STOP_POLL 0u                                /* the places of the poll array before the connections */
 #define EVENT_POLL 1u
 #define LISTEN_POLL 2u
-#define POLLS_BEFORE_CONNECTIONS 3u
 #define CONTINUE_RESPONSE "HTTP/1.1 100 Continue\r\n\r\n"
 
 _Static_assert(SERVER_MOST_HEAD_BYTES <= READ_PIECE_BYTES,
@@ -73,6 +73,7 @@ uint32_t server_prefix_kept_mode(
 {
 	if (server->disable_prefix_reuse)
 		return 0;
+	ASSERT(server_tables_present(server));
 	const struct slot_history *const history =
 		&server->slot_histories[session_slot];
 	if (memcmp(history->image_identity, image_identity,
@@ -163,6 +164,7 @@ uint32_t server_chosen_session_slot(const struct http_server *server,
 				    const struct connection *connection,
 				    double now, uint32_t *kept_out)
 {
+	ASSERT(server_tables_present(server));
 	if (connection->waiting_snapshot_slot >= WAITING_SNAPSHOT_READY &&
 	    connection->waiting_snapshot_slot < NO_WAITING_SNAPSHOT) {
 		const uint32_t reserved = connection->waiting_snapshot_slot -
@@ -237,6 +239,7 @@ uint32_t server_chosen_session_slot(const struct http_server *server,
 
 bool server_commands_are_active(const struct http_server *server)
 {
+	ASSERT(server_tables_present(server));
 	for (uint32_t session_slot = 0;
 	     session_slot < server->description.session_slot_count;
 	     session_slot++) {
@@ -250,9 +253,9 @@ bool server_commands_are_active(const struct http_server *server)
 /* Wrap is permitted only past tags whose final event was already taken. */
 uint32_t server_next_tag(struct http_server *server)
 {
-	/* At most four live tags: one of five successive candidates is free. */
-	for (uint32_t attempt = 0; attempt <= SERVING_SESSION_CAPACITY;
-	     attempt++) {
+	/* At most one live tag a slot: one of slots + 1 successive candidates is free. */
+	for (uint32_t attempt = 0;
+	     attempt <= server->description.session_slot_count; attempt++) {
 		server->next_tag++;
 		bool is_live = false;
 		for (uint32_t session_slot = 0;
@@ -268,7 +271,7 @@ uint32_t server_next_tag(struct http_server *server)
 			return server->next_tag;
 		}
 	}
-	/* Unreachable with admitted slot_count<=4; callers never mutate active in
+	/* Unreachable: callers never mutate active in
 	 * this single-threaded function. Retain a defined return for C11. */
 	return server->next_tag;
 }
@@ -285,6 +288,8 @@ static double monotonic_seconds(void)
 static void connection_close(struct http_server *server, uint32_t index)
 {
     struct connection *const connection = &server->connections[index];
+    if (server->metrics.enabled)
+	    server_metrics_http_done(server, connection, monotonic_seconds());
     server_stats_disconnected(server, connection, monotonic_seconds());
     uint32_t kept = 0;
     for (uint32_t session_slot = 0;
@@ -337,6 +342,8 @@ static bool output_sent(struct http_server *server,
 			struct connection *connection, double now)
 {
 	struct chat_buffer *const output = &connection->answer.output;
+	if (server->metrics.enabled)
+		server_metrics_http_output(connection);
 	if (output->is_short) {
 		LOG_WARNING_ENTRY(
 			"server: a response was above %u bytes, or its memory was refused: its connection closes",
@@ -396,6 +403,9 @@ static bool output_sent(struct http_server *server,
             (!connection->request.is_streamed || connection->answer.request == NULL)
             ? 1u : connection->live.events_sent;
 	server_stats_output(server, connection);
+	if (server->metrics.enabled)
+		server_metrics_http_done(server, connection,
+					 monotonic_seconds());
 	connection->phase = PHASE_DRAINING;
 	connection->read_deadline = now + SERVER_LINGER_SECONDS;
 	return shutdown(connection->descriptor, SHUT_WR) == 0;
@@ -416,8 +426,7 @@ static bool refusal_sent(struct http_server *server,
 			 const struct chat_refusal *refusal, const char *body,
 			 double now)
 {
-	server_stats_refused(server, refusal->status);
-	server_stats_rejected(server, connection, refusal->status, now);
+	server_stats_refused(server, connection, refusal->status, now);
 	chat_refusal_write(&connection->answer.output, refusal, body,
 			   connection->head.route);
 	return response_sent(server, connection, now);
@@ -557,6 +566,15 @@ static void next_started(struct http_server *server, double now)
 			.generated_token_limit = limit,
 			.sampler_temperature = request->temperature,
 			.sampler_top_p = request->top_p,
+			.sampler_top_k = request->top_k,
+			.reasoning_budget = request->thinking_budget,
+			.reasoning_tokenizer = request->thinking_budget != 0 ?
+						       server->tokenizer :
+						       NULL,
+			.reasoning_end_token =
+				request->thinking_budget != 0 ?
+					server->reasoning_end_token :
+					0,
 			.request_tag = request_tag,
 			.images = connection->images
 		};
@@ -581,6 +599,7 @@ static void next_started(struct http_server *server, double now)
 		}
 		server->active[session_slot] = (struct active_command){
 			.connection = index,
+			.budgeted_reasoning = request->thinking_budget != 0,
 			.token_ids = connection->token_ids,
 			.request_tag = request_tag,
 			.prompt_token_count = connection->token_count,
@@ -628,7 +647,9 @@ static void next_started(struct http_server *server, double now)
 		connection->token_ids = NULL;
 		(void)snprintf(identifier, sizeof(identifier),
 			       "%s-%" PRId64 "-%" PRIu32,
-			       request->is_responses ? "resp" : "chatcmpl",
+			       request->is_messages  ? "msg" :
+			       request->is_responses ? "resp" :
+						       "chatcmpl",
 			       server->started_seconds, request_tag);
 		connection->answer.pending_responses_fields =
 			request->is_responses ? &connection->responses_fields :
@@ -637,6 +658,12 @@ static void next_started(struct http_server *server, double now)
 				  server->description.model_name, identifier,
 				  (int64_t)time(NULL), connection->token_count);
 		connection->answer.cached_token_count = kept;
+		if (request->is_messages) {
+			connection->answer.messages.scratch = server->prompt;
+			connection->answer.messages.scratch_capacity =
+				(size_t)server->description.context_token_limit *
+				TOKENIZER_MAXIMUM_TOKEN_BYTES;
+		}
 		connection->answer.defers_stop_finish = server->description.speculative_depth != 0;
 		connection->phase = PHASE_GENERATING;
 		connection->keep_alive_deadline =
@@ -673,7 +700,7 @@ request_cache(struct http_server *server, size_t prompt_bytes,
         chosen = server->next_request_cache;
         server->next_request_cache = chosen + 1u < server->description.session_slot_count ? chosen + 1u : 0;
     }
-    if (chosen < SERVER_SESSION_CAPACITY &&
+    if (chosen < server->description.session_slot_count &&
 	!server_cache_namespace_equal(&server->request_cache_namespaces[chosen],
 				      identity)) {
 	    tokenizer_cache_close(server->request_caches[chosen]);
@@ -687,7 +714,9 @@ request_cache(struct http_server *server, size_t prompt_bytes,
 	    }
 	    server->request_cache_namespaces[chosen] = *identity;
     }
-    return chosen < SERVER_SESSION_CAPACITY ? server->request_caches[chosen] : NULL;
+    return chosen < server->description.session_slot_count ?
+		   server->request_caches[chosen] :
+		   NULL;
 }
 
 /* A chat request whose body is whole: refused, or encoded into the queue, and the queue's first submitted if no
@@ -700,16 +729,29 @@ static bool chat_answered(struct http_server *server,
 		connection->input.bytes + connection->head.head_byte_count;
 	const char *body = original_body;
 	const bool responses = connection->head.route == CHAT_ROUTE_RESPONSES;
+	const bool messages = connection->head.route == CHAT_ROUTE_MESSAGES;
 	const struct chat_request *const request = &connection->request;
 	const uint32_t context = server->description.context_token_limit;
 	struct chat_refusal refusal = { 0 };
+	struct json_scratch messages_scratch = {
+		.bytes = server->prompt,
+		.capacity = (size_t)context * TOKENIZER_MAXIMUM_TOKEN_BYTES
+	};
 	size_t prompt_bytes = 0;
 	uint32_t token_count = 0;
 	if (server->engine_failed) {
 		refusal = (struct chat_refusal){ HTTP_SERVER_ERROR,
 						 CHAT_ENGINE_FAILED, NULL, 0,
 						 0 };
-	} else if ((responses ?
+	} else if ((messages ?
+			    server_messages_read(
+				    original_body,
+				    connection->head.body_byte_count,
+				    connection->head.messages_legacy_sampling,
+				    &server->defaults, &connection->request,
+				    &connection->responses_input,
+				    &messages_scratch, &refusal) :
+		    responses ?
 			    server_responses_read_fields(
 				    original_body,
 				    connection->head.body_byte_count,
@@ -723,8 +765,9 @@ static bool chat_answered(struct http_server *server,
 				    server->description.model_name,
 				    server->model_alias, &server->defaults,
 				    &connection->request, &refusal)) == 0) {
-		body = responses ? connection->responses_input.bytes :
-				   original_body;
+		body = (responses || messages) ?
+			       connection->responses_input.bytes :
+			       original_body;
 		if (server_cache_namespace_read(server, connection, &refusal) !=
 		    0) {
 			return refusal_sent(server, connection, &refusal,
@@ -736,7 +779,8 @@ static bool chat_answered(struct http_server *server,
 					request->reasoning_effort :
 					CHAT_TEMPLATE_HIGHEST_EFFORT,
 			.is_thinking = request->reasoning_effort != 0,
-			.drops_thinking = true
+			.drops_thinking = !request->is_messages,
+			.stable_turns = request->is_messages
 		};
 		struct chat_template_spans trusted = { 0 };
 		const result_status rendered = chat_template_render_spans(
@@ -799,6 +843,34 @@ static bool chat_answered(struct http_server *server,
 			}
 		}
 		free(trusted.spans);
+		if (encoded == OK && request->thinking_adaptive_share != 0 &&
+		    token_count < context) {
+			const uint32_t room = context - token_count;
+			const uint32_t usable = request->max_tokens < room ?
+							request->max_tokens :
+							room;
+			if (usable > 1u) {
+				const uint32_t budget =
+					(uint32_t)((uint64_t)(usable - 1u) *
+						   request->thinking_adaptive_share /
+						   MESSAGES_ADAPTIVE_DIVISOR);
+				connection->request.thinking_budget =
+					budget != 0 ? budget : 1u;
+			} else {
+				refusal.status = HTTP_BAD_REQUEST;
+				refusal.message =
+					"adaptive thinking requires room for the closing token and an answer";
+			}
+		}
+		if (request->thinking_budget != 0 &&
+		    (server->reasoning_end_token >=
+			     server->description.vocabulary_size ||
+		     token_count >= context ||
+		     request->thinking_budget >= context - token_count)) {
+			refusal.status = HTTP_BAD_REQUEST;
+			refusal.message =
+				"thinking budget requires a native closing token and room for an answer";
+		}
 		if (rendered == STATUS_INVALID_ARGUMENT) {
 			refusal.status = HTTP_BAD_REQUEST;
 			refusal.message =
@@ -823,6 +895,8 @@ static bool chat_answered(struct http_server *server,
 					0;
 		}
 	}
+	if (server->metrics.enabled && refusal.status == HTTP_UNAVAILABLE)
+		server->metrics.admission_rejections++;
 	connection->token_ids =
 		refusal.status == 0 && token_count != 0 &&
 				!FAULT_POINT(server_memory) ?
@@ -865,6 +939,9 @@ static bool head_answered(struct http_server *server,
 	const struct server_head *const head = &connection->head;
 	struct chat_buffer *const output = &connection->answer.output;
 	struct chat_refusal refusal = { head->refusal, NULL, NULL, 0, 0 };
+	if (server->metrics.enabled)
+		server_metrics_http_head(connection,
+					 server->anthropic_messages);
 	if (server->keys.count == 0) {
 		memcpy(connection->live.user, "-", sizeof("-"));
 	} else if (refusal.status == 0 && head->route != CHAT_ROUTE_HEALTH) {
@@ -881,7 +958,9 @@ static bool head_answered(struct http_server *server,
 			refusal.status = HTTP_UNAUTHORIZED;
 		}
 	}
-	if (refusal.status == 0 && head->route == CHAT_ROUTE_STATS &&
+	if (refusal.status == 0 &&
+	    (head->route == CHAT_ROUTE_STATS ||
+	     head->route == CHAT_ROUTE_METRICS) &&
 	    server->stats_user_count != 0) {
 		bool allowed = false;
 		for (uint32_t index = 0; index < server->stats_user_count;
@@ -899,8 +978,11 @@ static bool head_answered(struct http_server *server,
 					     CHAT_ENGINE_FAILED, NULL, 0, 0 };
     } else if (refusal.status == 0 &&
 	       (head->route == CHAT_ROUTE_COMPLETIONS ||
-		head->route == CHAT_ROUTE_RESPONSES) &&
+		head->route == CHAT_ROUTE_RESPONSES ||
+		head->route == CHAT_ROUTE_MESSAGES) &&
 	       waiting_is_full(server, connection->live.user)) {
+	    server->metrics.admission_rejections +=
+		    server->metrics.enabled ? 1u : 0u;
 	    refusal.status =
 		    HTTP_UNAVAILABLE; /* chat_answered asks again, once the body is read */
     }
@@ -908,7 +990,8 @@ static bool head_answered(struct http_server *server,
         return refusal_sent(server, connection, &refusal, NULL, now);
     }
     if (head->route == CHAT_ROUTE_COMPLETIONS ||
-	head->route == CHAT_ROUTE_RESPONSES) {
+	head->route == CHAT_ROUTE_RESPONSES ||
+	head->route == CHAT_ROUTE_MESSAGES) {
 	    const bool is_early = connection->input.count <
 				  head->head_byte_count + head->body_byte_count;
 	    chat_buffer_write(output, CONTINUE_RESPONSE,
@@ -918,15 +1001,25 @@ static bool head_answered(struct http_server *server,
 	    return output_sent(server, connection, now) &&
 		   !connection->is_writing; /* the 100 goes at once, or never */
     }
-    if (head->route == CHAT_ROUTE_STATS) {
+    if (head->route == CHAT_ROUTE_STATS || head->route == CHAT_ROUTE_METRICS) {
 	    struct chat_buffer json = { 0 };
-	    const result_status counted = server_stats_json(server, now, &json);
+	    const bool metrics = head->route == CHAT_ROUTE_METRICS;
+	    if (metrics)
+		    json = (struct chat_buffer){ .bytes = server->metrics.text,
+						 .capacity =
+							 METRICS_TEXT_BYTES };
+	    const result_status counted =
+		    metrics ? server_metrics_text(server, &json) :
+			      server_stats_json(server, now, &json);
 	    if (counted == OK) {
 		    char header[CHAT_PREFIX_CAPACITY];
 		    const int length = snprintf(
 			    header, sizeof(header),
-			    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n"
+			    "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
 			    "Connection: close\r\n\r\n",
+			    metrics ?
+				    "text/plain; version=0.0.4; charset=utf-8" :
+				    "application/json",
 			    json.count);
 		    if (length > 0 && (size_t)length < sizeof(header)) {
 			    chat_buffer_write(output, header, (size_t)length);
@@ -935,7 +1028,8 @@ static bool head_answered(struct http_server *server,
 			    output->is_short = true;
 		    }
 	    }
-	    chat_buffer_free(&json);
+	    if (!metrics)
+		    chat_buffer_free(&json);
 	    if (counted != OK) {
 		    const struct chat_refusal failed = { HTTP_SERVER_ERROR,
 							 NULL, NULL, 0, 0 };
@@ -979,8 +1073,9 @@ static bool request_bytes_read(struct http_server *server,
     if (!connection->is_head_read &&
 	(memchr(room, '\n', (size_t)received) != NULL ||
 	 input->count >= SERVER_MOST_HEAD_BYTES)) {
-	    connection->is_head_read = server_head_read(
-		    input->bytes, input->count, &connection->head);
+	    connection->is_head_read = server_head_read_options(
+		    input->bytes, input->count, server->metrics.enabled,
+		    server->anthropic_messages, &connection->head);
 	    is_open = !connection->is_head_read ||
 		      head_answered(server, connection, now);
     }
@@ -1076,6 +1171,8 @@ MUST_CHECK static result_status events_taken(struct http_server *server,
 			next_started(server, now);
 			continue;
 		}
+		const double event_seconds =
+			server->metrics.enabled ? monotonic_seconds() : now;
 		const uint32_t held = active->prompt_token_count +
 				      active->generated_token_count;
 		if (!is_final && held < server->description.context_token_limit) {
@@ -1083,6 +1180,9 @@ MUST_CHECK static result_status events_taken(struct http_server *server,
 						  server->description
 							  .context_token_limit +
 					  held] = event.token_id;
+		}
+		if (!is_final && server->metrics.enabled) {
+			server_metrics_token(server, active, event_seconds);
 		}
 		active->generated_token_count += is_final ? 0u : 1u;
 		if (is_final) {         /* what the slot holds now, for the next command to keep */
@@ -1152,9 +1252,11 @@ MUST_CHECK static result_status events_taken(struct http_server *server,
 			}
 			connection->answer.has_draft_statistics = true;
 		}
-		server->engine_failed = server->engine_failed ||
-					event.event_kind ==
-						GENERATION_EVENT_FAILED;
+		server->engine_failed =
+			server->engine_failed ||
+			(event.event_kind == GENERATION_EVENT_FAILED &&
+			 !(active->budgeted_reasoning &&
+			   event.status == STATUS_UNSUPPORTED));
 		if (connection != NULL && !is_final &&
 		    (!is_end &&
 		     tokenizer_token_bytes(server->tokenizer, event.token_id,
@@ -1164,8 +1266,11 @@ MUST_CHECK static result_status events_taken(struct http_server *server,
 				session_slot, event.token_id);
 			chat_answer_fail(&connection->answer);
 		} else if (connection != NULL && !is_final &&
-			   chat_answer_token(&connection->answer, bytes,
-					     byte_count) &&
+			   chat_answer_token_control(
+				   &connection->answer, bytes, byte_count,
+				   connection->request.thinking_budget != 0 &&
+					   event.token_id ==
+						   server->reasoning_end_token) &&
 			   engine_cancel(server->engine, session_slot) != OK) {
 			LOG_ERROR(
 				"server: the engine refused to cancel a command that a stop string ended");
@@ -1183,6 +1288,15 @@ MUST_CHECK static result_status events_taken(struct http_server *server,
 					"stop");
 		}
 		if (connection != NULL) {
+			/* The client usually reads the adapter's api_error and closes before the engine's final
+			 * event. */
+			if (connection->answer.request != NULL &&
+			    connection->answer.request->is_messages &&
+			    connection->answer.messages.failed)
+				(void)snprintf(
+					connection->live.last_error,
+					sizeof(connection->live.last_error),
+					"%s", SERVER_MESSAGES_OUTPUT_ERROR);
 			if (connection->answer.is_finished && connection->answer.stop_matched) {
 				(void)snprintf(connection->live.finish_reason,
 					sizeof(connection->live.finish_reason), "%s",
@@ -1200,7 +1314,8 @@ MUST_CHECK static result_status events_taken(struct http_server *server,
 			}
 		}
 		if (is_final) {
-			server_stats_final(server, session_slot, &event, now);
+			server_stats_final(server, session_slot, &event,
+					   event_seconds);
 			chat_images_destroy(active->images);
 			free(active->images);
 			free(active->token_ids);
@@ -1353,6 +1468,8 @@ result_status server_open(const struct server_options *options,
     struct sockaddr_in6 address_6 = {.sin6_family = AF_INET6};
     const int one = 1;
     if (options == NULL || server_out == NULL ||
+	options->storage_replica_info_bytes > SERVER_STORAGE_REPLICA_INFO_BYTES ||
+	(options->storage_replica_info_bytes != 0 && options->storage_replica_info == NULL) ||
 	options->bind_address == NULL || options->port == 0 ||
 	options->port > SERVER_MOST_PORT ||
 	options->queue_depth > SERVER_MOST_WAITING ||
@@ -1381,6 +1498,13 @@ result_status server_open(const struct server_options *options,
 		    "policy");
 	    return STATUS_INVALID_ARGUMENT;
     }
+    if (options->metrics && options->model_alias != NULL &&
+	!server_metrics_model_valid(options->model_alias)) {
+	    (void)fputs(
+		    "server: --metrics=1 requires a UTF-8 model alias without carriage returns\n",
+		    stderr);
+	    return STATUS_INVALID_ARGUMENT;
+    }
     const bool is_4 = inet_pton(AF_INET, options->bind_address, &address_4.sin_addr) == 1;
     if (!is_4 && inet_pton(AF_INET6, options->bind_address, &address_6.sin6_addr) != 1) {
 	    LOG_ERROR("server: %s is no numeric IPv4 or IPv6 address",
@@ -1394,6 +1518,8 @@ result_status server_open(const struct server_options *options,
 	    return STATUS_OUT_OF_MEMORY;
     }
     server->listener = -1;
+    server->storage_replica_info = options->storage_replica_info;
+    server->storage_replica_info_bytes = options->storage_replica_info_bytes;
     server->queue_depth = options->queue_depth != 0 ?
 				  options->queue_depth :
 				  SERVER_DEFAULT_QUEUE_DEPTH;
@@ -1403,6 +1529,7 @@ result_status server_open(const struct server_options *options,
                                                              : default_user_depth != 0 ? default_user_depth : 1u;
     server->last_waiting_user = UINT32_MAX;
     server->defaults = options->defaults;
+    server->anthropic_messages = options->anthropic_messages;
     server->model_alias = options->model_alias;
     server->disable_prefix_reuse = options->disable_prefix_reuse;
     server->exact_prefix_reuse = options->exact_prefix_reuse;
@@ -1421,19 +1548,20 @@ result_status server_open(const struct server_options *options,
 		    SERVER_DEFAULT_IDLE_SAVE_SECONDS;
     server->session_directory = options->session_directory;
     server->session_directory_bytes = options->session_directory_bytes;
+    server->metrics.enabled = options->metrics;
     server->live_stats_interval_ms = options->live_stats_interval_ms;
     server->live_stats_json = options->live_stats_json;
     server->live_stats_table = options->live_stats_table;
     server->stats_card_order = options->card_order;
     server->stats_placement = options->placement;
-    for (uint32_t session_slot = 0; session_slot < SERVER_SESSION_CAPACITY;
-	 session_slot++) {
-	    server->active[session_slot].connection = NO_CONNECTION;
-    }
-    for (uint32_t index = 0; index < SERVER_MOST_CONNECTIONS; index++) {
-	    server->connections[index].descriptor = -1;
-    }
+    server->metrics.text = options->metrics ?
+				   (FAULT_POINT(server_memory) ?
+					    NULL :
+					    malloc(METRICS_TEXT_BYTES)) :
+				   NULL;
     result_status status =
+	    options->metrics && server->metrics.text == NULL ?
+		    STATUS_OUT_OF_MEMORY :
 	    options->key_file == NULL ?
 		    OK :
 		    server_keys_read(options->key_file, &server->keys);
@@ -1486,6 +1614,18 @@ result_status server_open(const struct server_options *options,
     return OK;
 }
 
+result_status server_storage_info(struct http_server *server, const char *text,
+				  size_t bytes)
+{
+	if (server == NULL || server->engine != NULL ||
+	    bytes > SERVER_STORAGE_REPLICA_INFO_BYTES ||
+	    (bytes != 0 && text == NULL))
+		return STATUS_INVALID_ARGUMENT;
+	server->storage_replica_info = text;
+	server->storage_replica_info_bytes = bytes;
+	return STATUS_OK;
+}
+
 void server_close(struct http_server *server)
 {
     if (server == NULL) {
@@ -1496,6 +1636,7 @@ void server_close(struct http_server *server)
 		    "server: the listening socket did not close cleanly");
     }
     explicit_bzero(&server->keys, sizeof(server->keys));
+    free(server->metrics.text);
     free(server->key_path);
     free(server);
 }
@@ -1505,8 +1646,9 @@ void server_close(struct http_server *server)
 static void server_stopped(struct http_server *server, int event_descriptor)
 {
 	const double deadline = monotonic_seconds() + SERVER_WRITE_SECONDS;
+	ASSERT(server_tables_present(server));
 	server->is_stopping = true;
-	for (uint32_t index = 0; index < SERVER_MOST_CONNECTIONS; index++) {
+	for (uint32_t index = 0; index < server->connection_limit; index++) {
 		if (server->connections[index].descriptor >= 0) {
 			connection_close(server, index);
 		}
@@ -1544,15 +1686,80 @@ static void server_stopped(struct http_server *server, int event_descriptor)
 	}
 }
 
+result_status server_tables(struct http_server *server)
+{
+	const uint32_t slots = server->description.session_slot_count;
+	if (slots == 0 || slots > SERVING_SLOTS_MOST ||
+	    server->queue_depth > SERVER_MOST_WAITING)
+		return STATUS_INVALID_ARGUMENT;
+	const uint32_t limit =
+		SERVER_CONNECTION_FACTOR * (slots + server->queue_depth) +
+		SERVER_CONNECTION_HEADROOM;
+	server->request_caches = (struct tokenizer_cache **)calloc(
+		slots, sizeof(*server->request_caches));
+	server->request_cache_namespaces =
+		calloc(slots, sizeof(*server->request_cache_namespaces));
+	server->slot_histories = calloc(slots, sizeof(*server->slot_histories));
+	server->slot_read_leased =
+		calloc(slots, sizeof(*server->slot_read_leased));
+	server->active = calloc(slots, sizeof(*server->active));
+	server->connections = calloc(limit, sizeof(*server->connections));
+	server->polls = calloc(POLLS_BEFORE_CONNECTIONS + limit,
+			       sizeof(*server->polls));
+	server->polled = calloc(limit, sizeof(*server->polled));
+	if (FAULT_POINT(server_memory) || server->request_caches == NULL ||
+	    server->request_cache_namespaces == NULL ||
+	    server->slot_histories == NULL ||
+	    server->slot_read_leased == NULL || server->active == NULL ||
+	    server->connections == NULL || server->polls == NULL ||
+	    server->polled == NULL) {
+		server_tables_free(server);
+		return STATUS_OUT_OF_MEMORY;
+	}
+	for (uint32_t session_slot = 0; session_slot < slots; session_slot++)
+		server->active[session_slot].connection = NO_CONNECTION;
+	for (uint32_t index = 0; index < limit; index++)
+		server->connections[index].descriptor = -1;
+	server->connection_limit = limit;
+	return OK;
+}
+
+bool server_tables_present(const struct http_server *server)
+{
+	return server != NULL && server->request_caches != NULL &&
+	       server->request_cache_namespaces != NULL &&
+	       server->slot_histories != NULL &&
+	       server->slot_read_leased != NULL && server->active != NULL &&
+	       server->connections != NULL && server->polls != NULL &&
+	       server->polled != NULL && server->connection_limit != 0;
+}
+
+void server_tables_free(struct http_server *server)
+{
+	free((void *)server->request_caches);
+	free(server->request_cache_namespaces);
+	free(server->slot_histories);
+	free(server->slot_read_leased);
+	free(server->active);
+	free(server->connections);
+	free(server->polls);
+	free(server->polled);
+	server->request_caches = NULL;
+	server->request_cache_namespaces = NULL;
+	server->slot_histories = NULL;
+	server->slot_read_leased = NULL;
+	server->active = NULL;
+	server->connections = NULL;
+	server->polls = NULL;
+	server->polled = NULL;
+	server->connection_limit = 0;
+}
+
 result_status server_run(struct http_server *server,
 			 struct inference_engine *engine,
 			 const struct text_tokenizer *tokenizer,
 			 int stop_descriptor)
 {
-	struct pollfd polls[POLLS_BEFORE_CONNECTIONS + SERVER_MOST_CONNECTIONS];
-	uint32_t polled[SERVER_MOST_CONNECTIONS] = {
-		0
-	}; /* the connection of each poll behind the three */
 	int event_descriptor = -1;
 	result_status status =
 		server == NULL || tokenizer == NULL || stop_descriptor < 0 ?
@@ -1567,7 +1774,7 @@ result_status server_run(struct http_server *server,
 	    (model_name == NULL ||
 	     server->description.context_token_limit == 0 ||
 	     server->description.session_slot_count == 0 ||
-	     server->description.session_slot_count > SERVER_SESSION_CAPACITY ||
+	     server->description.session_slot_count > SERVING_SLOTS_MOST ||
 	     (server->session_fork != 0 &&
 	      server->description.prefix_cold_plan_qualified != 1u) ||
 	     (server->description.prefill_prefix_stable != 0 &&
@@ -1592,13 +1799,41 @@ result_status server_run(struct http_server *server,
 		    "name, context, vocabulary or requested prefix policy does not fit");
 	    return status;
     }
+    if (server->metrics.enabled &&
+	!server_metrics_model_valid(server->model_alias != NULL ?
+					    server->model_alias :
+					    model_name)) {
+	    (void)fputs(
+		    "server: --metrics=1 requires a UTF-8 model identity without carriage returns\n",
+		    stderr);
+	    return STATUS_INVALID_ARGUMENT;
+    }
     const uint32_t context = server->description.context_token_limit;
-    server->connection_limit =
-	    SERVER_CONNECTION_FACTOR * (server->description.session_slot_count +
-					server->queue_depth) +
-	    SERVER_CONNECTION_HEADROOM;
+    status = server_tables(server);
+    status = status == OK ?
+		     engine_stats_metrics_enable(engine,
+						 server->metrics.enabled) :
+		     status;
+    if (status != OK) {
+	    server_tables_free(server);
+	    return status;
+    }
     server->engine = engine;
+    if (server->metrics.enabled) {
+        server_metrics_prepare(server);
+        server_metrics_process_init();
+    }
     server->tokenizer = tokenizer;
+    server->reasoning_end_token = server->description.vocabulary_size;
+    if (server->anthropic_messages) {
+	    static const char closing[] = "</think>";
+	    const struct tokenizer_span trusted = { 0, sizeof(closing) - 1u };
+	    uint32_t token = 0, count = 0;
+	    if (tokenizer_encode_spans(tokenizer, closing, sizeof(closing) - 1u,
+				       &trusted, 1, &token, 1, &count) == OK &&
+		count == 1)
+		    server->reasoning_end_token = token;
+    }
     server->started_seconds = (int64_t)time(NULL);
     server->prompt =
 	    FAULT_POINT(server_memory) ?
@@ -1622,6 +1857,7 @@ result_status server_run(struct http_server *server,
 					  context,
 					  &server->request_caches[index]);
     }
+    status = status == OK ? server_stats_tables(server) : status;
     status = status == OK ? server_sessions_open(server) : status;
     server->idle_since = monotonic_seconds();
     server_stats_open(server, server->idle_since);
@@ -1641,28 +1877,40 @@ result_status server_run(struct http_server *server,
                                                                                      : nearest;
             nearest = connection->phase == PHASE_GENERATING && connection->request.is_streamed &&
                       connection->keep_alive_deadline < nearest ? connection->keep_alive_deadline : nearest;
-            polled[poll_count - POLLS_BEFORE_CONNECTIONS] = index;
-            polls[poll_count++] = (struct pollfd){
-                connection->descriptor, (short)((connection->phase == PHASE_SENDING ? 0 : POLLIN | POLLRDHUP) |
-                                                (connection->is_writing ? POLLOUT : 0)), 0};
-        }
-        polls[STOP_POLL] = (struct pollfd){stop_descriptor, POLLIN, 0};
-        polls[EVENT_POLL] = (struct pollfd){event_descriptor, POLLIN, 0};
-        polls[LISTEN_POLL] = (struct pollfd){poll_count - POLLS_BEFORE_CONNECTIONS < server->connection_limit
-                                             ? server->listener : -1, POLLIN, 0};
+	    server->polled[poll_count - POLLS_BEFORE_CONNECTIONS] = index;
+	    server->polls[poll_count++] = (struct pollfd){
+		    connection->descriptor,
+		    (short)((connection->phase == PHASE_SENDING ?
+				     0 :
+				     POLLIN | POLLRDHUP) |
+			    (connection->is_writing ? POLLOUT : 0)),
+		    0
+	    };
+	}
+	server->polls[STOP_POLL] =
+		(struct pollfd){ stop_descriptor, POLLIN, 0 };
+	server->polls[EVENT_POLL] =
+		(struct pollfd){ event_descriptor, POLLIN, 0 };
+	server->polls[LISTEN_POLL] =
+		(struct pollfd){ poll_count - POLLS_BEFORE_CONNECTIONS <
+						 server->connection_limit ?
+					 server->listener :
+					 -1,
+				 POLLIN, 0 };
 	server_sessions_idle(server, now, &nearest);
 	nearest = server->live_stats_interval_ms != 0 && server->live_next_seconds < nearest
                   ? server->live_next_seconds : nearest;
         const int timeout = isinf(nearest) ? -1 : nearest <= now ? 0
                           : (int)ceil((nearest - now) * MILLISECONDS_PER_SECOND);
-        const int ready = poll(polls, poll_count, timeout);
-        if (ready < 0 && errno != EINTR) {
+	const int ready = poll(server->polls, poll_count, timeout);
+	if (ready < 0 && errno != EINTR) {
 		LOG_ERROR("server: poll failed: errno %d", errno);
 		status = STATUS_INPUT_OUTPUT_ERROR;
 		break;
         }
         now = monotonic_seconds();
-        if (ready > 0 && (polls[STOP_POLL].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
+	if (ready > 0 && (server->polls[STOP_POLL].revents &
+			  (POLLIN | POLLHUP | POLLERR)) != 0) {
 		unsigned char signals[SERVER_MOST_HEAD_FIELDS];
 		const ssize_t count =
 			read(stop_descriptor, signals, sizeof(signals));
@@ -1693,16 +1941,25 @@ result_status server_run(struct http_server *server,
                 }
                 (void)fprintf(stderr, "server: key reload %s\n", loaded ? "succeeded" : "failed; keeping old keys");
             }
-        }
-        status = ready > 0 && (polls[EVENT_POLL].revents & POLLIN) != 0 ? events_taken(server, now) : OK;
-        for (uint32_t place = POLLS_BEFORE_CONNECTIONS; ready > 0 && place < poll_count; place++) {
-            connection_polled(server, polled[place - POLLS_BEFORE_CONNECTIONS], &polls[place], now);
-        }
+	}
+	status = ready > 0 && (server->polls[EVENT_POLL].revents & POLLIN) !=
+					 0 ?
+			 events_taken(server, now) :
+			 OK;
+	for (uint32_t place = POLLS_BEFORE_CONNECTIONS; ready > 0 && place < poll_count; place++) {
+		connection_polled(
+			server,
+			server->polled[place - POLLS_BEFORE_CONNECTIONS],
+			&server->polls[place], now);
+	}
         next_started(server, now);
         deadlines_kept(server, now);
 	server_stats_refresh(server, now);
-	status = status == OK && ready > 0 && (polls[LISTEN_POLL].revents & POLLIN) != 0
-                 ? connections_accepted(server, now) : status;
+	status = status == OK && ready > 0 &&
+				 (server->polls[LISTEN_POLL].revents &
+				  POLLIN) != 0 ?
+			 connections_accepted(server, now) :
+			 status;
     }
     server_stopped(server, event_descriptor);
     server_stats_close(server);
@@ -1719,5 +1976,7 @@ result_status server_run(struct http_server *server,
     server->prompt = NULL;
     server->encoded = NULL;
     server->histories = NULL;
+    server_stats_tables_free(server);
+    server_tables_free(server);
     return status;
 }

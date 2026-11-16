@@ -83,6 +83,9 @@ struct exl3_tc_record {
 	3u /* a record's three-way rotation values: 3, 4, 5 */
 #define EXL3_TC_THREE_WAY_RANKS 3u
 #define EXL3_TC_FOUR_WAY_RANKS 4u
+/* a four-way record's rotation: its odd experts narrow, or its even ones */
+#define EXL3_TC_FOUR_WAY_ODD_NARROW 1u
+#define EXL3_TC_FOUR_WAY_EVEN_NARROW 2u
 EXL3_TC_LAYOUT static inline uint32_t
 exl3_tc_width(uint32_t intermediate, uint32_t rotation, uint32_t expert)
 {
@@ -109,10 +112,12 @@ exl3_tc_chunk_of(uint32_t mode, uint32_t rank, uint32_t layer, uint32_t expert)
 EXL3_TC_LAYOUT static inline uint32_t
 exl3_tc_rotation_of(uint32_t mode, uint32_t rank, uint32_t layer)
 {
-	/* four-way: narrow (an even chunk) where (rank + layer + expert) is even; three-way, ranks 1-3: narrow (chunk 2)
-	 * where (rank - 1 + layer + expert) % 3 is 1, i.e. (expert + rank + layer + 1) % 3 is 0 */
+	/* four-way: narrow (an even chunk) where (rank + layer + expert) is even; three-way, ranks 1-3: narrow (chunk
+	 * 2) where (rank - 1 + layer + expert) % 3 is 1, i.e. (expert + rank + layer + 1) % 3 is 0 */
 	return mode == EXL3_TC_ROTATION_FOUR_WAY ?
-		       (((rank + layer) & 1u) != 0u ? 1u : 2u) :
+		       (((rank + layer) & 1u) != 0u ?
+				EXL3_TC_FOUR_WAY_ODD_NARROW :
+				EXL3_TC_FOUR_WAY_EVEN_NARROW) :
 	       mode == EXL3_TC_ROTATION_THREE_WAY && rank != 0u ?
 		       EXL3_TC_THREE_WAY_FIRST +
 			       (rank + layer + 1u) % EXL3_TC_THREE_WAY_RANKS :
@@ -121,9 +126,16 @@ exl3_tc_rotation_of(uint32_t mode, uint32_t rank, uint32_t layer)
 
 /* The workspace of pair_count = row_count x 6 pairs: FP32 gate, up and down slice partials; the FP16 hi/lo gate/up and
  * down operands; their 2^-e; the job count; per pair its down svh offset and route weight. Offsets in bytes. */
+#define EXL3_TC_PART_ALIGNMENT 256u
+#define EXL3_TC_PROJECTIONS 2u /* gate and up */
+#define EXL3_TC_HALVES 2u /* an FP16 operand's hi and lo */
+#define EXL3_TC_HALF_BYTES 2u /* an FP16 value's */
+#define EXL3_TC_WORD_BYTES 4u /* an FP32 value's or an int32's */
+#define EXL3_TC_COUNT_BYTES 16u /* the job count's part */
 EXL3_TC_LAYOUT static inline uint64_t exl3_tc_aligned(uint64_t bytes)
 {
-	return (bytes + 255u) / 256u * 256u;
+	return (bytes + EXL3_TC_PART_ALIGNMENT - 1u) / EXL3_TC_PART_ALIGNMENT *
+	       EXL3_TC_PART_ALIGNMENT;
 }
 enum exl3_tc_part {
 	EXL3_TC_GATE,
@@ -148,19 +160,24 @@ exl3_tc_part_bytes(uint32_t part, uint64_t pair_count, uint64_t intermediate)
 	switch (part) {
 	case EXL3_TC_GATE:
 	case EXL3_TC_UP:
-		return EXL3_TC_GATE_UP_SLICES * pair_count * intermediate * 4u;
+		return EXL3_TC_GATE_UP_SLICES * pair_count * intermediate *
+		       EXL3_TC_WORD_BYTES;
 	case EXL3_TC_DOWN:
-		return EXL3_TC_DOWN_SLICES * pair_count * EXL3_TC_HIDDEN * 4u;
+		return EXL3_TC_DOWN_SLICES * pair_count * EXL3_TC_HIDDEN *
+		       EXL3_TC_WORD_BYTES;
 	case EXL3_TC_GATE_UP_HALVES:
-		return pair_count * 2u * 2u * EXL3_TC_HIDDEN * 2u;
+		return pair_count * EXL3_TC_PROJECTIONS * EXL3_TC_HALVES *
+		       EXL3_TC_HIDDEN * EXL3_TC_HALF_BYTES;
 	case EXL3_TC_DOWN_HALVES:
-		return pair_count * 2u * intermediate * 2u;
+		return pair_count * EXL3_TC_HALVES * intermediate *
+		       EXL3_TC_HALF_BYTES;
 	case EXL3_TC_GATE_UP_UNSCALE:
-		return pair_count * 2u * EXL3_TC_GATE_UP_SLICES * 4u;
+		return pair_count * EXL3_TC_PROJECTIONS *
+		       EXL3_TC_GATE_UP_SLICES * EXL3_TC_WORD_BYTES;
 	case EXL3_TC_DOWN_UNSCALE:
-		return pair_count * EXL3_TC_DOWN_SLICES * 4u;
+		return pair_count * EXL3_TC_DOWN_SLICES * EXL3_TC_WORD_BYTES;
 	case EXL3_TC_COUNT:
-		return 16u;
+		return EXL3_TC_COUNT_BYTES;
 	case EXL3_TC_BY_PAIR:
 		return pair_count * sizeof(struct exl3_tc_by_pair);
 	default:
@@ -246,23 +263,35 @@ struct exl3_tcp_record {
 /* The route table's tiles at most (every route's: an expert a half). */
 EXL3_TC_LAYOUT static inline uint64_t exl3_tcp_tile_capacity(uint64_t pairs)
 {
-	const uint64_t experts = EXL3_TCP_ROUTE_EXPERTS;
+	const uint64_t experts = (uint64_t)EXL3_TCP_ROUTE_EXPERTS;
 	const uint64_t bound = pairs / EXL3_TCP_TILE_ROWS +
 			       (experts < pairs ? experts : pairs) + 1u;
 	return bound < pairs ? bound : pairs;
 }
 /* FP32 words: the operand region (the gate/up split rows of the running launch, then the down results), gate results
- * (then the down split rows in place), up results, 2^-e of the running launch, the route table (int32). */
+ * (then the down split rows in place), up results, 2^-e of the running launch, the route table (int32: its counts,
+ * sorted pairs, int4 tiles and positions, kernel_exl3_tcp.cuh). Regions and the tiles start 16-byte aligned. */
+#define EXL3_TCP_ALIGNED_WORDS 4u
+#define EXL3_TCP_TABLE_COUNTS 4u
+#define EXL3_TCP_TILE_WORDS 4u
 EXL3_TC_LAYOUT static inline uint64_t
 exl3_tcp_sequence_words(uint64_t rows, uint64_t intermediate)
 {
 	const uint64_t pairs = rows * EXL3_TC_PAIRS_PER_ROW,
-		       projections = rows <= EXL3_TCP_JOINT_ROWS ? 2u : 1u;
-	const uint64_t table = 4u + (pairs + 3u) / 4u * 4u +
-			       4u * exl3_tcp_tile_capacity(pairs) + pairs;
+		       projections = rows <= EXL3_TCP_JOINT_ROWS ?
+					     EXL3_TC_PROJECTIONS :
+					     1u;
+	const uint64_t table =
+		EXL3_TCP_TABLE_COUNTS +
+		(pairs + EXL3_TCP_ALIGNED_WORDS - 1u) / EXL3_TCP_ALIGNED_WORDS *
+			EXL3_TCP_ALIGNED_WORDS +
+		EXL3_TCP_TILE_WORDS * exl3_tcp_tile_capacity(pairs) + pairs;
 	return pairs * projections * EXL3_TC_HIDDEN +
-	       pairs * 2u * intermediate +
-	       (pairs * projections + 3u) / 4u * 4u + (table + 3u) / 4u * 4u;
+	       pairs * EXL3_TC_PROJECTIONS * intermediate +
+	       (pairs * projections + EXL3_TCP_ALIGNED_WORDS - 1u) /
+		       EXL3_TCP_ALIGNED_WORDS * EXL3_TCP_ALIGNED_WORDS +
+	       (table + EXL3_TCP_ALIGNED_WORDS - 1u) / EXL3_TCP_ALIGNED_WORDS *
+		       EXL3_TCP_ALIGNED_WORDS;
 }
 EXL3_TC_LAYOUT static inline uint64_t
 exl3_tcp_workspace_bytes(uint64_t rows, uint64_t intermediate)
@@ -271,7 +300,7 @@ exl3_tcp_workspace_bytes(uint64_t rows, uint64_t intermediate)
 							    EXL3_TCP_JOINT_ROWS;
 	const uint64_t first = exl3_tcp_sequence_words(rows, intermediate);
 	const uint64_t second = exl3_tcp_sequence_words(joint, intermediate);
-	return 4u * (first > second ? first : second);
+	return EXL3_TC_WORD_BYTES * (first > second ? first : second);
 }
 
 #endif

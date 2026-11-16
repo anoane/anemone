@@ -68,7 +68,7 @@
  *                     ATTENTION_CORE_VALUE_THREADS threads, ATTENTION_CORE_VALUES_SHARED_BYTES(t),
  *                     heads_per_block 8 t: t = 2 from 4 rows where it divides head_count / 8 (not on 120 native), else
  *                     1.
- *     On a card of class 120 (a PRO that emulates class 80: main.c --pro_emulation=1) the reference order computes
+ *     On a card of class 120 (a PRO that emulates class 80: commands.c --pro_emulation=1) the reference order computes
  *     class 80's sums without its tensor cores, its blocks of other shapes:
  *       scores        grid (rows, head_count / ATTENTION_CORE_EXACT_SCORE_HEADS, 640 /
  *                     ATTENTION_CORE_EXACT_TILE_KEYS), ATTENTION_CORE_EXACT_SCORES_SHARED_BYTES.

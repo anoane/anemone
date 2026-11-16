@@ -6,6 +6,8 @@
 #include "kernel_linear_common.cuh"
 
 #define TP_EXCHANGE_PHASE_STRIDE 2ull
+/* a 16-byte vector's elements, as uint4's x, y, z and w (BF16: the pairs x, y and z, w) */
+enum push_lane { PUSH_LANE_X, PUSH_LANE_Y, PUSH_LANE_Z, PUSH_LANE_W };
 
 /* Only padded prompt programs admit an empty half. Generic pushes retain their positive-payload contract. */
 __device__ static __forceinline__ bool
@@ -202,15 +204,15 @@ extern "C" __global__ void __launch_bounds__(ORDERED_COLLECTIVE_THREADS)
 			if (collective->payload_format == ORDERED_PUSH_FP32) {
 				const uint4 words =
 					__ldcg((const uint4 *)inbox + vector);
-				bits[0] = words.x, bits[1] = words.y,
-				bits[2] = words.z, bits[3] = words.w;
+				bits[PUSH_LANE_X] = words.x, bits[PUSH_LANE_Y] = words.y,
+				bits[PUSH_LANE_Z] = words.z, bits[PUSH_LANE_W] = words.w;
 			} else {
 				const uint2 pairs =
 					__ldcg((const uint2 *)inbox + vector);
-				bits[0] = pairs.x << PUSH_BF16_SHIFT;
-				bits[1] = pairs.x & ~PUSH_BF16_MASK;
-				bits[2] = pairs.y << PUSH_BF16_SHIFT;
-				bits[3] = pairs.y & ~PUSH_BF16_MASK;
+				bits[PUSH_LANE_X] = pairs.x << PUSH_BF16_SHIFT;
+				bits[PUSH_LANE_Y] = pairs.x & ~PUSH_BF16_MASK;
+				bits[PUSH_LANE_Z] = pairs.y << PUSH_BF16_SHIFT;
+				bits[PUSH_LANE_W] = pairs.y & ~PUSH_BF16_MASK;
 			}
 #pragma unroll
 			for (uint32_t element = 0;
@@ -234,8 +236,8 @@ extern "C" __global__ void __launch_bounds__(ORDERED_COLLECTIVE_THREADS)
 			rounded[element] = linear_bfloat16_bits(sum);
 		}
 		const uint2 pairs = make_uint2(
-			rounded[0] | rounded[1] << PUSH_BF16_SHIFT,
-			rounded[2] | rounded[3] << PUSH_BF16_SHIFT);
+			rounded[PUSH_LANE_X] | rounded[PUSH_LANE_Y] << PUSH_BF16_SHIFT,
+			rounded[PUSH_LANE_Z] | rounded[PUSH_LANE_W] << PUSH_BF16_SHIFT);
 		for (uint32_t step = 1; step <= collective->rank_count; step++)
 			((uint2 *)(push_destination_slot(
 					   *collective, arena, sequence,
@@ -443,10 +445,10 @@ extern "C" __global__ void __launch_bounds__(ORDERED_COLLECTIVE_THREADS)
 			const uint2 pairs = __ldcg((const uint2 *)(slot + (uint64_t)source *
 										   collective->inbox_rank_stride) +
 						   vector);
-			values[source][0] = __uint_as_float(pairs.x << PUSH_BF16_SHIFT);
-			values[source][1] = __uint_as_float(pairs.x & ~PUSH_BF16_MASK);
-			values[source][2] = __uint_as_float(pairs.y << PUSH_BF16_SHIFT);
-			values[source][3] = __uint_as_float(pairs.y & ~PUSH_BF16_MASK);
+			values[source][PUSH_LANE_X] = __uint_as_float(pairs.x << PUSH_BF16_SHIFT);
+			values[source][PUSH_LANE_Y] = __uint_as_float(pairs.x & ~PUSH_BF16_MASK);
+			values[source][PUSH_LANE_Z] = __uint_as_float(pairs.y << PUSH_BF16_SHIFT);
+			values[source][PUSH_LANE_W] = __uint_as_float(pairs.y & ~PUSH_BF16_MASK);
 		}
 		uint32_t rounded[PUSH_VECTOR_ELEMENTS];
 #pragma unroll
@@ -461,8 +463,8 @@ extern "C" __global__ void __launch_bounds__(ORDERED_COLLECTIVE_THREADS)
 			}
 			rounded[element] = linear_bfloat16_bits(sum);
 		}
-		output[vector] = make_uint2(rounded[0] | rounded[1] << PUSH_BF16_SHIFT,
-					    rounded[2] | rounded[3] << PUSH_BF16_SHIFT);
+		output[vector] = make_uint2(rounded[PUSH_LANE_X] | rounded[PUSH_LANE_Y] << PUSH_BF16_SHIFT,
+					    rounded[PUSH_LANE_Z] | rounded[PUSH_LANE_W] << PUSH_BF16_SHIFT);
 	}
 }
 

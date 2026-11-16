@@ -97,7 +97,8 @@ result_status tp_exchange_wide_prepare(
 		return STATUS_INVALID_ARGUMENT;
 	const struct ordered_push_arguments *const arguments =
 		&description->arguments;
-	/* the owner forms: direct routes, the 16-byte vectors of every array they touch; the ring's four ranks and wire */
+	/* the owner forms: direct routes, the 16-byte vectors of every array they touch; the ring's four ranks and
+	 * wire */
 	if (form > TP_EXCHANGE_FORM_CE_OWNER_RING_SUMS ||
 	    (form == TP_EXCHANGE_FORM_CE_OWNER_SUMS &&
 	     (arguments->payload_format != ORDERED_PUSH_BF16 ||

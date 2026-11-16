@@ -32,7 +32,7 @@ Gate definitions (each row adds its specific conditions):
   force a recipe. TP admission requires generate/serve (load refuses), DSpark/hybrid (speculative>=2),
   pro_emulation=0, context>=16384, state16, reference CMP order, allocated draft_block5..7 and ordinary rows<=8.
   TP2 placements require relaxed/fast numerics. Context is a multiple16; overall TP row capacity is<=8 or>=64,
-  and at most2048 with split overlap or1024 without. See `source/startup_policy.c`, main.c startup_placement_status,
+  and at most2048 with split overlap or1024 without. See `source/startup_policy.c`, commands.c startup_placement_status,
   tensor description and `model_v41_tp2_model.c` validation. Proposal depth is a separate1..7 cap.
 - B: EXL3 BATCH requires TP4_EXL3, pipeline depth1 and a valid program/verifier/cost list. Multiple EXL3
   device-draft forms require batched draft rows. The distinct original_batch=1 pilot requires original TP4_PRO,
@@ -53,23 +53,44 @@ Measurements retain their original binary, power, shape, prompt and recipe scope
 an isolated knob gain. Unmeasured means no isolated result was found in the reviewed RND logs/matrix/gap sources.
 Benchmark methods and dated results are described in docs/results/COMPARISON_MATRIX.md. No speed is extrapolated to 1M.
 All seven PLAN_0.1_ALPHA section5 buckets retain their accuracy/capacity gates; axis help maps each tuple.
-EXL3 exact and unsupported original exact tuples remain held; original exact alone selects its admitted
-serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy setting.
+Unsupported exact tuples (more than one session, TP4_PRO) remain held; original exact selects its admitted
+serial M1 text/C1 recipe, and EXL3 exact the one-session exact-shaping set on quantized weights (not official-exact).
+No fast axis tuple selects an unqualified lossy setting.
 
 | Name | Values | Default | Meaning | Commands | Placement / recipe | Exactness | Gates | Interactions | Measured effect / source |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| --version | standalone flag | absent | Print v0.0.2-alpha, author attribution and the existing license identifier, then exit without loading a model. | standalone | no model, weights or cards | product output only | Standard descriptors and SIGPIPE handling precede output. | Startup attribution uses stderr; generated-token stdout is unchanged. | GPU-free CLI output check; no inference path or numeric default changes. |
+| --version | standalone flag | absent | Print v0.0.3-alpha, author attribution and the existing license identifier, then exit without loading a model. | standalone | no model, weights or cards | product output only | Standard descriptors and SIGPIPE handling precede output. | Startup attribution uses stderr; generated-token stdout is unchanged. | GPU-free CLI output check; no inference path or numeric default changes. |
 | --card_order | 0..15; comma list, at most16 | auto: all backend cards; TP4_EXL3 chooses CMPs only | Choose backend card ordinals in stage-fill order. | load, generate, serve | all placements/recipes | same bits | G0 | TP4_EXL3 auto-selects exactly four CMPs when omitted; explicit order must fit selected placement. | engine_rnd_s/source/main.c:757; Unmeasured isolated effect. Source implementation/CLI contract only. |
+| --metrics | 0 / 1 | 0 | Enable Prometheus GET /metrics with stats auth/ACL; anonymous without key_file. | serve | all admitted recipes | same arithmetic; native equivalence pending | host contract | Scrapes use fixed engine counter copies; histogram updates occur at request boundaries. | source/server_metrics.c; native overhead unqualified. |
 | --live_stats | 0..60000 | 0 | Print server counters at this interval in milliseconds; zero disables them. | serve | all placements/recipes | same bits | G0 | Nonzero must be >=100ms. | engine_rnd_s/source/main.c:760; Unmeasured isolated effect. Source implementation/CLI contract only. |
-| --reader_threads_per_copy | 1..16 | 2 | Allocate this many asynchronous readers per pack copy. | load, generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:762; Unmeasured isolated effect. Source implementation/CLI contract only. |
+| --reader_threads_per_copy | 1..16 | 4 | Allocate this many asynchronous readers per pack copy. | load, generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | R24 (15 Nov 2026, real PP5 serve loads from the source and three replicas, A D D A): 4 readers loaded in 16.442 and 16.399 s against 16.854 and 17.207 s with 2 (+3.58 %, spread 2.07 %), every extent digest-checked; 2 is the earlier default. |
+| --load_piece_mib | 0..64 | 0 (16 MiB) | Read the pack in pieces of this many MiB: the PP loader's piece and staging slot, the TP host arena's chunk; 0 is today's 16 MiB. The knob wins over a storage profile's load section, a profile over the default. | load, generate, serve | all placements/recipes (PP pieces and slots; TP host chunks; TP card extents stay whole) | same bits | G0 | Every extent's digest is checked as before; 8 staging slots a card of the piece are page-locked. | source/commands.c (load_piece_mib), source/loader.c, source/tp_load.c; R24 (15 Nov 2026, real PP5 serve loads): 64 MiB was no faster than 16 MiB at 2 readers a copy (16.901 against 16.916 and 16.967 s) and slower at 4 and 8 (17.840 against 16.448 s, 18.604 against 16.474 s), so the 16 MiB default stands; on TP4_PRO, R26c's host candidate (3 readers a copy, 64 MiB) loaded 1.54 % slower than the defaults (R24 A D D A), so TP keeps 16 MiB too. |
 | --tp_load_threads | 0..64 | 32 | Load TP card weights concurrently; zero keeps the serial loader. | load, generate, serve | all TP placements; original or EXL3 | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:765; rh04: 32 workers 31.1 s versus 16 workers 33.9 s; same loaded bytes (RND_H.md). |
 | --turbo_load | 0..1 | 1 | Discover and read receipted replicas on other drives. | load, generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:767; rh03 serve ready32.48s with replica versus47.93s single-copy and192.18s serial; receipts equal. Joint loader epoch, not an isolated storage benchmark (RND_H.md). |
+| --load_tuned_weights | 0..1 | 0 | With an enabled storage profile, let its per-copy load weights pick each piece's copy (a static split kept for comparison); 0 keeps the profile's reader count and copies and lets every copy's readers steal the next piece, so a faster drive reads more. | load, generate, serve | an enabled storage profile with load tuning | same bits | held; no axis selection | Ignored without an enabled profile, whose default load already steals. | C01 characterise (9 Nov): an equal split is paced by the slowest drive, 22.1 GB/s from three drives of 13.1/10.9/7.43 GB/s; the full-pack steal against split comparison is request 5. |
+| --replica_external | 0,1 | 0 | Include external/removable block devices in replica eligibility; network/virtual filesystems never qualify. | load/generate/serve, replicate, storage-device/room/scan | Both startup and Engram replicas; identity and measured weights still required. | Same bytes | No implicit benchmark or copy; explicit override bypasses the saved policy. | replica_floor_percent, storage_profile | Policy only; no performance or axis promotion. |
+| --replica_floor_percent | 0..99 | 20 | Minimum available filesystem fraction after copying, checked before allocation and publication. | load/generate/serve, replicate, storage-room | Shared physical-device replica policy. | Same bytes | Insufficient space excludes this device; owned refused partial removed. | replica_external, storage_profile | Configurable policy; native placement gates remain held. |
+| --storage_profile | absolute JSON path or off | automatic configured profile when present; new behavior disabled without enabled profile | Reload independently qualified startup and lookup tuning once at startup; never benchmark at startup. | load, generate, serve | source-matched physical local devices; held until native qualification | exact bytes intended | G0; owned bounded profile, hardware identity and SHA256 replica validation | Explicit action-family CLI settings override the corresponding profile section. Missing or invalid profile retains ordinary turbo-load and all-RAM defaults. | Host reload/crash/fallback tests prepared; native and aggregate performance gates pending. |
+| --engram_sources | comma-separated flat pack paths | unset | Use independent immutable Engram table sources, with each source's own extent offsets. | generate, serve | PP/TP; original or EXL3 maps with explicit flat table sources | same bytes intended | held; no axis selection | Every hashing constant, table size and digest must match. Distinct admitted physical media required; source model weights are ignored. No copies created. | CPU source mapping and native qualification pending. |
+| --engram_hot_set | file path | unset | Hold a static hot set of n-gram table blocks in RAM and serve it like the RAM prefix (the step plan and every gather path). | generate, serve | disk Engram only, with --engram_hot_sha256 | same bytes intended | held; no axis selection | The file (engram_io_bench hot_build, from a corpus that is not the served prompts) must be a regular file of this user, opened without following links, of this pack, its tables and their sizes, with sorted unique ids within --engram_hot_mib; its blocks are read and verified against their pack digests with copy fallback at startup. Refused with all RAM. | Bench A2 (9 Nov): 512 MiB of blocks profiled on other cases cut C1 p50 26 % (mean 40 %), C2 36 %, C4 31 %, C8 and prefill flat; native gates pending. |
+| --engram_hot_sha256 | 64 hex digits | unset | The SHA-256 the operator or the storage profile recorded for --engram_hot_set; another file refuses. | generate, serve | with --engram_hot_set | same bytes intended | held; no axis selection | Required with --engram_hot_set and refused without it. | Binds the hot set file to its recorded digest. |
+| --engram_hot_mib | 1..65536 | 512 | The most RAM the static hot set may hold, in MiB; a larger file refuses. | generate, serve | with --engram_hot_set | same bytes intended | held; no axis selection | Bounds the file length and the blocks held. | Bench A2: the gain saturates at 512 MiB. |
+| --engram_ram_percent | auto or 0..100 | auto: 100 when the tables fit MemAvailable, else the largest whole share that fits, else 0 | Keep this percent of immutable Engram blocks resident; 50 is mixed, 0 is disk. auto compares the plan's host memory (tables, disk store, other host-only units, pinned host experts, load staging, headroom max(8 GiB, MemTotal / 32)) with MemAvailable before the load and prints it on two lines; a given percent or a storage profile's is kept, its fit printed. | generate, serve | PP/TP loaders; explicit flat table sources for EXL3 maps | same bytes intended | held; no axis selection (a capacity decision: outputs are the same at every percent) | Disk placement requires admitted local media; auto below 100 without an admitted disk copy, or a model whose own host memory exceeds MemAvailable, is refused before the load. Draft history and constants stay in RAM. | CPU byte/failure qualification; native numerical and performance gates pending. On the reference workstation the tables fit: auto is 100. |
+| --engram_fit_only | 0..1 | 0 | Print the Engram fit (the percent with its source, and the budget) and stop before any card is touched; disk tables it chose are prepared first (their sources admitted and scanned). | generate | all placements/recipes | product output only | diagnostic; no axis selection | Opens the pack, the n-gram constants and any chosen disk tables; exits 0 after the lines, 1 for a refused fit or disk tables that cannot be prepared. | Host diagnostic of the RAM-fit decision; no inference path. |
+| --engram_cache_mib | 0..32768 | 0 | Bound the disk store hot cache in MiB, rounded down to 16 blocks. | generate, serve | disk Engram only | same bytes intended | held; no axis selection | Cache buffers and metadata are fixed before serving. Nonzero with all RAM refuses. | Component only; native gates pending. |
+| --engram_io | 0..1 | 0 | Select serial direct reads or prepared io_uring batches of 32 blocks. | generate, serve | flat table sources on admitted media | same bytes intended | held; no axis selection | io_uring must be available with verified direct alignment; native cost unqualified. | CPU random-gather microbenchmark supports batched direct reads; paired native gate pending. |
+| --turbo-nvme-engrams | 0..1 | 0 | Interleave runtime block reads over distinct physical table sources. | generate, serve | disk Engram with at least two admitted table sources | same bytes intended | held; no axis selection | Uses startup replicas or explicit independent table sources; no copies are created during serve. Nonzero with all RAM refuses. | Component byte/failure evidence only; multi-device native benefit unqualified. |
+| --engram_step_io | 0..1 | 1 serving PP5 or TP4_PRO from disk tables; else 0 | Read a step's n-gram blocks at once when its row ids are known (one deduplicated submission, on I/O threads per copy that verify each block's digest, fall back to another copy and scatter rows); 0 keeps the per-row gathers. Serving PP5 or TP4_PRO from the disk store it is the default (hybrid: spin 200 us, then sleep; pinned; two threads a copy); every other GPU split and generate keep 0 until measured there. | generate, serve | disk Engram only | same bytes intended | held; no axis selection | Requires disk tables (refused with all RAM). Rows from the RAM prefix and cache are served at issue. A card's visit waits only for its own tables. | Bench (engram_io_bench A1, 9 Nov): decode C1 377->142 us, C8 1635->366 us, prefill chunk 324->45 ms against today's path; native gates pending. Serving (request 7 r2, PP5, ABBA, every stream identical to all-RAM): cold TTFT 27.38 s at 131k tokens against 27.18 s all-RAM and 47.85 s per-row; decode C1 172.2 against 176.0 tok/s (per-row 170.9), C8 equal; 0.78 cores. TP4_PRO (requests 9 and 9b r2, ABBA, every stream identical): decode C1 4.6-5.9 % over per-row (on/off -2.3..-3.6 % against -6.5..-8.9 %); cold TTFT 9.87 / 35.18 s at 8180 / 32782 tokens against 9.74 / 35.08 s all-RAM and 12.63 / 37.98 s per-row. |
+| --engram_io_threads | 1..4 | 2 | I/O threads per table copy for step I/O. | generate, serve | disk Engram with --engram_step_io=1 | same bytes intended | held; no axis selection | Each thread owns one ring of its copy; more threads spread the per-read kernel cost. | Bench A1: 2 a drive best of 1/2 measured (A1b scales 1-4); native gates pending. |
+| --engram_spin_us | 0..100000 | 200 | Busy-poll window of a step-I/O thread after its last work, in microseconds, before it sleeps in the ring's wait. | generate, serve | disk Engram with --engram_step_io=1 | same bytes intended | held; no axis selection | Bounds the threads' CPU between steps; 0 sleeps at once. | Bench A1: spin and enter completion both measured; native cores per C level pending. |
+| --engram_io_pin | 0..1 | 1 | Pin each copy's first two step-I/O threads to the CPU that completes the drive's first I/O queue and its SMT sibling. | generate, serve | disk Engram with --engram_step_io=1 | same bytes intended | held; no axis selection | Read from /proc/interrupts and sysfs at start; a copy on no NVMe drive runs its threads unpinned. | Bench A1: pinned per-drive threads 152 us C1 against 212 us for one thread; native gates pending. |
+| --engram_scan_threads | 0..4 | 2 | Readers per copy of the startup digest scan of the disk Engram tables: every copy at once, each reader taking the next 16 MiB piece; when that fails, one copy at a time; 0 reads one copy after another with one reader. | generate, serve | disk Engram only | same bytes intended | held; no axis selection | Every block digest and the extent digest are computed as before (the extent digest is a sum over pieces); no unverified RAM is published. | Bench option A (9 Nov): the parallel scan of 209.7 GB in 8.5 s (24.7 GB/s) against about 30 s for one reader on copy 0; turbo launch-to-ready 60.5 s against 48.5 s all-RAM in serving (request 4). |
 | --map_reads | 0 buffered;1 drop;2 direct;3 direct+drop;4 auto | 4 (auto:3 with replicas, else1) | Choose buffered/direct EXL3-map reads and page-cache eviction policy. | load, generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:768; rh01: modes 0/1/2 TP4 load 36.7..38.4/29.8..31.5/32.3 s; rh08 single-copy mode3 62.5 s versus mode1 45.9 s (RND_H.md). |
 | --tp_load_host_threads | 0..64 | 16;0 inherits TP loaders | Load the host arena with this many workers; zero follows TP load threads. | load, generate, serve | all TP placements; original or EXL3 | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:770; rh03:32 host workers34.616s,8 workers34.780s; rh04 chooses32 card/16 host workers after measured sweep; receipts equal (RND_H.md). |
-| --tp_load_copy_split | 0..1 | 1 | Read host chunks from copy zero and device extents from the last copy. | load, generate, serve | all TP placements; original or EXL3 | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:772; rh06/rh08 with replica reads: 29.7 versus 31.0 s; joint policy, no isolated speed claim (RND_H.md). |
+| --tp_load_copy_split | 0..2 | 2 | Choose each TP load read's copy. 2: host chunks prefer copy zero and device extents the last copy, and a role that has claimed its last read leaves its copy to the other (a middle copy serves both); 1: each role only its preferred copy (tcb96's default, for comparison); 0: every read from the copy soonest to finish it. | load, generate, serve | all TP placements; original or EXL3 | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. Every extent is still digest-checked with copy fallback; a storage profile's load list uses 0. | rh06/rh08 with replica reads: fixed roles 29.7 versus 31.0 s soonest; joint policy, no isolated speed claim (RND_H.md). Request 16 (TP4_EXL3, fixed roles): copy 1 idle 9.3 s while copy 0 read on; the stealing default is measured in request 17. |
 | --tp_load_reads_per_copy | 0..64 | 0 (unlimited) | Limit TP in-flight reads per copy; zero is unlimited. | load, generate, serve | all TP placements; original or EXL3 | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:774; rh03:limit4 36.245s,limit8 35.854s; rh01 limit2 79.957s in older epoch. No selected limit improves retained unlimited default (RND_H.md). |
 | --card_memory_kept_free_mib | 0..1048576 | 0 | Subtract this many MiB from each card's placement budget. | load, generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:776; Unmeasured isolated effect. Source implementation/CLI contract only. |
-| --pro_emulation | 0..1 | 0 | Emulate class-80 sums on the PRO; zero uses class-120 native arithmetic. | load, generate, serve | original PP5 PRO layers; nonzero refused on TP | sum order | G0 | Native PRO outputs depend on layers placed there; emulation costs2..4x on affected PP5 PRO products. Nonzero is refused by every current TP startup path (MEMORY.md; main.c startup_placement_status). | engine_rnd_s/source/main.c:778; Unmeasured isolated effect. Source implementation/CLI contract only. |
+| --pro_emulation | 0..1 | 0 | Emulate class-80 sums on the PRO; zero uses class-120 native arithmetic. | load, generate, serve | original PP5 PRO layers; nonzero refused on TP | sum order | G0 | Native PRO outputs depend on layers placed there; emulation costs2..4x on affected PP5 PRO products. Nonzero is refused by every current TP startup path (MEMORY.md; commands.c startup_placement_status). | engine_rnd_s/source/main.c:778; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --tp_code_wire | 0..1 | 0 | Transport original quantized codes/scales losslessly across TP ranks. | load, generate, serve | original TP4_PRO/TP2 variants | same bits | G0; T | Refused for TP4_EXL3. Original-weight TP paths only. | engine_rnd_s/source/main.c:779; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --exl3_expert_parts | 4 or8 | 4 | Choose four reference or eight alternate expert product parts. | load, generate, serve | TP4_EXL3 THIN/BATCH | sum order | G0; T | Only4 or8;8 requires TP4_EXL3, numerics relaxed/fast, reference CMP order and FP32 wire. | engine_rnd_s/source/main.c:780; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --tp_attention_owner | 0..1 | 0 | Keep experimental TP4 attention state on its owning rank. | load, generate, serve | exact original TP4_PRO, FP32 wire | same bits | G0; T | Nonzero requires original TP4_PRO, numerics=exact and FP32 wire; other placements refuse it at startup. | engine_rnd_s/source/main.c:783; Unmeasured isolated effect. Source implementation/CLI contract only. |
@@ -81,7 +102,7 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --exl3_fast_products | 0..1 | 1 | Use wide-kernel EXL3 products instead of the retained chain. | load, generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:792; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --exl3_wide_entry | 0..1 | 1 | Run each chunk's EXL3 experts once over the full chunk. | load, generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:794; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --exl3_tc_moe | 0..1 | 0 | Use GNmac-style tensor-core EXL3 routed MoE products. | load, generate, serve | TP4_EXL3 THIN/BATCH | precision up (hi/lo operands); changed sums | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:796; tcmoe02 matches GNmac/Curtis at6/12/36/43/48/64 rows;48-row I6401490 versus1544us. engab03 joint TC-MoE+head:163.4 versus138.6 tok/s; only11/256 target tokens agree with old recipe (GAP_ANALYSIS.md). |
-| --exl3_tc_product_blocks | 0..592 | 0 (retained148-block grid) | Override the two EXL3 TC-MoE product grids in THIN/BATCH programs. | load, generate, serve | effective EXL3 TC-MoE THIN/BATCH product path; FULL/WIDE unchanged; no extra placement gate | same bits | G0; T | Parser accepts0..592 for load/generate/serve, with no extra placement gate. Zero retains the existing148-block grid; positive values replace only gate/up and down grid[0] in eligible EXL3 TC-MoE THIN/BATCH programs. FULL/WIDE grids and each item's arithmetic/owners/folds remain unchanged; inert outside that prepared path. Same-bits geometry control. Current axes leave0; nonzero is a raw tuning override, not an automatically selected faster form (S main.c:751; model_v41_program.c:2935). | engine_rnd_s/source/main.c:797; N xd06 fixed5 BATCH8/one-verifier pilot at 150 W: grids148/74/222/296 give structured318.94/279.34/322.29/323.94, code245.93/212.46/245.48/247.53 and prose156.35/134.60/156.36/157.53 tok/s. All400/95/400 selected records agree. This is an inherited pilot, not a native180W/full-serving or fresh S measurement. Main242e6ef merges the selector with default0 (retained148-block grid); no axis selects a nonzero override (packet RND_N.md 4 Nov19:56; source model_v41_program.c:2935). |
+| --exl3_tc_product_blocks | 0..592 | 0 (retained148-block grid) | Override the two EXL3 TC-MoE product grids in THIN/BATCH programs. | load, generate, serve | effective EXL3 TC-MoE THIN/BATCH product path; FULL/WIDE unchanged; no extra placement gate | same bits | G0; T | Parser accepts0..592 for load/generate/serve, with no extra placement gate. Zero retains the existing148-block grid; positive values replace only gate/up and down grid[0] in eligible EXL3 TC-MoE THIN/BATCH programs. FULL/WIDE grids and each item's arithmetic/owners/folds remain unchanged; inert outside that prepared path. Same-bits geometry control. Current axes leave0; nonzero is a raw tuning override, not an automatically selected faster form (S main.c:751; model_v41_program.c:2935). | engine_rnd_s/source/main.c:797; N xd06 fixed5 BATCH8/one-verifier pilot at 150 W: grids148/74/222/296 give structured318.94/279.34/322.29/323.94, code245.93/212.46/245.48/247.53 and prose156.35/134.60/156.36/157.53 tok/s. All400/95/400 selected records agree. This is an inherited pilot, not a native180W/full-serving or fresh S measurement. main 242e6ef merges the selector with default0 (retained148-block grid); no axis selects a nonzero override (packet RND_N.md 4 Nov19:56; source model_v41_program.c:2935). |
 | --exl3_expert_rotation | 0 fixed chunks;1 four-way rotation;2 three-way rotation | 0 | Rotate per-expert TC chunks across four ranks or three non-head ranks. | load, generate, serve | TP4_EXL3 THIN/BATCH | sum order | G0; T | Nonzero requires TP4_EXL3, BF16 wire, TC MoE and four expert parts. | engine_rnd_s/source/main.c:799; rb02 rotation2 about1%30K gain with changed numerics; rotation1 OOM on old57.9GB/card recipe. Not a current fit guarantee (RND_B.md/RND_E.md). |
 | --tp_head_mma | 0..1 | 0 | Use tensor-core target-head products on the BF16 recipe. | load, generate, serve | TP4_EXL3 THIN/BATCH | sum order | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:801; head01/02:48-row443 versus dense_stream4642us, relative difference<=1e-5; split-K head8 284..291us at1/6/8 rows. Changes old target numerics; not a same-bits toggle (GAP_ANALYSIS.md). |
 | --tp_trunk_mma | 0..1 | 0 | Use tensor-core BF16-row trunk products on the BF16 recipe. | load, generate, serve | TP4_EXL3 THIN/BATCH | sum order | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:802; relbench02 six-row wq_a16.38 versus reference21.50us; BATCH12 wq_a95.2 ->23.6us. Fixed alternate sums; old-target equality not established (GAP_ANALYSIS.md). |
@@ -100,6 +121,7 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --dense_skinny_f32 | 0 retain default;1/4/8 outputs per block (other CLI-range values fail preparation) | 0 (retain measured skinny4 outputs/block above48 rows) | Tile FP32-weight skinny dense outputs per block above 48 rows. | load, generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:823; ri05 mode1:30K8.488 ->8.694s (+206ms, slower), Fraser1.459s; identical (RND_I.md). |
 | --dense_staged | 0,8,16,32,64 | 16 | Stage wide dense-product inputs with a selectable output-block width. | load, generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Admits0/8/16/32/64; nonzero must be a supported power of two. M leaves default16; wider standalone wins do not qualify a whole-model promotion. | engine_rnd_s/source/main.c:825; rk05 2K prompt1.175 ->1.150 s; Fraser1.393 ->1.385 s, 30K equal; same bits (RND_K.md). |
 | --original_dense_staged | parser0..16; admitted0 or16 | 0 | Stage original TP4 BF16/FP32 dense products. | load, generate, serve | original TP4_PRO CMP wide dense products | same bits | G0; T | Parser accepts0..16, but nonzero preparation admits only16 and placement=tp4_pro. There is no additional exact-only numerics gate; eligible BF16 input, BF16/F32 output, size/row-scale and >=64-row dense restrictions remain. Ineligible shapes retain or refuse through the named preparation path (S main.c:1224; dense_linear.c). | engine_rnd_s/source/main.c:827; Merged default0. Inherited XO04 eight dense shapes are byte-identical. XO05 selected/digest/canonical-state continuity passes Fraser/2K/30K; strict nine-request cold controls all cached0 give staged967 versus TP965 tok/s. Older962/965 values were cold-HOLD. No material whole-model gain, fresh S speed result or automatic prefill/ttft axis promotion (original_axis_handoff_v2.md:77,101; RND_O.md). |
+| --original_head_offload | 0..2 | 0 | Target-only exact BF16 vocabulary cuts on four CMPs, F32 gather and unchanged native PRO sampler. | generate, serve | Original native PP5 8/7/7/7/11 on four CMP170HX and RTX PRO6000 Blackwell | Mode2 scoped bitwise equality to native-PRO balanced; strict original exact unqualified | Mode2 is a qualified raw alternative, not selected by an axis after TP4_PRO at pipeline depth 2 with 1 serving slot wins the C1 decode comparison; rebased binary merge gate pending | 0 retains the native PRO head. With 1 or 2 the serve's session fit counts the offloaded head's arenas (its CMP shards and, with 2, a flight bank per pipeline step), so max and an explicit count are what opens. 1 uses shared planes and a PRO visit lease. 2 uses immutable flight banks and owner-scoped PRO ordering, including headless prompts; pipeline depth bounds bank storage. Refuses TP/EXL3, emulated PRO, official recipes and other placement. Each CMP adds330956800 HEAD bytes plus bounded planes/control; FULL/WIDE retain their prefix. | Banked mode2 has conditional full-vector/state and paired native C1 evidence across all three text genres; C2 and higher concurrency regress and are excluded. Prefill is unmeasured. Mode1 is retained without a new run and has no automatic selection. Defaults remain0; explicit0 restores the PRO head. The current head path includes shared immutable programs/graphs; its native output/resource scope is recorded separately. The rebased binary requires default/canonical and C1 integration confirmation. source/model_v41_head.c, source/model_v41_head_banks.c and source/step_flight_programs.c. |
 | --original_wide_experts | 0..1 | 1 for compatible TP4_PRO recipes; 0 elsewhere | Run original TP4 expert jobs over complete chunks with lossless slab gathers. | load, generate, serve | original exact TP4_PRO CMP wide experts; native PRO retained | same bits in recorded current-recipe fixtures; joins unqualified | G0; T | Nonzero requires TP4_PRO exact, native PRO, precision/reference linear and CMP-reference, FP32 wire, wide64..1024, code_wire0, attention_owner0, no BATCH, exl3_wide_entry0 and split/full-split0. Model additionally requires quad exact-output shards, no EXL3 TC-MoE and compatible state/row geometry. Separate core/overlap combinations need their own gates (S main.c:1236; model_v41_tp2_model.c:98). | engine_rnd_s/source/main.c:829; Measured O source75 raw/alias both-parent gate now passes: cold-prefill median967->1363tok/s(+40.95%); Fraser C1/C4/C8 medianTTFT4417.75/17609.85/35087.25->3197.60/12706.85/25290.30ms(-27.62/-27.84/-27.92%); aggregate end-to-end throughput improves9.63/9.72/9.69%, while C8per-stream rate falls0.48%. All46fullFraser responses plus9fixedAPI outputs/counts/finishes agree; fixed-input GEN00/10 preserve selected records,904960activeF32 logits and canonical state. Cold nonce calls have small prompt-count differences, not identical input IDs. NativeV1windows remain exit1; independent repair-aware whole-proof equality/alias lineage passes, first50sCPUreader attempt failed then unchanged120sallowance passed. Not currentS10/official/overlap+wide/mixed/1M proof. Existing raw default0/no S axis; conditional original/balanced/single-or-multiple/prefill-or-ttft mapping awaits final-main/default-resolution gates (O REPORT_v3.md; evidence/o3_tp_wide_both_parent_root02.json SHA0da4dae92d6e9a72ad6b1cadc26f5d34a2eec4ea2ea6b337bdc70dcff2a6df38). Historical GEN06 pilot remains in RND_O.md. Integration batch selects this default only within existing admission, with chunk_core0; explicit0 retains the slab path. |
 | --tp_parallel_launch | 0..1 | 0 | Launch each TP card's graph groups from a separate host thread. | load, generate, serve | all TP placements; PP ignores this tensor control | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:831; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --tp_graph_parts | 1..8 | 1 | Partition each card's graph behind the prefill cone. | load, generate, serve | all TP placements; PP ignores this tensor control | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:833; ri05 parts8:30K8.488 ->8.871s (+383ms, slower), identical (RND_I.md). |
@@ -115,7 +137,7 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --tp_full_split_overlap | 0 inherit;1..7 as tp_split_overlap | 0 | Override full-program split overlap; zero inherits tp_split_overlap. | load, generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:852; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --tp_chunk_core | 0..1 | 1 | Run a chunk's attention core over the whole chunk. | load, generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:854; pf16 30K prefill18.93 ->17.80 s; same bits (GAP_ANALYSIS.md). |
 | --original_chunk_core | 0..1 | 0 | Use original TP4 full-head attention core on whole eight-row slabs. | load, generate, serve | original exact TP4_PRO CMP full-head chunk core; native PRO retained | same bits in recorded current-recipe fixtures; joins unqualified | G0; T | Nonzero requires TP4_PRO exact/native PRO/precision/reference/CMP-reference/FP32, wide64..1024 divisible by8, code_wire0, attention_owner0, no BATCH/original_batch/wide experts and split/full-split0. Effective only on eligible CMP original full-head chunks with multiple slabs, one piece, no vision, state16 and the retained prefix topology; other core schedules remain separate (S main.c:1272; model_v41_program.c:6056). | engine_rnd_s/source/main.c:855; Merged default0. Inherited source8a434dc/GEN03 completes3 Fraser/2K/30K knob0/1 pairs and3 XO05 continuity controls with power restoration. Selected records, prompt IDs, digests, canonical SAVE and active last-target full-vocabulary F32 bits agree. Single-arm CLI prompt+first diagnostics improve about2%, not HTTP TTFT, fresh S serving or a core/query/wide join. No active S axis selects nonzero; no official-reference claim (RND_O.md 5 Nov02:32,02:42). |
-| --original_batch | 0..1 | 0 | Admit the fixed original TP4 BATCH48/eight-verifier/eight-slot pilot. | serve | original exact TP4_PRO BATCH48, eight slots/verifiers, pipeline1 | same bits in recorded current-recipe scope; all-step scope unqualified | G0; T; B | Serve-only. Nonzero requires TP4_PRO exact/native PRO/precision/reference/CMP-reference/FP32, exactly one batch_rows48/verifiers8 entry, session_slots8, pipeline1, wide64..1024, DSpark/hybrid block5/positions5. Requires context_slabs1, core_once0, draft_wide0. Refuses code/owner/head/draft shards, draft layers, head streaming/MMA, trunk/router MMA, wide_head, draft_rows, BF16 draft variants, original wide/staged, EXL3 entry, split/full-split and pipeline overlap. Defaults are not rewritten to satisfy this pilot (S main.c:1246; model_v41_tp2_model.c:95). | engine_rnd_s/source/main.c:857; Merged default0. Inherited XO08 target/GEN preservation and XO09 source434a895/rndo_05 serving pass. Six eligible architecture windows each have12 cells and141 request/text/native-count comparisons; BATCH code C1/C2/C4/C8=76.97/119.64/214.25/347.99 tok/s. BATCH C8 beats TP overlap304.48 but loses PP8 539.36. Eight concurrent requests are not an all-eight-owner STEP logits/state or mixed-rollback proof. PP5 depth1 remains a preserved rejection; campaign complete=false with independently valid subsets. No active S axis selects the pilot; original balanced-exactness multiple/decode remains the inherited candidate scope (RND_O.md 5 Nov01:25,01:42). |
+| --original_batch | 0..1 | 0 | Admit the fixed original TP4 BATCH48/eight-verifier/eight-slot pilot. | serve | original exact TP4_PRO BATCH48, eight slots/verifiers, pipeline1 | same bits in recorded current-recipe scope; all-step scope unqualified | G0; T; B | Serve-only. Nonzero requires TP4_PRO exact/native PRO/precision/reference/CMP-reference/FP32, exactly one batch_rows48/verifiers8 entry, session_slots8, pipeline1, wide64..1024, DSpark/hybrid block5/positions5. Requires context_slabs1, core_once0, draft_wide0. Refuses code/owner/head/draft shards, draft layers, head streaming/MMA, trunk/router MMA, wide_head, draft_rows, BF16 draft variants, original wide/staged, EXL3 entry, split/full-split and pipeline overlap. Defaults are not rewritten to satisfy this pilot (S main.c:1246; model_v41_tp2_model.c:95). | engine_rnd_s/source/main.c:857; Merged default0. Inherited XO08 target/GEN preservation and XO09 source434a895/rndo_05 serving pass. Six eligible architecture windows each have12 cells and141 request/text/native-count comparisons; BATCH code C1/C2/C4/C8=76.97/119.64/214.25/347.99 tok/s. BATCH C8 beats TP overlap304.48 but loses to PP5 at pipeline depth 8 with 8 serving slots at 539.36. Eight concurrent requests are not an all-eight-owner STEP logits/state or mixed-rollback proof. PP5 depth1 remains a preserved rejection; campaign complete=false with independently valid subsets. No active S axis selects the pilot; original balanced-exactness multiple/decode remains the inherited candidate scope (RND_O.md 5 Nov01:25,01:42). |
 | --tp_replicated_embedding | 0..1 | 1 | Embed input rows on every rank instead of handing off rank zero. | load, generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:859; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --batch_rows | 1..64; comma list, at most8 | none (THIN) | Prepare BATCH programs at these row capacities instead of THIN programs. | generate, serve | EXL3 BATCH or the separately constrained original_batch pilot | same bits | G0; T; B | Requires pipeline_steps=1 and either TP4_EXL3 or the separately constrained original_batch1 TP4_PRO pilot. Multiple EXL3 programs with device draft require batch_draft_rows=1; repeated row counts require explicit distinct verifier counts. Overall prepared capacity max(rows,wide_rows,batch_rows,draft_block) must be at least64; EXL3 BATCH programs may use1..64 rows. Original BATCH requires exactly48 rows/eight verifiers and all original_batch row gates; it is not arbitrary original BATCH admission. | engine_rnd_s/source/main.c:861; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --batch_draft_rows | 0..1 | 0 | Batch verifier draft rows into the BATCH program. | generate, serve | TP4_EXL3 BATCH | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; B; D | Nonzero requires batch_rows; with draft_shards it requires draft_layers; device draft layers also need wide_head. | engine_rnd_s/source/main.c:864; Unmeasured isolated effect. Source implementation/CLI contract only. |
@@ -125,10 +147,10 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --batch_tc_paired | 0..64 | 0 | Pair TC MoE short forms from this many BATCH rows; zero disables pairing. | generate, serve | TP4_EXL3 BATCH | same bits | G0; T; B | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:872; rj01_card all compared forms identical; paired48 I640 +8.2us/call,I512 +18.4us; all tested sizes slower, kept off (RND_J.md). |
 | --batch_draft_slots_head | 0..1 | 0 | Run one verifier's draft head across eight slots at each position. | generate, serve | TP4_EXL3 BATCH | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; B; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:875; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --batch_row_sets | 0,8,16,24 | 0 | Use trunk-product row sets above the grouped-row threshold. | generate, serve | TP4_EXL3 BATCH | same bits | G0; T; B | Must be a multiple of8; used above batch_grouped_rows. | engine_rnd_s/source/main.c:877; rj02s same bits; six-shape48-row total r16/r24/r8 284.7/298.0/330.8us versus192.5us _64+reduce; all slower, kept off (RND_J.md). |
-| --batch_core_once | 0..3 | EXL3 CLI3 (active only for eligible BATCH); other placements2; explicit values win | Compute BATCH attention core once; mode2 adds window writes and mode3 pools/deferred slots. | generate, serve | TP4_EXL3 BATCH | same bits | G0; T; B | Accepts0..3. Main39980 omitted EXL3 CLI default3 is active on eligible BATCH; other placements retain2, API description0 is separate. Explicit S code/balanced/multiple/decode selects3; other recorded S BATCH recipes retain2. S10/e4c188e fixed/core3 versus RATE2/core2 full matrix and selected8/256 pass: C8code469.537/432.990, prose382.997/450.231, structured787.722/787.726tok/s. Multiple knobs differ, so these are recipe observations, not an isolated core gain; own CPU compilation overlaps part of decode. Same24 isolated mixed core2/3 text gates pass112cross/96self with code/prose C8task-geometric+0.529%/+1.115%. N actual26 code267.308/298.437/379.376/472.154 is cross-binary. Dedicated reference/safety proofs retain their epochs. See axes.json and RND_N/S.md. | engine_rnd_s/source/main.c:879; rj03p BATCH48 grouped48: 43.63 -> 43.02/42.41 ms at1/2 (-1.4/-2.8%), same bits; gsj06a 84/84 texts, 24..48-row programs -2.1..-4.3% (RND_J.md). |
+| --batch_core_once | 0..3 | EXL3 CLI3 (active only for eligible BATCH); other placements2; explicit values win | Compute BATCH attention core once; mode2 adds window writes and mode3 pools/deferred slots. | generate, serve | TP4_EXL3 BATCH | same bits | G0; T; B | Accepts0..3. main 39980 omitted EXL3 CLI default3 is active on eligible BATCH; other placements retain2, API description0 is separate. Explicit S code/balanced/multiple/decode selects3; other recorded S BATCH recipes retain2. S10/e4c188e fixed/core3 versus RATE2/core2 full matrix and selected8/256 pass: C8code469.537/432.990, prose382.997/450.231, structured787.722/787.726tok/s. Multiple knobs differ, so these are recipe observations, not an isolated core gain; own CPU compilation overlaps part of decode. Same24 isolated mixed core2/3 text gates pass112cross/96self with code/prose C8task-geometric+0.529%/+1.115%. N actual26 code267.308/298.437/379.376/472.154 is cross-binary. Dedicated reference/safety proofs retain their epochs. See axes.json and RND_N/S.md. | engine_rnd_s/source/main.c:879; rj03p BATCH48 grouped48: 43.63 -> 43.02/42.41 ms at1/2 (-1.4/-2.8%), same bits; gsj06a 84/84 texts, 24..48-row programs -2.1..-4.3% (RND_J.md). |
 | --tp_front_branch | 0..2 | 0 | Branch THIN attention mix coefficients; mode two also branches FFN coefficients. | load, generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:881; rj03p THIN C1 round 20.23 -> 19.94 ms (-1.4%), same bits; level2 20.12 ms (RND_J.md). S default remains0. |
 | --tp_core_heads | 0,8,..64 | 0 | Limit attention-core heads per block; zero uses the measured rule. | load, generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Must be a multiple of8; zero chooses per-shape policy. | engine_rnd_s/source/main.c:883; rj03p THIN C1 20.23 -> 20.22 ms at8 (-0.05%, noise), same bits (RND_J.md). |
-| --tp_decode_round_once | 0..1 | 0 | Sum published BF16 target partials in ascending-rank FP32 and round the result once. | load, generate, serve | TP4_EXL3 THIN/BATCH | precision up; changed target bits | G0; T | Nonzero startup requires TP4_EXL3, BF16 wire, tp_wide_exchange>=2 and wide_rows>8. Effective only on non-draft THIN/BATCH target completion, including prompt tails using those forms; draft and FULL/WIDE collectives retain old arithmetic. Preparation requires a BF16 four-rank ring, direct shared channels, BF16 payloads, no parallel publisher/local stub/host incoming routes; otherwise refuses. Enabled completion bypasses the old BF16 ring/CE completion paths, preserves READY/DONE sequencing, adds BF16 rank partials in ascending-rank FP32 and rounds once. Changes target bits; independent references required. Default0/current axes retain old sums; nonzero is a raw research option with no active exact/balanced/fast mapping (S main.c:1236; model_v41_program.c:1858). | engine_rnd_s/source/main.c:885; N xd09_v7 same24/core2, RATE2/session0/learn1/costs14300,0,690 three-pass C1/C8 control0/candidate1/repeat0 tests pass each arm's 72 concurrent plus15 C1 text/native-count/finish comparisons per genre and exact control repeat. Candidate prose differs from legacy; code/structured match in these fixtures. Structured rates334.877/782.980 ->269.850/584.648, code241.247/448.561 ->198.730/345.576, prose170.027/469.349 ->139.366/351.201 tok/s (C1/C8). Candidate is about18-19% slower at C1 and23-25% slower at C8. Full-vocabulary deviation/quality capture was deferred. Main242e6ef contains this research implementation, but default0 remains; nonzero has no active axis mapping or default/merge recommendation. Inherited N evidence is not a new S qualification (packet RND_N.md 5 Nov03:28; xd09_v7_budget/precision_serving_fair.json and control_repeat_fair.json). |
+| --tp_decode_round_once | 0..1 | 0 | Sum published BF16 target partials in ascending-rank FP32 and round the result once. | load, generate, serve | TP4_EXL3 THIN/BATCH | precision up; changed target bits | G0; T | Nonzero startup requires TP4_EXL3, BF16 wire, tp_wide_exchange>=2 and wide_rows>8. Effective only on non-draft THIN/BATCH target completion, including prompt tails using those forms; draft and FULL/WIDE collectives retain old arithmetic. Preparation requires a BF16 four-rank ring, direct shared channels, BF16 payloads, no parallel publisher/local stub/host incoming routes; otherwise refuses. Enabled completion bypasses the old BF16 ring/CE completion paths, preserves READY/DONE sequencing, adds BF16 rank partials in ascending-rank FP32 and rounds once. Changes target bits; independent references required. Default0/current axes retain old sums; nonzero is a raw research option with no active exact/balanced/fast mapping (S main.c:1236; model_v41_program.c:1858). | engine_rnd_s/source/main.c:885; N xd09_v7 same24/core2, RATE2/session0/learn1/costs14300,0,690 three-pass C1/C8 control0/candidate1/repeat0 tests pass each arm's 72 concurrent plus15 C1 text/native-count/finish comparisons per genre and exact control repeat. Candidate prose differs from legacy; code/structured match in these fixtures. Structured rates334.877/782.980 ->269.850/584.648, code241.247/448.561 ->198.730/345.576, prose170.027/469.349 ->139.366/351.201 tok/s (C1/C8). Candidate is about18-19% slower at C1 and23-25% slower at C8. Full-vocabulary deviation/quality capture was deferred. main 242e6ef contains this research implementation, but default0 remains; nonzero has no active axis mapping or default/merge recommendation. Inherited N evidence is not a new S qualification (packet RND_N.md 5 Nov03:28; xd09_v7_budget/precision_serving_fair.json and control_repeat_fair.json). |
 | --draft_bf16_rows | 0..1 | 0 | Use BF16 rows for draft attention products. | load, generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:887; gsj10/12 versus07/08: prose C1 +2.6%, C8 -1.7%; code C1 -0.65%, C2 -2.5%; draft-only, 126/126 texts (RND_J.md). |
 | --batch_draft_wide | 0..3 | 3 | Widen draft work: one sums/posts, two products, three cores. | generate, serve | TP4_EXL3 BATCH | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; B; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:889; gsl05l3 level3 codeC8 641.6tok/s, proseC2/C4/C8 280.9/437.6/496.4; fixed-target texts retained; level3 became default after rl08 refs/window (RND_L.md). Joint epoch; isolated percentage not inferred. |
 | --draft_bf16_operands | 0..1 | 0 | Use BF16 operands for class-80 draft quantized products. | load, generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:891; gsl03e serving proseC1 +0.1%, no BATCH win; THIN generate +5.9% in scoped probe, draft-only (RND_L.md). |
@@ -141,7 +163,7 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --prefill_first | 0..1 | 0 | Prefer another session's wide/full prefill chunk before ordinary steps. | serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:908; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --prefill_prompt_chunks | 0..1 | 0 | Keep runnable FULL/WIDE prompt chunks out of ordinary BATCH packing and retain decoder turns on forced landings. | serve | TP4 EXL3 BF16 BATCH measured; explicit selection on other admitted placements remains unqualified | same solo arithmetic; concurrent schedule selects solo prompt programs | G0; mixed96/96, donor423/423 and canonical2048/1024 | Explicit1 selects the measured first0/order0 guard. Category code/structured/prose/balanced, concurrency multiple, focus decode/balanced, accuracy-oriented profile candidate; strict original-reference exact remains held. No active axis is changed here. | N round7 final guard: code C1 264.738 versus264.902, C8 stream84.009 versus84.965, aggregate633.350 versus652.906tok/s; C8 costs1.12%/3.00%, so default0 under owner delegation. Eight host progress regressions and20-request live identity/progress pass; initial stats schema mismatch is corrected in a saved-data audit and fresh progress gate. Final references/cold details are in N REPORT_v7.md. |
 | --draft_learned_acceptance | 0..1 | EXL3 CLI1; other placements/API0 unless explicitly set | Update the draft policy's shared confidence table from outcomes. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:909; Unmeasured isolated effect. Source implementation/CLI contract only. |
-| --draft_session_acceptance | 0 shared table;1 session ratio;2 log-odds shift;3 Platt scale+shift;4 shift+hindsight;5 full depth while measured match>=0.82;6 position-local EMA;7 middle scout;8 second-position scout;9 natural selector;10 conditional residual calibration;11 actual successful BATCH shape costs | 0 | Scale proposal acceptance by the current session's measured outcomes. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Current S/main242e6ef accepts 0..11, default0. Modes6..11 are implemented:6 position-local EMA,7 middle scout,8 second-position scout,9 natural selector,10 conditional residual calibration,11 actual successful BATCH shape costs. Modes0..10 adjust draft-depth acceptance/calibration; mode11 additionally uses worker-private measured prices. They do not directly replace a target operator, but changed proposal depth can select different target widths/forms: draft-only classification requires target-bit preservation (gate D). Modes6..11 have no active S axis mapping; existing tuples retain0 or5. Inherited N text/ID checks alone do not establish selected-logit invariance or a universal tuple. Mode11 has no new integration recommendation under the later N too-slow/no-merge review; parser availability is distinct from promotion (S main.c:857; engine.c:60-80; RND_N.md 03:34 and RND_S/N/R.md 5 Nov04:38). | engine_rnd_s/source/main.c:911; gxd01b session5+ties: code C8 724.8 versus661.5 (+9.6%); prose572.8 versus492.9 (+16.2%); code C1 240.9 versus244.8 (-1.6%); joint recipe (RND_N.md). |
+| --draft_session_acceptance | 0 shared table;1 session ratio;2 log-odds shift;3 Platt scale+shift;4 shift+hindsight;5 full depth while measured match>=0.82;6 position-local EMA;7 middle scout;8 second-position scout;9 natural selector;10 conditional residual calibration;11 actual successful BATCH shape costs | 0 | Scale proposal acceptance by the current session's measured outcomes. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Current S/main242e6ef accepts 0..11, default0. Modes6..11 are implemented:6 position-local EMA,7 middle scout,8 second-position scout,9 natural selector,10 conditional residual calibration,11 actual successful BATCH shape costs. Modes0..10 adjust draft-depth acceptance/calibration; mode11 additionally uses worker-private measured prices. They do not directly replace a target operator, but changed proposal depth can select different target widths/forms: draft-only classification requires target-bit preservation (gate D). Session acceptance is a measured-route modifier. No Original tuple selects6 after the decode win of TP4_PRO at pipeline depth 2 with 1 serving slot; banked PP5/session6 stays a raw alternative. Original TP4_PRO (pipeline depth 2, 1 serving slot) and PP5 (pipeline depth 8, 8 serving slots) decode routes retain0; structured stays0. PP5 depth5 session6 and TTFT10 observations remain unselected component metadata; no held tuple is admitted. The session6 proseC4 p90 TTFT cost is about26ms; session10 preserves that measured PP5 TTFT tail. EXL3 retains its recorded0/5 assignments; modes7..9 and11 remain explicit alternatives. Exact and prefill mappings are unchanged. Inherited N text/ID checks alone do not establish selected-logit invariance or a universal tuple. Mode11 has no new integration recommendation under the later N too-slow/no-merge review; parser availability is distinct from promotion (S main.c:857; engine.c:60-80; RND_N.md 03:34 and RND_S/N/R.md 5 Nov04:38). | engine_rnd_s/source/main.c:911; gxd01b session5+ties: code C8 724.8 versus661.5 (+9.6%); prose572.8 versus492.9 (+16.2%); code C1 240.9 versus244.8 (-1.6%); joint recipe (RND_N.md). |
 | --batch_plan_ties | 0..1 | 0 | Cut planned drafts only between unequal predicted reach. | generate, serve | TP4_EXL3 BATCH | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; B; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:913; gxd01b joint session5+ties results: code/prose C8 +9.6/+16.2%; isolated gain unmeasured (RND_N.md). |
 | --draft_start_economic | 0..1 | 1 | Start DSpark at policy depth instead of a single-proposal probe. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:915; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --chunks_in_flight | 1..8 | 1 | Bound chunk steps in flight; one uses the exact cone planner. | generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:917; rc02ab exact1 versus2: 30K11.859 ->9.430 s, Fraser2.431 ->1.857 s; same bits in that recipe (RND_C.md). |
@@ -165,23 +187,23 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --prefill_thin_tail | 0..1 | auto:1 with tail and THIN;0 otherwise | Use 16..56-row programs for rows below a 64-row tail. | generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T; F | Nonzero requires a tail program; automatic default only without BATCH. | engine_rnd_s/source/main.c:956; rk09y/z 2K1.144 ->1.117s (-27ms),1905token1.141 ->1.075s (-66ms),same bits after final fixes; earlier rejected versions must not be reused (RND_K.md). |
 | --prefill_dead_halves | 0..2 | 2 | Trim cone-dead sums; mode two also trims dead copies. | generate, serve | TP4_EXL3 THIN/BATCH | same bits | G0; T | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:958; ri01 mode1 Fraser -76ms,30K -68ms; joint mode7+pool+dead2 Fraser -117ms/30K -276ms; same bits (RND_I.md). |
 | --prefix_reuse | 0..1 | 1 | Reuse eligible cached prompt prefixes instead of prefilling cold. | serve | all placements/recipes | sum order (cross-plan risk; see P) | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:960; xc01 baseline: cold-solo TTFT median0.712954s versus legacy repeat0.014448s; repeat text matches cold14/16. 25005-token cold7.697177s versus repeat0.015356s agrees; 6004-token repeat differs. Observed speed/identity tradeoff, not exact-cache qualification (RND_P.md 16:07; baseline_repeat_cost.json). |
-| --prefix_reuse_exact | 0 legacy;1 final-row repeat;2 cold-plan boundaries | 0 | Admit same-length cold-provenance prompt prefixes through repeat or cold-plan boundaries. | serve | serve: mode0 legacy on admitted placements; nonzero TP4_EXL3 only | same bits within the qualified cold recipe; target-form invariance required | G0; nonzero startup and cold-provenance gates in Interactions | Nonzero requires TP4_EXL3, ring_column_owners1, batch_thin_bits1, chunks_in_flight1, prefill_fast_plan0, prefill_chunk_rows0 and prefill_decode_rows0; multiple slots require prefill_first1 or prefill_order1/2. Namespace equality precedes numeric admission. Modes1/2 require known cold_prompt_count equal to this request length, no image and no imported snapshot. Kept tokens round down to an eight-token boundary. Mode1 additionally keeps exactly prompt_count-1 and not before decoder_from; mode2 calls the child-length cold-plan boundary helper and validates any fallback checkpoint. Ordinary reach lag is<=3968; otherwise only a valid checkpoint can reuse. Prefix_reuse0 disables reuse. Server open refuses any session_directory with exact mode1/2. No nonshrinking/growing stable1 or fork admission exists in this merged source (S main.c:935,1368; server.c:66-135,1232). | engine_rnd_s/source/main.c:961; Merged raw/default0 retains legacy policy. P c52ce71 modes1/2 retain16cold+160warm+14stress and separate114coldABA/xc08 checkpoint proofs; Q final06 gpq05 closes its57request BATCH coldABA, not a fresh114matrix. Main5029986 mpqa2048/mpqb1024 passes full8/256 selected records06:15:58-06:19:13; fresh S8d6bb95 qualification is separate. No automatic axis selection or original-weight-equivalence claim. Unmerged P stable1 extension evidence is confined to its branch row (RND_P/Q.md; RND_Q5Nov06:23). |
-| --cache_scope | 0 session;1 user;2 global | 0 | Choose the namespace used for tokenizer, slot and snapshot reuse. | serve | serve: all admitted placements; explicit namespace policy | same bits; service and reuse eligibility policy | G0; namespace/snapshot/idle eligibility in Interactions | 0 SESSION combines authenticated user with every recognized body/metadata/session-header identity; absent/null/empty values add no signal. UTF-8 identity strings<=512bytes each and total<=8192bytes; invalid types/limits or repeated identity headers return400. 1 USER scopes by authenticated user only; 2 GLOBAL explicitly permits cross-user/session content reuse. Anonymous requests share user "-". Namespaces gate tokenizer/KV/snapshot matching and convey neither authorization nor stored-response semantics. Snapshotv4 binds the complete namespace on the opened descriptor; old unscopedv3 files remain untouched. No session_fork or automatic same-owner cloning is parsed by S (S main.c:937; server_cache.c:180; server_sessions.c:39,150,255; server.h:42). | engine_rnd_s/source/main.c:963; Merged default0. Frozen Q gpq01 namespace112/112, final06 native/Responses and gpq05 cold controls pass within their epochs; actualCodex gpq06 passes18Responses/17laterhits, not paired latency evidence. Main5029986 both-width references and one-slot two-user Chat/Responses smoke pass: each HTTP200/1905input/8output, equal content/reasoning, cache0 for both users. First pre-binary permission failure remains retained. Service policy orthogonal to all axes; no S axes/default change (RND_Q.md5Nov03:20,04:20,06:19,06:23). |
+| --prefix_reuse_exact | 0 legacy;1 final-row repeat;2 cold-plan boundaries | 0 | Admit same-length cold-provenance prompt prefixes through repeat or cold-plan boundaries. | serve | serve: mode0 legacy on admitted placements; nonzero TP4_EXL3 only | same bits within the qualified cold recipe; target-form invariance required | G0; nonzero startup and cold-provenance gates in Interactions | Nonzero requires TP4_EXL3, ring_column_owners1, batch_thin_bits1, chunks_in_flight1, prefill_fast_plan0, prefill_chunk_rows0 and prefill_decode_rows0; multiple slots require prefill_first1 or prefill_order1/2. Namespace equality precedes numeric admission. Modes1/2 require known cold_prompt_count equal to this request length, no image and no imported snapshot. Kept tokens round down to an eight-token boundary. Mode1 additionally keeps exactly prompt_count-1 and not before decoder_from; mode2 calls the child-length cold-plan boundary helper and validates any fallback checkpoint. Ordinary reach lag is<=3968; otherwise only a valid checkpoint can reuse. Prefix_reuse0 disables reuse. Server open refuses any session_directory with exact mode1/2. No nonshrinking/growing stable1 or fork admission exists in this merged source (S main.c:935,1368; server.c:66-135,1232). | engine_rnd_s/source/main.c:961; Merged raw/default0 retains legacy policy. P c52ce71 modes1/2 retain16cold+160warm+14stress and separate114coldABA/xc08 checkpoint proofs; Q final06 gpq05 closes its57request BATCH coldABA, not a fresh114matrix. main 5029986 mpqa2048/mpqb1024 passes full8/256 selected records06:15:58-06:19:13; fresh S8d6bb95 qualification is separate. No automatic axis selection or original-weight-equivalence claim. Unmerged P stable1 extension evidence is confined to its branch row (RND_P/Q.md; RND_Q5Nov06:23). |
+| --cache_scope | 0 session;1 user;2 global | 0 | Choose the namespace used for tokenizer, slot and snapshot reuse. | serve | serve: all admitted placements; explicit namespace policy | same bits; service and reuse eligibility policy | G0; namespace/snapshot/idle eligibility in Interactions | 0 SESSION combines authenticated user with every recognized body/metadata/session-header identity; absent/null/empty values add no signal. UTF-8 identity strings<=512bytes each and total<=8192bytes; invalid types/limits or repeated identity headers return400. 1 USER scopes by authenticated user only; 2 GLOBAL explicitly permits cross-user/session content reuse. Anonymous requests share user "-". Namespaces gate tokenizer/KV/snapshot matching and convey neither authorization nor stored-response semantics. Snapshotv4 binds the complete namespace on the opened descriptor; old unscopedv3 files remain untouched. No session_fork or automatic same-owner cloning is parsed by S (S main.c:937; server_cache.c:180; server_sessions.c:39,150,255; server.h:42). | engine_rnd_s/source/main.c:963; Merged default0. Frozen Q gpq01 namespace112/112, final06 native/Responses and gpq05 cold controls pass within their epochs; the real-client gpq06 passes18Responses/17laterhits, not paired latency evidence. main 5029986 both-width references and one-slot two-user Chat/Responses smoke pass: each HTTP200/1905input/8output, equal content/reasoning, cache0 for both users. First pre-binary permission failure remains retained. Service policy orthogonal to all axes; no S axes/default change (RND_Q.md5Nov03:20,04:20,06:19,06:23). |
 | --session_grace_seconds | 0..3600 | 30 | Prefer retaining a recently finished namespace when choosing an idle slot. | serve | serve: all admitted placements; idle-slot policy | same bits | G0; namespace/snapshot/idle eligibility in Interactions | CLI0..3600 seconds; default30, zero disables grace. Protection is a preference, never a reservation that stalls dispatch: if all free slots are protected one is still chosen. Only idle slots qualify; explicit-session affinity breaks equal-prefix ties without bypassing namespace/content/image/reach checks (S main.c:939; server.c:137-197; server.h:50,114). | engine_rnd_s/source/main.c:965; Merged default30. Q namespace/affinity and merged smoke proofs are aggregate service-policy evidence; isolated latency/capacity effect unmeasured. Orthogonal to the four axes; no automatic mapping. |
 | --session_save_tokens | 1..1048576 | 1024 | Require this many processed tokens absent from a snapshot before saving. | serve | serve: configured eligible snapshot store on admitted placements | same bits | G0; namespace/snapshot/idle eligibility in Interactions | CLI1..1048576; default1024. API zero selects1024 but is not a CLI spelling. With a session directory, eviction/idle/shutdown saves require at least this many processed-minus-saved tokens; a continuing same-namespace prefix also checks the discarded unsaved suffix. Snapshotv4, namespace, image and engine state eligibility remain; this knob cannot enable a directory with prefix_reuse0 or exact reuse1/2 (S main.c:941; server.c:1232; server_sessions.c:407-423,616-654; server.h:111). | engine_rnd_s/source/main.c:967; Merged default1024. Snapshot and namespace correctness proofs do not supply an isolated performance result; no automatic axes mapping. |
 | --session_load_tokens | 1..1048576 | 256 | Require this much reusable-token gain before loading a snapshot. | serve | serve: configured eligible snapshot store on admitted placements | same bits | G0; namespace/snapshot/idle eligibility in Interactions | CLI1..1048576; default256. API zero selects256 but is not a CLI spelling. Select only a namespace/image-compatible valid snapshot that keeps more than the current slot and gains>=this threshold. Complete opened-file v4 header/token/namespace and engine load checks remain. Session directory requires prefix_reuse1 and exact reuse0 (S main.c:943; server.c:1232; server_sessions.c:255-286,423-445; server.h:112). | engine_rnd_s/source/main.c:969; Merged default256. Version/namespace/replacement correctness gates do not measure an isolated latency or throughput gain; no automatic axes mapping. |
 | --session_idle_save_seconds | 1..86400 | 120 | Wait this long without work before starting an eligible idle snapshot save. | serve | serve: configured eligible snapshot store on admitted placements | same bits | G0; namespace/snapshot/idle eligibility in Interactions | CLI1..86400 seconds; default120. API zero selects120 but is not a CLI spelling. Idle saving requires store present, healthy engine, no queued or active commands and a slot meeting session_save_tokens; then saves one eligible slot at a time. Shutdown saving uses its separate drain path and does not wait this idle timer. Directory requires prefix_reuse1 and exact reuse0 (S main.c:945; server_sessions.c:616-654; server.h:113-115). | engine_rnd_s/source/main.c:971; Merged default120. No isolated snapshot-I/O/performance measurement or automatic axes mapping. |
-| --session_slots | 1..8 | 1 | Allocate this many independent active session slots. | serve | all placements/recipes | same bits | G0 | Values above1 require serve; device draft plus THIN multiple slots requires pipeline_steps>1. Measured S10/e4c188e one1048576-token trueTHIN slot allocates with15MiB minimum CMP free: selected8/256, both2048/1024 reference pairs,15MiaAI signatures and cold9 pass; cold3795tok/s, Fraser1435.85/1443.60ms. Capacity plus short requests only, not full1Mwork/pi/peak envelope. Earlier S04 BATCH8/one-verifier slot125MiB/cold3207 retains its different recipe/source. | engine_rnd_s/source/main.c:973; Unmeasured isolated effect. Source implementation/CLI contract only. |
+| --session_slots | 1..1024 (SERVING_SLOTS_MOST), or max | max on serve: as many as fit, no cap | Allocate this many independent active session slots; max (serve's default since 9 Nov): the most of the context (each its own --context_tokens) the cards hold, resolved at startup by the placement fit by bisection (printed with each card's free and budget MiB; refused, never shrunk, when not even one fits; parsing and its defaults see 8, and a max that resolves to one session takes --session_slots=1's defaults: pipeline depth, TP4_EXL3's draft policy). A knob that serves one session (--official_reference; --prefill_prefix_stable, --prefix_reuse_exact or --session_fork without --prefill_first or --prefill_order) given without --session_slots takes one session, named on stderr; with a count above 1, or max, it is refused, named. An explicit count the cards do not hold is refused before any load with the most that fit and the longest context of that count. A serve with BATCH knobs needs exactly --session_slots=8. | serve | all placements/recipes | same bits | G0 | Values above1 require serve; device draft plus THIN multiple slots requires pipeline_steps>1. Measured S10/e4c188e one1048576-token trueTHIN slot allocates with15MiB minimum CMP free: selected8/256, both2048/1024 reference pairs,15MiaAI signatures and cold9 pass; cold3795tok/s, Fraser1435.85/1443.60ms. Capacity plus short requests only, not full1Mwork/pi/peak envelope. Earlier S04 BATCH8/one-verifier slot125MiB/cold3207 retains its different recipe/source. | engine_rnd_s/source/main.c:973; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --queue_depth | 1..64 | 16 | Bound all waiting server requests. | serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:975; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --user_queue_depth | 1..64 | auto: max(1, queue_depth/2) | Bound waiting requests per API user. | serve | all placements/recipes | same bits | G0 | Must not exceed queue_depth; omitted becomes half global queue (at least1). | engine_rnd_s/source/main.c:977; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --step_graphs | 0..1 | 0 | Capture/replay prepared CUDA step graphs instead of eager launches. | generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:979; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --engram_shared | 0 or1 | 0 | Gather identical TP Engram inputs once into a shared pinned block. | generate, serve | all TP placements where shared gathers are admitted | same bits | G0; T | TP-only, immutable per-step input; no CPU expert offload. | xp04k2024-token fixture: baseline gather0/dense16 TTFT1.121s; gather1/dense16 1.111s; gather1/dense8/32/64 1.109/1.106/1.108s. Selected records identical, natural EOS after2tokens; single pass, not cold full benchmark or256-token decode proof. Prior gather A/B1.115/1.109/1.106/1.116s. Default0 retained (RND_M.md19:36). |
-| --pipeline_steps | 1..8 | 5 for PP5 multi-session device THIN serving; 1 elsewhere | Bound ordinary step pipeline depth. | generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:983; Original PP5 source75 repaired pair: depth2->5 cold prefill3502->4450tok/s; Fraser C1/C4/C8 medianTTFT1475.55/6739.35/12005.55->1278.75/4308.65/7165.80ms, aggregateE2E159.306/272.776/281.481->161.620/446.244/465.998tok/s. Independent literal source/config/power/cold/lifetime and46Fraser+9fixed API identities pass. NativeV1 check_failed/exit1 are preserved; repair-aware controller/root derived proof passes. Not the separate three-genre decode sweep,1M,official equality or S10 serving result. New f52c9c5 omitted-depth5 original serve/multiple default proposal is branch-only pending candidate refs; S explicitly selects measured PP8 decode and raw defaults remain main39980. No original TTFT/prefill tuple is admitted by this note (RND_O.md5Nov11:21). Integration batch applies f52c9c5; explicit depths retain their values. |
+| --pipeline_steps | 1..8 | 5 for PP5 multi-session device THIN serving; 2 for a TP serve of several slots with the device draft and no BATCH; 1 elsewhere | Bound ordinary step pipeline depth. | generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:983; Original PP5 source75 repaired pair: depth2->5 cold prefill3502->4450tok/s; Fraser C1/C4/C8 medianTTFT1475.55/6739.35/12005.55->1278.75/4308.65/7165.80ms, aggregateE2E159.306/272.776/281.481->161.620/446.244/465.998tok/s. Independent literal source/config/power/cold/lifetime and46Fraser+9fixed API identities pass. NativeV1 check_failed/exit1 are preserved; repair-aware controller/root derived proof passes. Not the separate three-genre decode sweep,1M,official equality or S10 serving result. New f52c9c5 omitted-depth5 original serve/multiple default proposal is branch-only pending candidate refs; S explicitly selects measured PP5 decode at pipeline depth 8 with 8 serving slots and raw defaults remain main39980. No original TTFT/prefill tuple is admitted by this note (RND_O.md5Nov11:21). Integration batch applies f52c9c5; explicit depths retain their values. |
 | --tp_pipeline_overlap | 0..1 | 0 | Run the CMP prefix and native PRO tail on disjoint workers. | generate, serve | original TP4_PRO, native PRO tail, pipeline depth>=2 | same bits in recorded current-recipe scope; joins unqualified | G0; T | Nonzero requires TP4_PRO, pipeline_steps>=2, no BATCH, exact numerics, native PRO, precision/reference linear and CMP-reference, FP32 wire, code_wire0 and attention_owner0. Prepared overlap topology refuses images, mirrors, backward transfers and expert pauses. Source availability does not enable an axis or qualify an untested join (S main.c:1227; step_pipeline.c:682). | engine_rnd_s/source/main.c:986; Merged default0. Inherited XO06 preservation and XO09 source434a895/rndo_05 gxo10/11 serving pass:12 cells and141 request/text/native-count pairs per window. TP C2-C8 improves41-47%; code C1/C2/C4/C8 serial220.75/201.47/206.24/207.30 versus overlap220.50/284.58/295.79/304.48 tok/s. Best measured PP5 remains faster at C2-C8. Prefix_reuse1 warm decode scope, not fresh S prefix_reuse0, all-step logits/state, mixed or TTFT qualification. No active S axis selects nonzero (RND_O.md 5 Nov01:19). |
 | --prefill_cone | 0..1 | 0 | Use a bounded front region with a prepared prefill cone. | generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:988; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --wide_rows | 0..4096 | 0 | Prepare a wide prefill program of this many rows; zero disables it. | generate, serve | all placements/recipes | same bits | G0 | Nonzero requires prefill_cone and >=64 rows. TP preparation permits at most2048 rows with split_overlap enabled, otherwise1024. Overall row capacity must fit the model geometry. | engine_rnd_s/source/main.c:990; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --rows | 1..8 | 1 | Set ordinary THIN step row capacity (and proposal capacity minus one). | generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:992; Unmeasured isolated effect. Source implementation/CLI contract only. |
-| --context_tokens | 1..1048576 | 16384 | Allocate the maximum prompt-plus-generation context per slot. | generate, serve | all placements/recipes | same bits | G0 | Model capacity must be positive and a multiple of16; TP also requires at least16384. Measured S10 trueTHIN one1048576-token slot allocates with15MiB minimum CMP free and short C1/cold/Fraser work passes (gxf_s10_single_1m_strict_s10_v1.json); not full1M work, pi, peak memory or eight1Mslots. Earlier S04 BATCH8/one-verifier125MiB is historical and separate. Capacity is an explicit raw override, not an inserted axis default. | engine_rnd_s/source/main.c:994; Unmeasured isolated effect. Source implementation/CLI contract only. |
+| --context_tokens | 1..1048576 | 1048576 (owner, 9 Nov: 1M for every session, generate's too) | Allocate the maximum prompt-plus-generation context per slot. | generate, serve | all placements/recipes | same bits | G0 | Model capacity must be positive and a multiple of16 (MODEL_CONTEXT_GRANULE; another value is refused at parse, naming the granule); TP also requires at least16384. Measured S10 trueTHIN one1048576-token slot allocates with15MiB minimum CMP free and short C1/cold/Fraser work passes (gxf_s10_single_1m_strict_s10_v1.json); not full1M work, pi, peak memory or eight1Mslots. Earlier S04 BATCH8/one-verifier125MiB is historical and separate. Capacity is an explicit raw override, not an inserted axis default. | engine_rnd_s/source/main.c:994; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --generated_tokens | 1..4294967295 | generate64; serve4294967295 | Set the generation token ceiling; serving also accepts per-request limits. | generate, serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:997; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --seed | 0..4294967295 | generate0; serve random when omitted | Set sampler seed; omitted serving requests draw a seed. | generate, serve | all placements/recipes | sum order | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:999; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --reasoning_effort | 0..100 | 0 | Set template reasoning effort from zero (off) through 100. | generate, serve | all placements/recipes | sum order | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1001; Unmeasured isolated effect. Source implementation/CLI contract only. |
@@ -193,11 +215,11 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --prompt_token_ids | JSON file path | none | Read explicit prompt IDs instead of rendering chat messages or tokenizing text. | generate only | generate [OPTIONS] --prompt_token_ids=IDS_JSON TABLES WEIGHTS; one explicit pack | same input IDs; no mathematical change | JSON nonempty uint32 array; IDs below tokenizer vocabulary; at most context capacity minus1 | Replaces the MESSAGES positional argument; empty/duplicate paths, extra messages or explicit pack copies refuse. Automatic turbo replicas remain available. | Track R original serial M1 fixture; sampled recurrence uses the normal engine command. |
 | --port | 1..65535 | 8321 | Listen on this TCP port. | serve | all placements/recipes | same bits | G0 | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1013; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --speculative | 0 off;1 lookup;2 DSpark;3 hybrid | 0 | Choose off, n-gram lookup, checkpoint DSpark or hybrid proposals. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Nonzero requires rows>1. Every TP startup requires DSpark or hybrid (2/3); off/lookup refuse there. Device/hybrid depth cannot exceed draft_block; multi-slot THIN requires pipeline_steps>1. | engine_rnd_s/source/main.c:1015; Unmeasured isolated effect. Source implementation/CLI contract only. |
-| --draft_policy | 0 fixed;1 cost;2 rate;3 adaptive | CLI EXL3 auto:0 for one-slot THIN,2 for BATCH or configured slots>1; other placements1; explicit values win | Choose fixed, cost, rate or adaptive proposal-depth selection. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1017; Controlled S06/d71cd05 binary76c98fc7 evidence: canonical head_shards1/head_stream1/draft_shards1/draft_layers0 with policy0 passes full8/256 selected-record references and15 C1 MiaAI native/text/finish checks in gxf_s06_code_single_short. Fixed0 C1 code230.959/prose158.954/structured330.108 tok/s; cold prefill3909 tok/s with cached0; Fraser C1 median/worst1379.4/1395.1 ms. Changing only policy0 to1, with the other concrete flags equal, fails the30K selected-record gate: all8 IDs agree but6 selected F32 logits differ, max about7.63e-5. Policy1 MD5ff1489cffe4194bb52fe36eef08056c9 equals the older S04gxf15 policy1 file despite that older recipe being unsharded. This controlled result does not establish a head-sharding cause; target width/form or selected-logit provenance remains under investigation. No current policy1 speed is measured, and fixed0 results do not transfer to it. Those S06 raw defaults were unchanged during that experiment. Current main39980c7 resolves omitted EXL3 policies to fixed0 or RATE2; other placements retain1. Cost1 still lacks same-bits-to-fixed-canonical balanced qualification. Source: evidence/xf_axes_numerics_v3/thin_current_30k.*; RND_S/N/R.md 5 Nov04:38. Historical N gxd01c/01a code264.3/244.8 and prose162.7/168.7 tok/s retain their different joint-recipe scope, not this controlled S comparison. |
+| --draft_policy | 0 fixed;1 cost;2 rate;3 adaptive | CLI EXL3 auto:0 for one session THIN (also a serve whose --session_slots=max resolves to one),2 for BATCH or several sessions; other placements1; explicit values win | Choose fixed, cost, rate or adaptive proposal-depth selection. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1017; Controlled S06/d71cd05 binary76c98fc7 evidence: canonical head_shards1/head_stream1/draft_shards1/draft_layers0 with policy0 passes full8/256 selected-record references and15 C1 MiaAI native/text/finish checks in gxf_s06_code_single_short. Fixed0 C1 code230.959/prose158.954/structured330.108 tok/s; cold prefill3909 tok/s with cached0; Fraser C1 median/worst1379.4/1395.1 ms. Changing only policy0 to1, with the other concrete flags equal, fails the30K selected-record gate: all8 IDs agree but6 selected F32 logits differ, max about7.63e-5. Policy1 MD5ff1489cffe4194bb52fe36eef08056c9 equals the older S04gxf15 policy1 file despite that older recipe being unsharded. This controlled result does not establish a head-sharding cause; target width/form or selected-logit provenance remains under investigation. No current policy1 speed is measured, and fixed0 results do not transfer to it. Those S06 raw defaults were unchanged during that experiment. Current main39980c7 resolves omitted EXL3 policies to fixed0 or RATE2; other placements retain1. Cost1 still lacks same-bits-to-fixed-canonical balanced qualification. Source: evidence/xf_axes_numerics_v3/thin_current_30k.*; RND_S/N/R.md 5 Nov04:38. Historical N gxd01c/01a code264.3/244.8 and prose162.7/168.7 tok/s retain their different joint-recipe scope, not this controlled S comparison. |
 | --draft_threshold | 0..1000 | 100 | Set the minimum draft confidence in thousandths. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1020; Unmeasured isolated effect. Source implementation/CLI contract only. |
-| --draft_base_us | 1..1000000000 | EXL3 CLI14300; other placements/API12700 unless explicitly set | Estimate the base verification-step cost in microseconds. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1023; Measured S06 xf11/gxf_s06_rate_control_pair versus gxf_s06_rate_priors_pair: RATE2, learn1/session0/ties0/core2 and identical MiaAI→M-arrivals→Fraser. Joint base/row prices 13000/1200 to 14300/690 microseconds, tail fixed0. Code C1/C2/C4/C8 changes +6.001/+3.526/+7.396/+0.446%; prose C2/C8 changes -6.168/-2.463%. Full selected8/256 references and141 cross-arm request/text/native-count/finish signatures agree; sampled native decode advances during long prefill in both warm repetitions. Fraser median deltas C1/C4/C8 +0.65/+4.50/+8.55 ms; worst deltas -5.70/+28.30/+7.00 ms. Warm-short maximum SSE gap 0.473578 to0.469387 s; no native-token timing claim. The historical zero-margin Fraser screen fails. Main later accepted the N31 raw-default bucket under its noise interpretation; that selection does not rewrite this failure or by itself qualify a bounded S tuple. CPU builds/tests overlapped parts of these windows; no isolated causal or universal optimum claim. No cold/mixed/1M/full-logit/official qualification in this pair. Source: evidence/s06_rate_pair_review_v2.json. |
+| --draft_base_us | 1..1000000000 | EXL3 CLI14300; other placements/API12700 unless explicitly set | Estimate the base verification-step cost in microseconds. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1023; Measured S06 xf11/gxf_s06_rate_control_pair versus gxf_s06_rate_priors_pair: RATE2, learn1/session0/ties0/core2 and identical MiaAI→M-arrivals→Fraser. Joint base/row prices 13000/1200 to 14300/690 microseconds, tail fixed0. Code C1/C2/C4/C8 changes +6.001/+3.526/+7.396/+0.446%; prose C2/C8 changes -6.168/-2.463%. Full selected8/256 references and141 cross-arm request/text/native-count/finish signatures agree; sampled native decode advances during long prefill in both warm repetitions. Fraser median deltas C1/C4/C8 +0.65/+4.50/+8.55 ms; worst deltas -5.70/+28.30/+7.00 ms. Warm-short maximum SSE gap 0.473578 to0.469387 s; no native-token timing claim. The historical zero-margin Fraser screen fails. The maintainer later accepted the N31 raw-default bucket under its noise interpretation; that selection does not rewrite this failure or by itself qualify a bounded S tuple. CPU builds/tests overlapped parts of these windows; no isolated causal or universal optimum claim. No cold/mixed/1M/full-logit/official qualification in this pair. Source: evidence/s06_rate_pair_review_v2.json. |
 | --draft_tail_us | 0..1000000000 | EXL3 CLI0; other placements/API2200 unless explicitly set | Estimate fixed tail cost in microseconds. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1026; Tail0 is held fixed in the scoped S06 xf11 joint base/row-price pair; no isolated tail effect was measured. |
-| --draft_row_us | 1..1000000000 | EXL3 CLI690; other placements/API2700 unless explicitly set | Estimate each additional verification row's cost in microseconds. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1029; Measured S06 xf11/gxf_s06_rate_control_pair versus gxf_s06_rate_priors_pair: RATE2, learn1/session0/ties0/core2 and identical MiaAI→M-arrivals→Fraser. Joint base/row prices 13000/1200 to 14300/690 microseconds, tail fixed0. Code C1/C2/C4/C8 changes +6.001/+3.526/+7.396/+0.446%; prose C2/C8 changes -6.168/-2.463%. Full selected8/256 references and141 cross-arm request/text/native-count/finish signatures agree; sampled native decode advances during long prefill in both warm repetitions. Fraser median deltas C1/C4/C8 +0.65/+4.50/+8.55 ms; worst deltas -5.70/+28.30/+7.00 ms. Warm-short maximum SSE gap 0.473578 to0.469387 s; no native-token timing claim. The historical zero-margin Fraser screen fails. Main later accepted the N31 raw-default bucket under its noise interpretation; that selection does not rewrite this failure or by itself qualify a bounded S tuple. CPU builds/tests overlapped parts of these windows; no isolated causal or universal optimum claim. No cold/mixed/1M/full-logit/official qualification in this pair. Source: evidence/s06_rate_pair_review_v2.json. |
+| --draft_row_us | 1..1000000000 | EXL3 CLI690; other placements/API2700 unless explicitly set | Estimate each additional verification row's cost in microseconds. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1029; Measured S06 xf11/gxf_s06_rate_control_pair versus gxf_s06_rate_priors_pair: RATE2, learn1/session0/ties0/core2 and identical MiaAI→M-arrivals→Fraser. Joint base/row prices 13000/1200 to 14300/690 microseconds, tail fixed0. Code C1/C2/C4/C8 changes +6.001/+3.526/+7.396/+0.446%; prose C2/C8 changes -6.168/-2.463%. Full selected8/256 references and141 cross-arm request/text/native-count/finish signatures agree; sampled native decode advances during long prefill in both warm repetitions. Fraser median deltas C1/C4/C8 +0.65/+4.50/+8.55 ms; worst deltas -5.70/+28.30/+7.00 ms. Warm-short maximum SSE gap 0.473578 to0.469387 s; no native-token timing claim. The historical zero-margin Fraser screen fails. The maintainer later accepted the N31 raw-default bucket under its noise interpretation; that selection does not rewrite this failure or by itself qualify a bounded S tuple. CPU builds/tests overlapped parts of these windows; no isolated causal or universal optimum claim. No cold/mixed/1M/full-logit/official qualification in this pair. Source: evidence/s06_rate_pair_review_v2.json. |
 | --draft_probe_rounds | 1..1048576 | 8 | Probe full draft depth after this many policy rounds. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1032; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --hybrid_lookup_prior | 0..1000 | 500 | Set lookup acceptance prior in thousandths. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Prepared model/driver validation remains authoritative; ignored outside the named implementation path. | engine_rnd_s/source/main.c:1035; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --hybrid_lookup_min | 1..16 | 3 | Use lookup in hybrid mode only from this n-gram length. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Hybrid requires <=lookup_ngram_max. | engine_rnd_s/source/main.c:1038; Unmeasured isolated effect. Source implementation/CLI contract only. |
@@ -209,24 +231,27 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --lookup_ngram_min | 1..16 | 2 | Set the shortest lookup suffix searched. | generate, serve | generate/serve with corresponding drafter; all placements where admitted | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Must not exceed lookup_ngram_max. | engine_rnd_s/source/main.c:1056; Unmeasured isolated effect. Source implementation/CLI contract only. |
 | --numerics | exact / relaxed / fast | exact | Choose admitted startup numerical policy. | load, generate, serve | all placements/recipes | sum order | G0 | Explicit exact refuses relaxed CMP order; relaxed/fast default to relaxed CMP order only for PP5. TP placements retain reference CMP order and refuse explicit relaxed. Exact is admitted only for PP5, TP4_PRO and TP4_EXL3. | source/startup_policy.c:101..135; RND_PIPELINE.md. Unmeasured isolated effect. |
 | --placement | pp5 / tp4_pro / tp4_exl3 / tp2_pp2_pro / tp2_single_single_pro | pp5 | Choose prepared weight/state placement. | load, generate, serve | all placements/recipes | sum order | G0 | tp5 parses in policy helper but is refused by admission. PP5 permits layout; TP layouts refuse it. Native PRO output depends on its layers. | source/startup_policy.c; COMPARISON_MATRIX.md recipe epochs; no isolated effect. |
+| --weights | original / exl3 | unset (as --placement and the pack imply) | Name the weight family. | load, generate, serve | all placements/recipes | same bits | G0 | Omitted: unchanged. Given without --placement: the family's default split (original PP5, EXL3 TP4_EXL3; printed without an axis flag, named by the axes gpu_split line with one), also for the axis tables (keyed on split and family); a value other than original or exl3 refuses as such; load keeps its own placement (an explicit PP5 included) and only takes the family's pack. An explicit --placement of the other family, a pack argument of the other kind (.exl3map or not) or a pack whose matrices are of the other family refuses, naming both. | source/commands.c take_model_source, weights_placement_matches, pack_family_status; no isolated effect. |
+| --model_dir | a folder path, at most 1023 bytes | none (positional tables and pack) | Read the model from one folder. | load, generate, serve | all placements/recipes | same bits | G0 | Replaces the tables and pack arguments (generate keeps its messages file); fixed names tokenizer.bin, original.anemone, model.exl3map (the EXL3 map with --weights=exl3 or tp4_exl3). Each name may be a link: resolved once to a regular file whose device and inode the open must match (a swap refuses). Startup prints each file's real path and device, and the pack's name and digests; identity stays the pack's. | source/model_folder.c, source/commands.c model_folder_files and model_pack_opened; no isolated effect. |
 | --cmp_order | reference / relaxed | reference | Choose CMP trunk/expert sum order. | generate, serve | all placements/recipes | sum order | G0 | Explicit numerics=exact requires reference; omitted numerics resolves legacy relaxed CMP to relaxed policy. | source/startup_policy.c. Unmeasured isolated effect. |
-| --temperature | finite float >=0 | 0 | Set sampling temperature; zero is greedy. | generate, serve | all placements/recipes | sum order | G0 | Ordinary command/parser and runtime value gates apply, including under exactness=exact; temperature, top_p and seed are unrestricted within their ordinary ranges. | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --top_p | float >0 and <=1 | 1 | Set nucleus probability cutoff. | generate, serve | all placements/recipes | sum order | G0 | Ordinary command/parser and runtime value gates apply. | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --bind_address | numeric IPv4/IPv6 | 127.0.0.1 | Bind the server listener. | serve | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --key_file | path | none | Read API-user authentication records at startup. | serve | all placements/recipes | same bits | G0 | Regular, nonempty file <=1MiB with no group/other permission bits; at most64 unique users/keys, exact record format validated (server_keys.c:43..143). | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --stats_users | comma list of <=64 usernames; each1..32 ASCII letters/digits/._- | all authenticated users; open stats when auth disabled | Authorize named users to access the statistics endpoint. | serve | all placements/recipes | same bits | G0 | Requires key_file; no empty names; endpoint authorization allowlist, independent of live-statistics presentation (server.c:595..600,1056..1072). | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --model_alias | 1..63 bytes | none | Add a request/listing model alias. | serve | all placements/recipes | same bits | G0 | Supplied alias must fit63 bytes; adds a name without replacing the model identity (server.c:1011..1013). | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --session_directory | path | none | Persist eligible session snapshots in this directory (requires prefix_reuse=1). | serve | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --draft_usage | none / compact / full | compact | Choose draft statistics detail in responses. | serve | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --dump_draft_ring | path | none | Write diagnostic draft-ring rows at shutdown. | generate | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --layout | <=4096-byte statements joined by semicolon+space: <units>: card <c> or experts kept: <units>: <n> | automatic fill | Override PP5 unit placement. | load, generate, serve | all placements/recipes | sum order | G0 | PP5 only. Units are embedding/vision/head/draft head or layers a..b, c (up to16 ranges/statement); exact spaces required. Each stage must be assigned once, ranges must exist in order, card indices and kept counts must fit, and card budgets may not be exceeded (placement.h:16..35). | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --live_stats_format | text / json / table | text | Choose live server statistics format. | serve | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. |
-| --draft_calibration | path to <4096-byte file; exactly112 integers0..1000 | none | Override draft acceptance priors in mode/position/bin order. | generate, serve | all placements/recipes | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Exactly112 whitespace-separated unsigned integers0..1000, optional trailing whitespace, no extra tokens, at most4095 bytes. Overrides acceptance priors only; cost knobs are independent (main.c draft_calibration_read). | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Draft policy/calibration target-bit qualification follows gate D and the controlled S06 policy finding. |
-| --draft | lookup / dspark / hybrid | off | Select speculative proposal source by name. | generate, serve | all placements/recipes | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Draft aliases must agree with explicit speculative; layout only PP5; no secrets printed. | source/main.c custom parser and named implementation gates. Unmeasured isolated effect. Draft policy/calibration target-bit qualification follows gate D and the controlled S06 policy finding. |
-| --category | code / prose / structured / vision / balanced | unset; no axis default selected | Choose the workload objective; balanced requires the full mixed-user benchmark. | generate, serve | tuple table: original / EXL3; explicit placement selects family, omission selects original; tuple chooses placement; balanced/fast overrides win and exact recipe conflicts refuse | axis-dependent; see help axes | No axes: CLI unchanged. Held dependencies and unsupported partial tuples refuse; ordinary startup/model gates remain authoritative. | Explicit low-level knobs and existing aliases override inserted balanced/fast settings in either order; conflicting exact recipe overrides refuse. Duplicate axis selection refuses. No named presets or axis aliases exist. Partial tuples apply only a common plan without filling unset axes; original exact alone selects its supported serial M1 text/C1 scope. Omitted temperature is 0 and top_p is 1; axes leave both defaults unchanged. Within the admitted original exact scope, temperature/top_p affect sampling without changing the reference-arithmetic logits; token identity requires T=0 or matching RNG and sampler order. Our RNG/order do not match the reference; stochastic token identity is unqualified. | tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. |
-| --exactness | exact / balanced / fast | unset; no axis default selected | Choose reference arithmetic, current reproducible arithmetic, or qualified bounded-loss arithmetic. | generate, serve | tuple table: original / EXL3; explicit placement selects family, omission selects original; tuple chooses placement; balanced/fast overrides win and exact recipe conflicts refuse | axis-dependent; see help axes | No axes: CLI unchanged. Held dependencies and unsupported partial tuples refuse; ordinary startup/model gates remain authoritative. | Explicit low-level knobs and existing aliases override inserted balanced/fast settings in either order; conflicting exact recipe overrides refuse. Duplicate axis selection refuses. No named presets or axis aliases exist. Partial tuples apply only a common plan without filling unset axes; original exact alone selects its supported serial M1 text/C1 scope. Omitted temperature is 0 and top_p is 1; axes leave both defaults unchanged. Within the admitted original exact scope, temperature/top_p affect sampling without changing the reference-arithmetic logits; token identity requires T=0 or matching RNG and sampler order. Our RNG/order do not match the reference; stochastic token identity is unqualified. | tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. |
-| --concurrency | single / multiple / balanced | unset; no axis default selected | Choose a C1 recipe, a C2-C8 recipe, or a measured compromise. | generate, serve | tuple table: original / EXL3; explicit placement selects family, omission selects original; tuple chooses placement; balanced/fast overrides win and exact recipe conflicts refuse | axis-dependent; see help axes | No axes: CLI unchanged. Held dependencies and unsupported partial tuples refuse; ordinary startup/model gates remain authoritative. | Explicit low-level knobs and existing aliases override inserted balanced/fast settings in either order; conflicting exact recipe overrides refuse. Duplicate axis selection refuses. No named presets or axis aliases exist. Partial tuples apply only a common plan without filling unset axes; original exact alone selects its supported serial M1 text/C1 scope. Omitted temperature is 0 and top_p is 1; axes leave both defaults unchanged. Within the admitted original exact scope, temperature/top_p affect sampling without changing the reference-arithmetic logits; token identity requires T=0 or matching RNG and sampler order. Our RNG/order do not match the reference; stochastic token identity is unqualified. | tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. |
-| --focus | balanced / ttft / decode / prefill | unset; no axis default selected | Choose the optimization objective within the selected numerical tier. | generate, serve | tuple table: original / EXL3; explicit placement selects family, omission selects original; tuple chooses placement; balanced/fast overrides win and exact recipe conflicts refuse | axis-dependent; see help axes | No axes: CLI unchanged. Held dependencies and unsupported partial tuples refuse; ordinary startup/model gates remain authoritative. | Explicit low-level knobs and existing aliases override inserted balanced/fast settings in either order; conflicting exact recipe overrides refuse. Duplicate axis selection refuses. No named presets or axis aliases exist. Partial tuples apply only a common plan without filling unset axes; original exact alone selects its supported serial M1 text/C1 scope. Omitted temperature is 0 and top_p is 1; axes leave both defaults unchanged. Within the admitted original exact scope, temperature/top_p affect sampling without changing the reference-arithmetic logits; token identity requires T=0 or matching RNG and sampler order. Our RNG/order do not match the reference; stochastic token identity is unqualified. | tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. |
+| --temperature | finite float >=0 | 0 | Set sampling temperature; zero is greedy. | generate, serve | all placements/recipes | sum order | G0 | Ordinary command/parser and runtime value gates apply, including under exactness=exact; temperature, top_p and seed are unrestricted within their ordinary ranges. | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --top_p | float >0 and <=1 | 1 | Set nucleus probability cutoff. | generate, serve | all placements/recipes | sum order | G0 | Ordinary command/parser and runtime value gates apply. | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --bind_address | numeric IPv4/IPv6 | 127.0.0.1 | Bind the server listener. | serve | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --key_file | path | none | Read API-user authentication records at startup. | serve | all placements/recipes | same bits | G0 | Regular, nonempty file <=1MiB with no group/other permission bits; at most64 unique users/keys, exact record format validated (server_keys.c:43..143). | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --stats_users | comma list of <=64 usernames; each1..32 ASCII letters/digits/._- | all authenticated users; open stats when auth disabled | Authorize named users to access the statistics endpoint. | serve | all placements/recipes | same bits | G0 | Requires key_file; no empty names; endpoint authorization allowlist, independent of live-statistics presentation (server.c:595..600,1056..1072). | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --model_alias | 1..63 bytes | none | Add a request/listing model alias. | serve | all placements/recipes | same bits | G0 | Supplied alias must fit63 bytes; adds a name without replacing the model identity (server.c:1011..1013). | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --session_directory | path | none | Persist eligible session snapshots in this directory (requires prefix_reuse=1). | serve | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --draft_usage | none / compact / full | compact | Choose draft statistics detail in responses. | serve | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --dump_draft_ring | path | none | Write diagnostic draft-ring rows at shutdown. | generate | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --layout | <=4096-byte statements joined by semicolon+space: <units>: card <c> or experts kept: <units>: <n> | automatic fill | Override PP5 unit placement. | load, generate, serve | all placements/recipes | sum order | G0 | PP5 only. Units are embedding/vision/head/draft head or layers a..b, c (up to16 ranges/statement); exact spaces required. Each stage must be assigned once, ranges must exist in order, card indices and kept counts must fit, and card budgets may not be exceeded (placement.h:16..35). | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --live_stats_format | text / json / table | text | Choose live server statistics format. | serve | all placements/recipes | same bits | G0 | Ordinary command/parser and runtime value gates apply. | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. |
+| --draft_calibration | path to <4096-byte file; exactly112 integers0..1000 | none | Override draft acceptance priors in mode/position/bin order. | generate, serve | all placements/recipes | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Exactly112 whitespace-separated unsigned integers0..1000, optional trailing whitespace, no extra tokens, at most4095 bytes. Overrides acceptance priors only; cost knobs are independent (commands.c draft_calibration_read). | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Draft policy/calibration target-bit qualification follows gate D and the controlled S06 policy finding. |
+| --draft | lookup / dspark / hybrid | off | Select speculative proposal source by name. | generate, serve | all placements/recipes | draft-only with target-bit invariance across verification widths/forms; conditional sum order otherwise | G0; D | Draft aliases must agree with explicit speculative; layout only PP5; no secrets printed. | source/commands.c custom parser and named implementation gates. Unmeasured isolated effect. Draft policy/calibration target-bit qualification follows gate D and the controlled S06 policy finding. |
+| --axes | off | unset: the split's all-balanced row (its base) | Stage 3: off keeps the raw engine defaults with nothing inserted, the no-axis behaviour before the base recipes; gates and references pin it. | load, generate, serve | every placement | raw defaults | G0 | Refuses with any axis flag or any value but off; the resolver removes it before the parser. | Stage-3 decision 1, 8 Nov (source/startup_axes.c axes_off_expand); no output change against the no-axis command before stage 3. |
+| --category | code / prose / structured / vision / balanced | unset: balanced (an empty set on every split) | Choose the workload objective; EXL3 balanced requires its scoped mixed-user benchmark; on TP4_EXL3, code adds fixed draft prices. The measured TP4_PRO single-user decode recipe is GPU split TP4_PRO's concurrency=single set. | generate, serve | GPU split tables pp5 (default), tp4_pro and tp4_exl3: --placement picks the split and no tuple changes it; balanced/fast overrides win and exact recipe conflicts refuse | axis-dependent; see help axes | No axes: CLI unchanged. A value the split's table holds refuses with its reason, and a split without a table refuses any axis flag; ordinary startup/model gates remain authoritative. | Explicit low-level knobs and existing aliases override inserted balanced/fast settings in either order; conflicting exact recipe overrides refuse. Duplicate axis selection refuses. No named presets or axis aliases exist. An unset axis takes balanced, so a partial tuple resolves to that row of the split's table; under exact an unset concurrency takes the reference recipe's single session. Omitted temperature is 0 and top_p is 1; axes leave both defaults unchanged. Within the admitted original exact scope, temperature/top_p affect sampling without changing the reference-arithmetic logits; token identity requires T=0 or matching RNG and sampler order. Our RNG/order do not match the reference; stochastic token identity is unqualified. | tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. |
+| --exactness | exact / balanced / fast | unset: balanced (an empty set on every split) | Choose reference arithmetic, current reproducible arithmetic, or qualified bounded-loss arithmetic. | generate, serve | GPU split tables pp5 (default), tp4_pro and tp4_exl3: --placement picks the split and no tuple changes it; balanced/fast overrides win and exact recipe conflicts refuse | axis-dependent; see help axes | No axes: CLI unchanged. A value the split's table holds refuses with its reason, and a split without a table refuses any axis flag; ordinary startup/model gates remain authoritative. | Explicit low-level knobs and existing aliases override inserted balanced/fast settings in either order; conflicting exact recipe overrides refuse. Duplicate axis selection refuses. No named presets or axis aliases exist. An unset axis takes balanced, so a partial tuple resolves to that row of the split's table; under exact an unset concurrency takes the reference recipe's single session. Omitted temperature is 0 and top_p is 1; axes leave both defaults unchanged. Within the admitted original exact scope, temperature/top_p affect sampling without changing the reference-arithmetic logits; token identity requires T=0 or matching RNG and sampler order. Our RNG/order do not match the reference; stochastic token identity is unqualified. | tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. |
+| --concurrency | single / multiple / balanced | unset: balanced (an empty set on every split) | Choose a C1 recipe, a C2-C8 recipe, or a measured compromise. | generate, serve | GPU split tables pp5 (default), tp4_pro and tp4_exl3: --placement picks the split and no tuple changes it; balanced/fast overrides win and exact recipe conflicts refuse | axis-dependent; see help axes | No axes: CLI unchanged. A value the split's table holds refuses with its reason, and a split without a table refuses any axis flag; ordinary startup/model gates remain authoritative. | Explicit low-level knobs and existing aliases override inserted balanced/fast settings in either order; conflicting exact recipe overrides refuse. Duplicate axis selection refuses. No named presets or axis aliases exist. An unset axis takes balanced, so a partial tuple resolves to that row of the split's table; under exact an unset concurrency takes the reference recipe's single session. Omitted temperature is 0 and top_p is 1; axes leave both defaults unchanged. Within the admitted original exact scope, temperature/top_p affect sampling without changing the reference-arithmetic logits; token identity requires T=0 or matching RNG and sampler order. Our RNG/order do not match the reference; stochastic token identity is unqualified. | tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. |
+| --focus | balanced / ttft / decode / prefill | unset: balanced (an empty set on every split) | Choose the optimization objective within the selected numerical tier. | generate, serve | GPU split tables pp5 (default), tp4_pro and tp4_exl3: --placement picks the split and no tuple changes it; balanced/fast overrides win and exact recipe conflicts refuse | axis-dependent; see help axes | No axes: CLI unchanged. A value the split's table holds refuses with its reason, and a split without a table refuses any axis flag; ordinary startup/model gates remain authoritative. | Explicit low-level knobs and existing aliases override inserted balanced/fast settings in either order; conflicting exact recipe overrides refuse. Duplicate axis selection refuses. No named presets or axis aliases exist. An unset axis takes balanced, so a partial tuple resolves to that row of the split's table; under exact an unset concurrency takes the reference recipe's single session. Omitted temperature is 0 and top_p is 1; axes leave both defaults unchanged. Within the admitted original exact scope, temperature/top_p affect sampling without changing the reference-arithmetic logits; token identity requires T=0 or matching RNG and sampler order. Our RNG/order do not match the reference; stochastic token identity is unqualified. | tools/cli/axes.json -> source/cli_axes_data.h / tools/cli/AXES.md; startup_axes.c; tests/startup_axes_test.c. S04 gxf11/gxf12 and completed S05 gxf_s05_default1024 are scoped measurements. Corrected S06 THIN/numerical and S07 original windows have separate pending gates; each strategy identifies its source epoch. |
 | --host | numeric IPv4/IPv6 | 127.0.0.1 | Connect to a statistics server. | stats | all placements/recipes | same bits | G0; stats numeric host/port required; duplicates refuse | Stats command contract only. | source/stats_client.c:76 and server.c stats key reader. Unmeasured performance effect. |
 | --port | 1..65535 | required | Choose statistics server port. | stats | all placements/recipes | same bits | G0; stats numeric host/port required; duplicates refuse | Stats command contract only. | source/stats_client.c:76 and server.c stats key reader. Unmeasured performance effect. |
 | --key_file | path | none | Read a statistics API key without exposing it. | stats | all placements/recipes | same bits | G0; stats numeric host/port required; duplicates refuse | Single-key file:16..4096 ASCII letters/digits/-._~+/=, optional final CR/LF; regular file with no group/other permissions. Multi-record/commented serve key files refuse (server.c:961..995). | source/stats_client.c:76 and server.c stats key reader. Unmeasured performance effect. |
@@ -237,6 +262,7 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --rate_mib | 0..overflow-safe UINT64 bound | 2048 | Throttle replica copy rate in MiB/s; zero is unlimited. | replicate | all placements/recipes | same bits | source pack must open; target capacity/receipt/device gates | Parser accepts repeated replica options with last value; source/target are positional. | source/replicas.c:488, include/anemone/replicas.h. Unmeasured isolated effect. |
 | --floor_gib | 0..UINT64_MAX/1073741824 | 100 | Keep this much free space on replica volumes. | replicate | all placements/recipes | same bits | source pack must open; target capacity/receipt/device gates | Parser accepts repeated replica options with last value; source/target are positional. | source/replicas.c:488, include/anemone/replicas.h. Unmeasured isolated effect. |
 | --prune | 0 or1 | 0 | Remove receipted older-source replicas before copying. | replicate | all placements/recipes | same bits | source pack must open; target capacity/receipt/device gates | Parser accepts repeated replica options with last value; source/target are positional. | source/replicas.c:488, include/anemone/replicas.h. Unmeasured isolated effect. |
+| --adopt | COPY (a path) | unset | Adopt an existing full copy of SOURCE as a replica without copying a byte: read and checked in full against the pack's digests (the file unchanged while read), then hard-linked into its drive's replica directory and receipted; a differing extent is named and gets no receipt. | replicate | all placements/recipes | same bits | source pack must open; the copy an owned regular file of the source's size, not the source, on another admitted drive | Takes one SOURCE and no DIRECTORY; --replica_external applies. Its directory is the first of the search's on that drive that exists, else one made: $HOME/anemone_engram_rnd/replicas on HOME's filesystem, then <mount>/anemone_engram_rnd/replicas and <mount>/anemone/replicas. | source/replicas.c (replicas_adopt), include/anemone/replicas.h, tests/replica_adopt_test.c. The check reads the whole copy: disk-timed. |
 | --tp5_expert_csf | 0 or1 | 0 | Load losslessly encoded full448 target expert scales from an A20 sidecar. | load, generate, serve (pending O; unavailable in S) | engine_rnd_o_tp5_csf78 / guarded engine_rnd_o_tp5_join only; experimental original TP5 | same bits intended for storage-only codec; runtime unqualified | Not parsed by this S base; requires owning track merge | Original standalone CSF branch; latest guarded engine_rnd_o_tp5_join/11777a6 also applies: TP5 original raw448/512 and all native-PRO/one-session/flight/THIN/reference-linear gates. Nonzero iff tp5_expert_sidecar is supplied; absolute path required, target layers must be complete40 (or default0 resolving40). Full coverage, metadata, code/scale/source-pack and bounds identities are checked before loading. No partial sidecar or fallback. Guarded join11777a6 supports the individual paths but refuses CSF+third together before sidecar I/O or stage planning. Source availability/host factories do not qualify device fit. | Historical source25/8ba73bde full448 program factory FAILED before device load. Corrected27 repairs W1/W3/W2 engine ordering from W1/W2/W3 storage without changing sidecar ordinals. Guarded join794acd4+style11777a6 passes16release/debug host/factory invocations,151actual-parser controls,all90CUDA images literal27 and zero hooks in8host executables/3newCSF modules. Full448 sidecar274651646720bytes/230400entries has source byte/word proof. Actual five-rank device load/numerics/ring/physical fit/C1 speed remain UNMEASURED. Default0; CSF+third composition explicitly refuses before I/O/planning. No active axis, only held original/balanced/single/decode dependency (RND_O.md5Nov14:03,14:20). |
 | --tp5_expert_sidecar | absolute path | none | Select the full448 A20 expert sidecar for the explicit CSF target codec. | load, generate, serve (pending O; unavailable in S) | engine_rnd_o_tp5_csf78 / guarded engine_rnd_o_tp5_join only; experimental original TP5 | same bits intended for storage-only codec; runtime unqualified | Not parsed by this S base; requires owning track merge | engine_rnd_o_tp5_csf78 only. Required iff tp5_expert_csf1; refuses relative paths, non-TP5, partial target-layer coverage or inconsistent source/layout/metadata. Does not replace the positional original pack or authorize other experimental joins. Guarded join11777a6 supports the individual paths but refuses CSF+third together before sidecar I/O or stage planning. Source availability/host factories do not qualify device fit. | Absolute full448 A20 path remains paired iff tp5_expert_csf1; guarded join794acd4/11777a6 explicitly refuses CSF plus raw384/768 third-share before sidecar I/O/stage planning. Full448 storage/source proof and corrected host factory pass; historical source25factory failure retained. No device/load/fault/lifetime/physical-fit or isolated path-selection performance claim. Defaults absent/codec0, no active axis (RND_O.md5Nov14:20; conditional MERGE_REQUEST_v3.md). |
 | --tp5_pro_third | 0 or1 | 0 | Use raw384/768 TP5 geometry with target head and enabled drafts on a CMP. | load, generate, serve (pending O; unavailable in S) | engine_rnd_o_tp5_third78 / guarded engine_rnd_o_tp5_join only; experimental original TP5 | sum order; new placement arithmetic unqualified | Not parsed by this S base; requires owning track merge | engine_rnd_o_tp5_third78/f388b980 only; nonzero TP5 and exact physical card order0,1,3,4,2. All TP5 original/raw/native-PRO/reference-linear/one-session/flight/THIN/capacity gates remain. Target head and any enabled drafts move to logicalrank3/physicalGPU4/class80; target PRO remains native. Mutually separate from the CSF448 branch, with no inferred composability. Guarded join11777a6 supports the individual paths but refuses CSF+third together before sidecar I/O or stage planning. Source availability/host factories do not qualify device fit. | Guarded join794acd4+style11777a6 passes16release/debug host/factory invocations,151actual-parser cases including127old vectors+24join controls,90literalCUDA images and zero hooks in8release host executables/3newCSF modules. Actual raw384/768 allocation plans pass; no CUDA physical-fit/device/head/draft/ring/generation/rollback/speed proof. CSF+third composition explicitly refuses before I/O/planning. Default0 retains raw448/512/PRO head; no active axis, only held original/balanced/single/decode candidate. Earlier26/f388b980 host proof remains historical (RND_O.md5Nov14:03,14:20). |
@@ -247,21 +273,22 @@ serial M1 text/C1 recipe. No fast axis tuple selects an unqualified lossy settin
 | --help-scheduling | flag without value | not requested | Print scheduling examples and measured pause/TTFT tradeoffs without opening a model. | serve | host help; no model or card opened | same bits | Exactly anemone serve --help-scheduling | Exactly anemone serve --help-scheduling; do not append model paths or axis options. Preserve the dedicated help when merging topic routing. | M7d86c45/xp04: all required reference/boot/mixed/decode gates pass; table retains scoped pilot tradeoffs and final default. M12qualified BATCH1024 only; S qualification independent (packet RND_M.md19:14). |
 | --original_queries_piece | 0 or1 | 0 | Prepare original query projection pieces for TP4 exact attention. | load, generate, serve (pending O; unavailable in S) | engine_rnd_o only; see source | same bits in recorded current-recipe fixtures; joins unqualified | Not parsed by this S base; requires owning track merge | Original exact TP4_PRO, precision/reference/CMP-reference, native PRO, FP32 wire, wide64..1024; no BATCH, wide-expert, code/owner/split-overlap experiments. | Source74b24a5 completes three Fraser/2K/30K knob0/1 pairs and three XO05 baseline controls, including selected records, prompt IDs, digests, canonical SAVE and active last-target full-vocabulary F32 bits; power restoration passes. CLI prompt+first changes -0.09%/-0.06%/+0.16%; no standalone speed win, HTTP TTFT or serving/join qualification. Default0 retained for later composition. Held original balanced-exactness prefill/ttft candidate; no S axis enables it (RND_O.md 5 Nov 02:42). |
 | --original_dense_shards | 0 or1 | 0 | Shard original full-K attention dense output products and gather losslessly. | load, generate, serve (pending O; unavailable in S) | engine_rnd_o only; see source | same bits intended; device-unqualified | Not parsed by this S base; requires owning track merge | Original exact TP4_PRO, precision/reference/CMP-reference, native PRO, FP32 wire; excludes other O pilots, split/owner/code paths, dead-half/tail variants and alternate products. EXL3 admission unchanged. | O1cb6928/ff91cfe host preparation remains separate from device proof. XO18 dense starts0 of9 planned arms: 197 work seconds remained against a 900-second floor. This is a budget deferral, not a device or numerical failure. Default0; GPU identity/speed and any original balanced-exactness prefill/ttft mapping remain held; no S axis enables it (RND_O.md 5 Nov 02:42). |
-| --prefill_prefix_stable | 0 or1 | 0 | Use fixed-capacity prefill forms with closed eight-row prefixes. | generate, serve | TP4_EXL3 stable-prefix recipe | sum order (new cold form); same bits relative to its qualified own-cold recipe | Default off; real parser and engine admission apply | Requires TP4_EXL3 BF16 wire, column owners, CE5, gather0, matched FULL/WIDE split forms, batch_thin_bits1, full_steps1/cone1/skip1, chunks1, fast_plan0, both M caps0, reserved prefill, margin>=7, wide1024 or2048; no images; isolated prefix19 refuses session storage (full P23 format5 is a separate unqualified prototype); multi-slot requires prefill-first or order1/2. Growing reuse needs known cold provenance, nonshrinking child, generated/sampling-row clipping, floor8, child cold-plan/cone and post-rounding reach checks; hard-owner authorization is separate. Parent/child must retain immutable stable1 identity. Integrated in merge_batch. | Prefix-only19/8c18f8a on main39980 is P final knob-default0/exact-cache-tier request; do not merge full P80 copy/v5 prototype. Fresh39 six complete cold arms14/19/14,114requests pass unchanged no-loss reader: THIN prefill ratio0.99884138(95%0.99679661-1.00268666),TTFT0.99777899(0.99398414-1.00548634); BATCH prefill0.99985033(0.99910103-1.00116771),TTFT1.00159642(0.99389811-1.00713069). Historical source15THIN strict failure retained. Whole39 exit1 belongs to separate copy32OOM diagnostic, not cold-arm failure. Core174native/checkpoint/1M and shared accepted14/Q11 references pass; standalone19 CLI refs DID NOT RUN. Main resulting old/new2048/1024 gate still required; no automatic S exact tuple or full official-reference claim (RND_P.md5Nov14:32,14:42; evidence/xc39_v3/cold_performance.json; MERGE_v3.md). Integrated prefix-only candidate8c18f8a; no copy32 or snapshotv5. |
+| --prefill_prefix_stable | 0 or1 | 0 | Use fixed-capacity prefill forms with closed eight-row prefixes. | generate, serve | TP4_EXL3 stable-prefix recipe | sum order (new cold form); same bits relative to its qualified own-cold recipe | Default off; real parser and engine admission apply | Requires TP4_EXL3 BF16 wire, column owners, CE5, gather0, matched FULL/WIDE split forms, batch_thin_bits1, full_steps1/cone1/skip1, chunks1, fast_plan0, both M caps0, reserved prefill, margin>=7, wide1024 or2048; no images; isolated prefix19 refuses session storage (full P23 format5 is a separate unqualified prototype); multi-slot requires prefill-first or order1/2. Growing reuse needs known cold provenance, nonshrinking child, generated/sampling-row clipping, floor8, child cold-plan/cone and post-rounding reach checks; hard-owner authorization is separate. Parent/child must retain immutable stable1 identity. Integrated in merge_batch. | Prefix-only19/8c18f8a on main39980 is P final knob-default0/exact-cache-tier request; do not merge full P80 copy/v5 prototype. Fresh39 six complete cold arms14/19/14,114requests pass unchanged no-loss reader: THIN prefill ratio0.99884138(95%0.99679661-1.00268666),TTFT0.99777899(0.99398414-1.00548634); BATCH prefill0.99985033(0.99910103-1.00116771),TTFT1.00159642(0.99389811-1.00713069). Historical source15THIN strict failure retained. Whole39 exit1 belongs to separate copy32OOM diagnostic, not cold-arm failure. Core174native/checkpoint/1M and shared accepted14/Q11 references pass; standalone19 CLI refs DID NOT RUN. A resulting-main old/new2048/1024 gate still required; no automatic S exact tuple or full official-reference claim (RND_P.md5Nov14:32,14:42; evidence/xc39_v3/cold_performance.json; MERGE_v3.md). Integrated prefix-only candidate8c18f8a; no copy32 or snapshotv5. |
 | --prefill_small_copy_rows | parser0..32; admitted0 or32 | 0 | Prepare an extra FULL program with bounded padded prefill copies. | generate, serve (pending P; unavailable in S) | engine_rnd_p only; see source | same bits within qualified64K stable1; strict cold/1M admission held | Not parsed by this S base; requires owning track merge | Nonzero requires prefill_prefix_stable1 and every stable1 gate. Additional immutable FULL retains largest physical wide capacity; only padded headless steps with actual rows<=32 select it. Attention-quarter and FFN owner-segment CE copies stop after32program rows; physical offsets, math/owners/reduction and READY/DONE/empty handshakes remain. Ordinary steps exclude this alternative; preparation rejects non-FULL/non-EXL3/non-BF16-CE5 or invalid eight-row bounds (P main.c:908,1380,1980; step_image_programs.c:172; model_v41_program.c:5701). | Frozen18 xc38v4 full306 native/observable PASS:102cold+204warm, all accepted IDs/selected-logit bits equal own cold;102/102 cold controls equal accepted form14. Short append warm ABA362.311/214.198/362.160ms, ratio0.59301(95%0.58865-0.59810); phase345.339/199.033/344.657ms, ratio0.57608(0.56739-0.58491); tool-cycle warm ratio0.99616(0.91396-1.00434). Strict cold gate FAILS: short ratio1.00116886(1.00069573-1.00243898); tool1.00172992,phase0.92088957. Sampling intervals do not bound hardware drift. 1M readiness fails before token0. Manual/default0/HOLD; no active axes, default or legacy-speed parity. Full window exit1 remains separate from completed306 leaves (RND_P.md5Nov13:10,13:28; results/gxc38v4/small_copy_report.json). |
-| --session_fork | 0 or1 | 0 | Copy an eligible same-owner prefix into an independent child session slot. | serve | Qualified stable-prefix TP4_EXL3 recipe | same bits for exact-copy service policy; target-form qualification required | Default off; cache_scope0 and qualified producer capability required | Startup requires cache_scope0. Runtime needs prefix reuse, >1slots, max_tokens>0, healthy engine and no prior attempt. Idle/read-unleased donor: different full namespace, same authenticated hard owner; hints confer no authority. Cold-plan kept>0, reach>=kept, reach-kept<=3968; ordinary state only, never checkpoint-only. Reserve/check real generations/read lease, drain copies before publication; failed/cancelled accepted clone clears destination history and may retry cold only if engine healthy. Backend failure poisons the engine; no aliases. Growing children additionally need P stable1 provenance; no invented snapshot/checkpoint proof (Qfork main.c:947,1377; server_forks.c:19,34,130,205). Latest native92af3e2 requires stable1 for every new cross-session copy; stable0 falls back cold. Existing legacy same-session behavior is retained, not newly qualified bit-exact. | Q92af3e2 is integrated default off. Complete gpq12 fresh24-request legacy fallback supplement passed; gpq11 retains its earlier whole-job failure. New cross-session copies require stable1; donor ownership, namespace, leases and generations remain checked. Main integration smoke is independently required (MERGE_A21_v4.md). |
+| --anthropic_messages | 0 or 1 | 0 | Enable the bounded Anthropic Messages text and client-tool endpoint. | serve | All otherwise admitted serving recipes | Protocol adapter; no arithmetic selection or exactness qualification | Default off; supported version header and strict request validation required | Reuses native engine, user queues, ownership and cache isolation. Enabled/adaptive thinking uses native effort and an enforced budget; top_k is a shared request control. Unsupported blocks are refused. See docs/ANTHROPIC_MESSAGES.md. | CPU contract and client tests are separate from native-model qualification; no speed claim. |
+| --session_fork | 0 or1 | 0 | Copy an eligible same-owner prefix into an independent child session slot. | serve | Qualified stable-prefix TP4_EXL3 recipe | same bits for exact-copy service policy; target-form qualification required | Default off; cache_scope0 and qualified producer capability required | Startup requires cache_scope0. Runtime needs prefix reuse, >1slots, max_tokens>0, healthy engine and no prior attempt. Idle/read-unleased donor: different full namespace, same authenticated hard owner; hints confer no authority. Cold-plan kept>0, reach>=kept, reach-kept<=3968; ordinary state only, never checkpoint-only. Reserve/check real generations/read lease, drain copies before publication; failed/cancelled accepted clone clears destination history and may retry cold only if engine healthy. Backend failure poisons the engine; no aliases. Growing children additionally need P stable1 provenance; no invented snapshot/checkpoint proof (Qfork main.c:947,1377; server_forks.c:19,34,130,205). Latest native92af3e2 requires stable1 for every new cross-session copy; stable0 falls back cold. Existing legacy same-session behavior is retained, not newly qualified bit-exact. | Q92af3e2 is integrated default off. Complete gpq12 fresh24-request legacy fallback supplement passed; gpq11 retains its earlier whole-job failure. New cross-session copies require stable1; donor ownership, namespace, leases and generations remain checked. An integration smoke on main is independently required (MERGE_A21_v4.md). |
 
 Diagnostic environment switches (not axis defaults):
 
 | Environment | Values / default | Scope / exactness | Gate / interaction / evidence |
 | --- | --- | --- | --- |
-| ANEMONE_DIAG_STATE_DIGESTS | presence; absent | generate, same bits observation | Emits state digests; main.c near shutdown; unmeasured overhead. |
+| ANEMONE_DIAG_STATE_DIGESTS | presence; absent | generate, same bits observation | Emits state digests; commands.c near shutdown; unmeasured overhead. |
 | ANEMONE_DIAG_DRAFT_STAGES | strtoul stage count; absent=3 | draft-only diagnostic candidate; gate D | Caps draft stages at3; no strict CLI validation; source/model_v41_program.c:4450; unmeasured, target-width/bit invariance not established by this metadata. |
 | ANEMONE_DIAG_DRAFT_SKIP_FFN | exactly1; absent=off | draft-only diagnostic candidate; gate D | Omits draft FFN work; stage probes only; source/model_v41_program.c:4451; unmeasured, no qualified serving/verified-bit claim. |
 | ANEMONE_DIAG_DRAFT_PROBE | presence; absent | draft-only diagnostic candidate; gate D | Requires a batch join kernel; writes intermediate probes instead of normal draft logits; diagnostic path, unmeasured, no qualified normal serving or automatic axis. |
 
 Current S source is8d6bb95, the clean main5029986 merge after doc errata3762ba0; the S09/f139 frozen inputs
-remain historical and unchanged. Main's06:23 tcb77 note is the source boundary for the six merged cache
+remain historical and unchanged. The 06:23 tcb77 merge note is the source boundary for the six merged cache
 controls. P/Q/R scope updates below retain their actual frozen epochs through06:23; P small-copy is pinned
 separately to6413c72. S06 target-bit qualification remains corrected at04:38, with N/R attribution limits
 at05:12/05:19. Prior main75d3d17 O/HC and main242e6ef N controls remain inherited unchanged.
@@ -307,7 +334,7 @@ measured reference/BF16/DSpark5/core2-or3 geometry and canonical rows/verifiers;
 no-automatic-menu behavior. Existing axis tables continue to set their documented explicit controls.
 
 N31/dbd1219, byte-identical ordinary binary to tcb78 (de617b4f), passes both-width references, all code
-cells and fullmixed112cross/96self per arm. Main accepted that default bucket under the owner's
+cells and fullmixed112cross/96self per arm. The maintainer accepted that default bucket under the owner's
 faster-identical rule, treating the observed small Fraser shifts as noise. S's older strict zero-margin
 S06 prior-pair screen remains failed; neither those observations nor its limits are rewritten. New current-main
 controls use tcb78. Existing frozen S10 measurements keep their original e4c188e/5029986 provenance;
@@ -356,7 +383,7 @@ it is neither original-weight equivalence nor a raw/default/automatic-axis chang
 prefill_small_copy_rows, separately branch-only/manual/default0 and absent from frozen14/15 and Q's join.
 Its reported host copy-byte savings are not GPU, TTFT or graph-memory evidence. Snapshot-v5 remains a proposal.
 
-Q final06's gpq05 cold-control bracket and actualCodex gpq06 are closed within their frozen epochs.
+Q final06's gpq05 cold-control bracket and the real-client gpq06 are closed within their frozen epochs.
 The newer main5029986 merge passes both-width8/256 identity and the two-user stateless Chat/Responses
 smoke06:15:58-06:19:13, plus its reported109ASan/12TSan, headers/CLI/default/image/release qualification.
 The earlier helper-permission failure happened before the binary ran and remains retained. Current S8d6bb95
@@ -467,44 +494,241 @@ from these components, packet diagnostics or CPU models.
 # Axis table
 
 Generated from `tools/cli/axes.json` by `tools/cli/generate_axes.py`.
-Registry SHA256: `257eaa9096da08d7acd604cfcfb263da12d346fc5d0edc2792dae572fe685f76`.
+Registry SHA256: `3e7af62a7895a006bd23e5aff1fb96b67391dda01fe5024b1fc5d03ddf2196d5`.
 
 The four selectors apply to generate and serve. There are no selectable names or aliases.
 
 | Axis | Values | Meaning |
 | --- | --- | --- |
-| `--category` | code / prose / structured / vision / balanced | Workload kind; balanced is a mixed code/prose/structured measurement, with code winning ties. |
-| `--exactness` | exact / balanced / fast | Reference arithmetic, current arithmetic, or a measured bounded-loss alternative. Exact uses official-exact logits unchanged at every temperature/top_p; defaults are temperature=0, top_p=1. Draw identity requires T=0 or matching RNG/sampler order; ours do not match the reference stochastic RNG/order. |
-| `--concurrency` | single / multiple / balanced | C1/THIN, C2-C8/BATCH, or one measured compromise across both. |
+| `--category` | code / prose / structured / vision / balanced | Workload kind; balanced is beneficial across the applicable measured workloads. Scope and missing mixed-user gates remain explicit per strategy. |
+| `--exactness` | exact / balanced / fast | Exact requires the pinned original arithmetic, state, sampling and execution contracts. Balanced admits scoped zero-added-error or empirically established noise; fast also permits a separately qualified accuracy/speed tradeoff. Identical admitted non-lossy balanced plans are available at fast without adding arithmetic changes. No noise tolerance is inferred. |
+| `--concurrency` | single / multiple / balanced | C1 workload, separately qualified C2-C8 workloads, or a measured compromise across both; this selector is not session_slots or a numeric batch size. |
 | `--focus` | balanced / ttft / decode / prefill | Measured compromise, first-token latency, decode rate, or prefill rate. |
 
 | Exactness tier | Error class | Current admission |
 | --- | --- | --- |
-| exact | Original weights: official-reference arithmetic on the admitted PP THIN serial M1 scope. EXL3: reference arithmetic (EXL3: not official-exact). | Original serial M1 rule below; EXL3 remains held. |
-| balanced | Current HC/current forms; no added lossy setting. Admitted single-user tuples use canonical fixed0: cost1 failed selected-F32 identity despite equal IDs. S06 EXL3 cached-eight target smoke has KLmean0.224/RMS0.966/top1=7/8 versus the pinned hybrid source; not corpus quality or official equality. | Current-arithmetic candidates; qualification scope below. |
-| fast | Measured bounded-loss arithmetic only; opt-in. Each selected lossy knob must carry paired numerical and whole-workload receipts. | No candidate has complete paired KL, logit deviation, held-out PPL, T=0 agreement and whole-workload speed evidence within an admitted error budget. Unqualified or excessive-loss settings remain raw CLI knobs only. |
+| exact | Original weights: official-reference arithmetic on the admitted PP THIN serial M1 scope. EXL3: reference arithmetic (EXL3: not official-exact). | GPU split PP5: the original_reference_serial_m1 recipe; GPU split TP4_PRO: holds exact; GPU split TP4_EXL3: the exl3_exact_shaping recipe. |
+| balanced | Each GPU split composes its base (its measured route's knobs over the raw engine defaults: draft-only, and on TP4_EXL3 relaxed numerics with the BF16 wire) with the measured knob set of each selected axis value; every set is same-bits or draft-only, so balanced adds no lossy arithmetic. Exact/EXL3 contracts are unchanged. | Current-arithmetic knob sets per GPU split; scope below. |
+| fast | A fast tuple equals its balanced tuple while the fast set is empty. Additional lossy arithmetic is opt-in and needs paired numerical and whole-workload receipts. | Additional lossy routes are held: no admitted empirical error budget or complete paired numerical/whole-workload receipts. This hold does not prohibit identical non-lossy balanced plans. |
 
-Original weights and EXL3 have separate admission records for every full tuple.
-Original official-reference arithmetic is scoped to its admitted serial M1 recipe. EXL3 uses the label
-**reference arithmetic (EXL3: not official-exact)** when compatible forms are qualified.
+Each GPU split has its own table below. Original official-reference arithmetic is scoped to its
+admitted serial M1 recipe. EXL3 uses the label **reference arithmetic (EXL3: not official-exact)** when
+compatible forms are qualified.
 
-- With no axes selected, existing CLI behavior is unchanged. Unset axes have no implicit owner-selected defaults.
+- --placement picks the GPU split; without it the split is PP5, the engine default. An unset axis takes its balanced value, so a generate or serve without axis flags runs the split's all-balanced row: its base. --axes=off runs the raw engine defaults with nothing inserted.
 - Original versus EXL3 is a weight-family admission condition, not a fifth preset axis. The runtime uses explicit placement or the existing PP5 default.
 - Explicit low-level knobs override inserted settings; ordinary validation still refuses invalid combinations. Overrides change the measured recipe.
 - All balanced choices retain current HC/current forms and add no new lossy arithmetic. A separate R component result is not a complete S official-error measurement.
-- Category balanced needs the full mixed-user benchmark. The complete EXL3 all-balanced development candidate is held after its eight-slot memory refusal; other balanced-concurrency rows remain held. No axes are selected by default.
+- Context and sessions are the user's: the raw defaults are 1M context per session (--context_tokens=1048576) and, on serve, --session_slots=max (the most sessions of that context that fit the cards, no cap; refused when none fits, the context never shrunk), and no axis set pins either (9 Nov); only the exact reference recipes keep their own geometry (one session; PP5's at 512 tokens). Startup prints how many sessions fit at the context on every serve. Concurrency=balanced adds nothing. On TP4_EXL3, concurrency=multiple's BATCH set needs exactly --session_slots=8 on serve and otherwise runs the concurrency=balanced row. Original single-user decode is fastest on GPU split TP4_PRO at pipeline depth 2: pass --placement=tp4_pro. On PP5, concurrency=single is --rows=6 at the default depth 5 (r7c g3).
 - Balanced-code selection must maximize code among feasible choices: non-code margins and no-worse default Fraser median/worst/pause comparisons require same-epoch measurements.
-- The table contains full tuples only. The parser handles partial selections without inventing an axis default.
+- The table holds one row per GPU split and full tuple. A partial selection fills each unset axis with balanced (concurrency with single under exact).
 - Seven-bucket entries are targets for the recorded scope; every unlisted bucket and every missing accuracy/capacity gate remains unqualified.
-- Measured drafting priors and BATCH core mode are explicit in the table. A later raw CLI default change does not silently change these recorded recipes; explicit user controls still win.
+- PP5 and TP4_PRO recipes yield the draft block, depth, policy and session acceptance (and TP4_PRO's rows) to category=code and focus=decode: the recipe's measured values (fixed policy 0, which is no Original CLI default) run wherever those sets give none. TP4_EXL3 sets take the CLI draft policy (fixed for one session, as a serve at the default 1M runs, where one fits: commands.c single_session_defaults; rate on BATCH and for several sessions) and the BATCH core default (commands.c DEFAULT_BATCH_CORE_ONCE, 3), so a change to those defaults changes those rows; explicit user controls still win.
 - Legacy original TP4_PRO and PP5 routes existed in main7d86c45. The current table also pins newer O/HC controls to zero and therefore requires the merged main75/S parser. PP5 layouts remain single argv items with embedded spaces; generated settings use newline separators, never shell parsing. S07 cold-prefix measurements are source-scoped separately from inherited O warm results. Generate keeps its one-slot default and pipeline2; serve selects one serial TP slot or eight PP5 slots at measured depth8.
-- Selecting only --exactness=exact on original weights resolves to the supported text, single-session PP THIN serial M1 recipe. Explicit vision or multiple/balanced concurrency remains held. Recipe arithmetic/placement overrides must retain the admitted exact values; balanced-axis override behavior is unchanged.
+- Exactness=exact selects the split's reference recipe as a second baseline: the other three axes add nothing and concurrency must be single or unset. PP5's is the PP THIN serial M1 recipe and TP4_EXL3's the exact-shaping set (exl3_exact_shaping: exact numerics, the reference order and the FP32 wire; reference arithmetic, EXL3: not official-exact); TP4_PRO holds exact. Explicit vision remains held. Recipe arithmetic/placement overrides must retain the admitted exact values.
+- Exactness=fast has an empty set on every split, so a fast tuple equals its balanced tuple, with the same argv and exclusions. A lossy knob could enter only the fast set, with admitted receipts.
+- Retained route proposals below are metadata only: no argv is inserted from them. Each proposal names all four axes, constraints, old fallback and missing gates. An explicit low-level knob from an unintegrated branch is not thereby accepted by this binary.
+- The banked PP5/session6 route remains raw-only, with its lower TTFT and numerical scope retained. No axis value enables banking.
+- Each knob belongs to one axis per split (generate_axes.py refuses a second owner), except a recipe's yielded fallback: a yielded knob is set by its recipe and exactly one other axis, whose value wins where it gives one (stage 3 review D3). Session acceptance and the other measured modifiers enter only after their per-split confirmation: focus=decode carries arm 1 (session acceptance 6) on PP5 (r1m) and TP4_PRO (r5s); every other Original non-exact row takes the CLI value 0. No-axis defaults and exact/EXL3 contracts are unchanged.
+- --load_piece_mib (the load's read size: the PP piece and staging slot, the TP host arena's chunk) changes load time only, with the same bits. It belongs to the focus axis on every split with every value empty (balanced, ttft, decode and prefill set nothing): its measured value comes from the storage profile's load section (anemone autotune --stage=load), and the knob wins over the profile, the profile over the default (0: 16 MiB).
+
+## GPU split tables
+
+`--placement` picks the GPU split; without it the split is PP5, the engine default. Each selected axis
+value adds its knob set to the split's base. An unset axis takes balanced, so a run without axis flags
+runs the split's all-balanced row, its base. No set pins the context or the slots: the raw defaults
+serve as many sessions of 1M context as fit. `--axes=off` inserts nothing. Each knob belongs to one axis
+per split. Under exact, the split's reference recipe is the whole configuration. Explicit knobs win over
+every set. The last three columns derive from each set's own settings (`default`: the set leaves that
+knob alone).
+
+### GPU split PP5
+
+Weight family: original. Exact: the reference recipe `original_reference_serial_m1`, with concurrency single or unset. Base (from `original_pp_depth8`, for each knob no selected set gives): `--card_order=0,1,3,4,2` `--rows=8` `--wide_rows=1024` `--prefill_cone=1` `--step_graphs=1` `--speculative=2` `--draft_positions=5` `--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4`. The knobs PP5's measured routes share (the sweep's no-axis route gq_rows6_on_s6_t85_v1 off_a, original_pp_depth8 and r7c g3), read from original_pp_depth8: pipeline depth, the draft policy, its costs and acceptance belong to the axes; the slots, prefix reuse, prefill order and batch are the measurement protocol's or the concurrency sets' (8 Nov).
+
+| Axis | Value | Knob set | Evidence | GPU split (`--placement`) | Pipeline depth (`--pipeline_steps`) | Serving slots (`--session_slots`) |
+| --- | --- | --- | --- | --- | --- | --- |
+| category | code | `--draft_block=7` `--draft_positions=7` | Depth 7 on PP5 at pipeline depth 8 with 8 serving slots, tcb88 same-binary ABBA, code, identical outputs in 47 streams: with focus=decode's arm 1 (r4m) C1/C2/C4/C8 171.1/248.0/345.8/391.0 -> 190.9/251.5/366.5/417.9 tok/s (+11.55/+1.43/+5.97/+6.88 %), TTFT p50 flat; alone (r3m) +2.21/-1.74/+0.86/-1.62 %, the C2 and C8 losses inside the arms' spread (10.20/5.14 and 0.02/6.23 %). Code only: no other genre was measured. | PP5 | default | default |
+| category | prose | (empty) | - | PP5 | default | default |
+| category | structured | (empty) | - | PP5 | default | default |
+| category | vision | HELD | Vision-axis selection awaits a vision benchmark and applicable runtime/identity evidence. | PP5 | - | - |
+| category | balanced | (empty) | - | PP5 | default | default |
+| exactness | exact | `original_reference_serial_m1` (reference recipe) | The reference recipe's evidence: see Knob values. | PP5 | 1 | 1 |
+| exactness | balanced | (empty) | - | PP5 | default | default |
+| exactness | fast | (empty) | - | PP5 | default | default |
+| concurrency | single | `--rows=6` | r7c g3: PP5 at the default pipeline depth 5 with 8 serving slots and 6 rows, the fastest C1 decode arm in every genre (+1.5-1.6 % over g1), outputs identical (decision G). The measurement's --session_slots=8 is not inserted (9 Nov: context is the user's choice and sessions are as many as fit): the raw default --session_slots=max keeps the multi-session pipeline depth 5. | PP5 | default | default |
+| concurrency | multiple | `original_pp_depth8` without `--prefix_reuse`, `--session_slots`; yields `--draft_block`, `--draft_positions`, `--draft_policy`, `--draft_session_acceptance` where another set gives them | PP5 at pipeline depth 8 with 8 serving slots: S10 gxf_s10_original_multiple, C1-C8 in three genres, against depth 5 in S07 (recipe original_pp_depth8). --prefix_reuse=0 pinned the measurement protocol and is dropped (r6a: no cell loses beyond spread). The recipe yields its draft block, depth, policy and session acceptance (block 5, depth 5, fixed policy 0, acceptance 0) to category=code and focus=decode: its measured values run wherever those sets give none. The fixed policy is no CLI default (the Original placements default to the cost-priced depth), so a dropped policy would change every other row. The recipe's --session_slots=8 is dropped too (9 Nov): the row serves as many sessions as fit at the context (the raw default max; 5 at 1M), at pipeline depth 8; unmeasured above and below 8 until U6. | PP5 | 8 (generate 2) | default |
+| concurrency | balanced | (empty) | - | PP5 | default | default |
+| focus | balanced | (empty) | - | PP5 | default | default |
+| focus | ttft | (empty) | - | PP5 | default | default |
+| focus | decode | `--draft_policy=1` `--draft_session_acceptance=6` | Arm 1 (cost-priced draft depth, session acceptance 6) on PP5 at pipeline depth 8 with 8 serving slots, tcb88 same-binary ABBA r1m, identical outputs in 141 streams, TTFT unchanged: code C1/C2/C4/C8 +4.69/+8.87/+1.74/+2.44 %, prose +3.83/+3.32/+1.72/+1.74 %, structured +0.13/-0.58/-0.05/-0.10 % (within spread). Decode only: the same-binary rule takes the faster identical path. | PP5 | default | default |
+| focus | prefill | (empty) | - | PP5 | default | default |
+
+### GPU split TP4_PRO
+
+Weight family: original. Exact: held. Base (from `original_tp_serial2`, for each knob no selected set gives): `--card_order=0,1,3,4,2` `--rows=8` `--wide_rows=1024` `--prefill_cone=1` `--step_graphs=1` `--speculative=2` `--draft_positions=5` `--draft_policy=0` `--pipeline_steps=2` `--original_wide_experts=0`. TP4_PRO's measured single-user recipe (pipeline depth 2, 1 serving slot) without its measurement-protocol pins: concurrency=single is then empty (8 Nov).
+
+| Axis | Value | Knob set | Evidence | GPU split (`--placement`) | Pipeline depth (`--pipeline_steps`) | Serving slots (`--session_slots`) |
+| --- | --- | --- | --- | --- | --- | --- |
+| category | code | `--draft_block=7` `--draft_positions=7` | Depth 7 on TP4_PRO at pipeline depth 2 with 1 serving slot, tcb88 same-binary ABBA, code C1, identical outputs in 5 streams: alone (r3s) 201.3 -> 210.9 tok/s (+4.80 %, TTFT p50 104.1 -> 104.4 ms); with arm 1 (r4s) 224.9 tok/s (+11.02 %, TTFT flat). With focus=decode's --rows=6 both are clamped to 5 (rows - 1), which is r5s; unclamped (r5c) the stack lost 10.2 % to r5s. Code only: no other genre was measured. | TP4_PRO | default | default |
+| category | prose | (empty) | - | TP4_PRO | default | default |
+| category | structured | (empty) | - | TP4_PRO | default | default |
+| category | vision | HELD | Vision-axis selection awaits a vision benchmark and applicable runtime/identity evidence. | TP4_PRO | - | - |
+| category | balanced | (empty) | - | TP4_PRO | default | default |
+| exactness | exact | HELD | GPU split TP4_PRO has no reference recipe; the exact serial M1 reference runs on GPU split PP5. | TP4_PRO | - | - |
+| exactness | balanced | (empty) | - | TP4_PRO | default | default |
+| exactness | fast | (empty) | - | TP4_PRO | default | default |
+| concurrency | single | (empty) | - | TP4_PRO | default | default |
+| concurrency | multiple | HELD | GPU split TP4_PRO has no multi-session recipe: its measured recipe serves one slot. GPU split PP5 serves C2-C8. | TP4_PRO | - | - |
+| concurrency | balanced | (empty) | - | TP4_PRO | default | default |
+| focus | balanced | (empty) | - | TP4_PRO | default | default |
+| focus | ttft | (empty) | - | TP4_PRO | default | default |
+| focus | decode | `--draft_policy=1` `--draft_session_acceptance=6` `--rows=6` | Arm 1 (cost-priced draft depth, session acceptance 6) with 6 rows on TP4_PRO at pipeline depth 2 with 1 serving slot, tcb88 same-binary ABBA r5s, C1, identical outputs in 15 streams: structured 285.1 -> 296.0 (+3.82 %), code 203.2 -> 232.3 (+14.31 %), prose 148.1 -> 153.4 (+3.54 %) tok/s; TTFT p50 +12 to +27 ms, the cost of 6 rows (r2s), so decode only. | TP4_PRO | default | default |
+| focus | prefill | (empty) | - | TP4_PRO | default | default |
+
+### GPU split TP4_EXL3
+
+Weight family: exl3. Exact: the reference recipe `exl3_exact_shaping`, with concurrency single or unset. Base (from `thin_fixed`, for each knob no selected set gives): `--numerics=relaxed` `--tp_wire_bf16=1` `--rows=8` `--wide_rows=2048` `--prefill_cone=1` `--pipeline_steps=2` `--step_graphs=1` `--speculative=2` `--draft_positions=5` `--exl3_tc_moe=1` `--tp_head_mma=1` `--tp_trunk_mma=1` `--tp_ordered_wide=1` `--tp_head_shards=1` `--tp_head_stream=1` `--tp_draft_shards=1` `--draft_learned_acceptance=0` `--draft_session_acceptance=0` `--draft_base_us=12700` `--draft_tail_us=2200` `--draft_row_us=2700` `--exl3_tc_product_blocks=0` `--tp_decode_round_once=0`. TP4_EXL3's measured THIN recipe (one serving slot, pipeline depth 2, 2048-row prefill) without the knobs category and focus own and the protocol pins: concurrency=single is then empty (8 Nov).
+
+| Axis | Value | Knob set | Evidence | GPU split (`--placement`) | Pipeline depth (`--pipeline_steps`) | Serving slots (`--session_slots`) |
+| --- | --- | --- | --- | --- | --- | --- |
+| category | code | `--draft_policy=0` | Fixed draft prices on BATCH: S10 batch_fixed against batch_adaptive gives code C1/C2/C4/C8 265.9/296.8/377.4/469.5 against 224.2/278.3/359.3/433.0 tok/s, while prose loses, so code only. On one-slot THIN policy 0 is also the CLI value. The BATCH core is left at its CLI value 3 on every BATCH tuple (isolated core 2/3 text gates: code/prose C8 +0.53/+1.12 %). | TP4_EXL3 | default | default |
+| category | prose | `--batch_step_us=19500,21500,28600,30000,32000,39000,46000,58000`; only with concurrency=multiple | BATCH step prices (batch_adaptive's menu; generate's one price) with the CLI's rate policy on BATCH, as every prose and structured BATCH tuple ran before the per-split tables. Only with concurrency=multiple: THIN and the raw split have no BATCH programs to price. Per-split x3 (tcb88, code/balanced/multiple/decode, the menu with fixed prices against none): C4 -6.57 %, C8 -6.40 % aggregate decode beyond spread, TTFT flat, outputs identical, so code keeps no menu and category=balanced holds none (where no policy is given, the CLI adds this same menu to a measured BATCH plan by itself, commands.c). | TP4_EXL3 | default | default |
+| category | structured | `--batch_step_us=19500,21500,28600,30000,32000,39000,46000,58000`; only with concurrency=multiple | BATCH step prices (batch_adaptive's menu; generate's one price) with the CLI's rate policy on BATCH, as every prose and structured BATCH tuple ran before the per-split tables. Only with concurrency=multiple: THIN and the raw split have no BATCH programs to price. Per-split x3 (tcb88, code/balanced/multiple/decode, the menu with fixed prices against none): C4 -6.57 %, C8 -6.40 % aggregate decode beyond spread, TTFT flat, outputs identical, so code keeps no menu and category=balanced holds none (where no policy is given, the CLI adds this same menu to a measured BATCH plan by itself, commands.c). | TP4_EXL3 | default | default |
+| category | vision | HELD | Vision-axis selection awaits a vision benchmark and applicable runtime/identity evidence. | TP4_EXL3 | - | - |
+| category | balanced | (empty) | - | TP4_EXL3 | default | default |
+| exactness | exact | `exl3_exact_shaping` (reference recipe) | The reference recipe's evidence: see Knob values. | TP4_EXL3 | default | 1 |
+| exactness | balanced | (empty) | - | TP4_EXL3 | default | default |
+| exactness | fast | (empty) | - | TP4_EXL3 | default | default |
+| concurrency | single | (empty) | - | TP4_EXL3 | default | default |
+| concurrency | multiple | `batch_adaptive` without `--draft_policy`, `--batch_core_once`, `--tp_draft_layers`, `--prefix_reuse`, `--batch_step_us`, `--session_slots`; on serve only at exactly `--session_slots=8` (otherwise the concurrency=balanced row) | BATCH, eight serving slots, measured row/verifier menu and step prices: S10 gxf_s10_adaptive_multiple (recipe batch_adaptive). Draft policy (CLI 2 on BATCH) and the step prices belong to category (the CLI adds the step menu to a measured serve BATCH plan by itself; generate's BATCH argv takes no price on category=balanced, a known difference from tcb88's 19500 accepted at the stage 3 review (D4), with no generate speed claim), layer drafting to focus; the BATCH core keeps its CLI value 3. --prefix_reuse=0 pinned the measurement protocol and is dropped. BATCH runs exactly 8 sessions, so on serve this set applies only where the final --session_slots is exactly 8 (given by the user, for example --context_tokens=65536 --session_slots=8, as measured); elsewhere the row runs its concurrency=balanced row, thin steps for as many sessions as fit, and startup prints how many fit (9 Nov). | TP4_EXL3 | 1 | default |
+| concurrency | balanced | (empty) | - | TP4_EXL3 | default | default |
+| focus | balanced | (empty) | - | TP4_EXL3 | default | default |
+| focus | ttft | (empty) | - | TP4_EXL3 | default | default |
+| focus | decode | `--tp_draft_layers=1`; needs concurrency=single/multiple/balanced | Layer drafting: S06/d71cd05 true THIN at 65536, only layers 0->1: code +12.0 %, prose +2.9 %, structured +1.6 % C1 decode, Fraser median +5.85 ms, so decode only; S10 thin_full_layers +12.15 % code. It needs the BF16 wire and draft shards of the single or multiple set. | TP4_EXL3 | default | default |
+| focus | prefill | (empty) | - | TP4_EXL3 | default | default |
+
+
+## Retained route proposals
+
+These records are held metadata, never executable resolver settings. Tuple order is
+category / exactness / concurrency / focus; listed values are proposals requiring the stated gates.
+
+### pp5_head_lease
+
+Family: original. Proposed: `code,prose,structured / balanced,fast / single / decode`.
+
+Branch control: `original_head_offload=1`. Old fallback: `original_head_offload=0; native PRO head`.
+
+Native PP5, original 8/7/7/7/11 layer map, native PRO norm/sampler/draft; text; measured short-context DSpark recipe.
+
+HOLD: Retained without a new native run: prior C1 benefit is no better than banked, with larger C4/C8 losses. No active mapping.
+
+### pp5_eight_layers
+
+Family: original. Proposed: `code,prose,structured / fast / multiple / decode`.
+
+Branch control: `layout=8/8/8/8/8`. Old fallback: `layout=8/7/7/7/11`.
+
+Native PP5 PRO layers change; C1 regressions exclude single; measured additional certain-token error excludes balanced/exact.
+
+HOLD: Parked after paired C1/C2 regressions and changed outputs. Earlier one-pass C4/C8 gains do not justify the fast-only precision tradeoff; no selectable tuple.
+
+### pp5_head_mask
+
+Family: original. Proposed: `code,prose,structured / balanced,fast / single,multiple / decode`.
+
+Branch control: `original_head_offload=2 original_head_stream_mask=1`. Old fallback: `original_head_stream_mask=0`.
+
+Requires unintegrated banked head; stored-row masks; synthetic/component timing and native short smoke do not establish model-vector or native speed qualification.
+
+HOLD: Forced actual THIN2/THIN8 full vectors, NLL/PPL/top agreement, canonical state and outputs; paired native C1 versus C2-C8 including real overlap.
+
+### pp5_queue_ahead
+
+Family: original. Proposed: `code,prose,structured / balanced,fast / single,multiple / decode`.
+
+Branch control: `pipeline_queue_ahead=1`. Old fallback: `pipeline_queue_ahead=0`.
+
+Native PP5 coordinator; bounded numerical/output evidence; measured speed is flat/noise.
+
+HOLD: Convincing paired gain in a specialized tuple, objective cross-effects and relevant speculative/concurrent state gates.
+
+### pp5_prefill_cadence
+
+Family: original. Proposed: `code,prose,structured / balanced,fast / multiple / ttft,prefill`.
+
+Branch control: `prefill_decode_every>0 with prefill_order=0`. Old fallback: `prefill_decode_every=0`.
+
+Round-robin prompt chunks, independent decoder owners; source/host fixture only.
+
+HOLD: Native overlapping prefills and decoder fairness; full-vector/state/output gates; paired TTFT/decode/prefill and C2-C8 performance.
+
+### tp_round_once
+
+Family: exl3. Proposed: `code,prose,structured / balanced,fast / single,multiple / decode`.
+
+Branch control: `tp_decode_round_once=1`. Old fallback: `tp_decode_round_once=0`.
+
+BF16 partials summed in rank-order FP32 then one rounding; different canonical values; measured serving regressions.
+
+HOLD: No selectable tuple: full-vocabulary quality and a useful specialized speed tradeoff remain unqualified.
+
+### tp_prompt_chunks
+
+Family: exl3. Proposed: `code,prose,structured / balanced,fast / multiple / decode,ttft`.
+
+Branch control: `prefill_prompt_chunks=1 prefill_first=0 prefill_order=0`. Old fallback: `prefill_prompt_chunks=0`.
+
+Explicit raw launch guard; scoped mixed-output evidence only; cold BATCH composition and solo golden are distinct.
+
+HOLD: Independent full-logit/NLL/PPL/state qualification, current-source paired objective effects; no strict-exact claim for EXL3.
+
+### prefix_fork
+
+Family: exl3. Proposed: `code,prose,structured / balanced,fast / multiple / ttft`.
+
+Branch control: `session_fork=1 prefill_prefix_stable=1`. Old fallback: `session_fork=0; cold prefill`.
+
+Same authenticated owner, generation/lease checks and native-qualified stable prefix form; no cross-user reuse.
+
+HOLD: Current-source complete recipe and mixed traffic qualification; no arbitrary extension, legacy-form or original exact admission.
+
+
+## Route parameters
+
+Each route is described by three separate parameters, derived from its settings: the GPU split
+(`--placement`: TP4_PRO is tensor parallel across the four CMP 170HX with the RTX PRO 6000 as a pipeline
+stage, PP5 the five GPUs in pipeline, TP4_EXL3 tensor parallel across the four CMP 170HX), the pipeline
+depth (`--pipeline_steps`: the steps in flight) and the serving slots (`--session_slots`). A generate value
+that differs from the serve value follows in parentheses.
+
+| Route | GPU split (`--placement`) | Pipeline depth (`--pipeline_steps`) | Serving slots (`--session_slots`) |
+| --- | --- | --- | --- |
+| `batch_fixed` | TP4_EXL3 | 1 | 8 |
+| `batch_adaptive` | TP4_EXL3 | 1 | 8 |
+| `batch_session` | TP4_EXL3 | 1 | 8 |
+| `thin_fixed` | TP4_EXL3 | 2 | 1 |
+| `batch_compromise` | TP4_EXL3 | 1 | 8 |
+| `original_tp_serial2` | TP4_PRO | 2 | 1 |
+| `original_pp_depth8` | PP5 | 8 (generate 2) | 8 |
+| `original_pp_depth5` | PP5 | 5 (generate 2) | 8 |
+| `thin_full_layers` | TP4_EXL3 | 2 | 1 |
+| `original_reference_serial_m1` | PP5 | 1 | 1 |
+| `original_pp_banked_single` | PP5 | 5 (generate 1) | 8 |
+| `original_pp_session6` | PP5 | 5 (generate 1) | 8 |
+| `original_pp_ttft10` | PP5 | 5 (generate 1) | 8 |
+| `original_pp_structured0` | PP5 | 5 (generate 1) | 8 |
+| `engram_disk_held` | default | default | default |
+| `exl3_exact_shaping` | TP4_EXL3 | default | 1 |
 
 ## Knob values
 
 ### batch_fixed
 
 Full-depth code-first BATCH with the merged pool/deferred-slot core3; cold identity and current-source serving qualification are mandatory.
+
+GPU split: TP4_EXL3. Pipeline depth: 1. Serving slots: 8.
 
 Numerical class: `draft_only`. Declared lossy knobs: none.
 
@@ -615,6 +839,8 @@ Measured frozen S10/e4c188e (base5029986), ordinary binary8d9b8b05, context65536
 ### batch_adaptive
 
 BATCH with the measured row/verifier menu and adaptive draft prices.
+
+GPU split: TP4_EXL3. Pipeline depth: 1. Serving slots: 8.
 
 Numerical class: `same_bits`. Declared lossy knobs: none.
 
@@ -728,6 +954,8 @@ Measured frozen S10/e4c188e (base5029986), ordinary binary8d9b8b05, context65536
 
 BATCH with session acceptance mode 5 and tied plan cuts.
 
+GPU split: TP4_EXL3. Pipeline depth: 1. Serving slots: 8.
+
 Numerical class: `draft_only`. Declared lossy knobs: none.
 
 Each line below is one argv token; embedded spaces and semicolons stay in that token.
@@ -840,6 +1068,8 @@ Measured frozen S10/e4c188e (base5029986), ordinary binary8d9b8b05, context65536
 
 THIN with fixed full draft depth five, one serving slot and 2048-row prefill. Canonical sharded THIN head and draft-head strategy.
 
+GPU split: TP4_EXL3. Pipeline depth: 2. Serving slots: 1.
+
 Numerical class: `draft_only`. Declared lossy knobs: none.
 
 Each line below is one argv token; embedded spaces and semicolons stay in that token.
@@ -934,6 +1164,8 @@ Measured frozen S10/e4c188e, ordinary binary8d9b8b05, context65536/one true-THIN
 ### batch_compromise
 
 Qualification candidate: BATCH with 2048-row cold prefill and the current 1024-row active-prefill cap.
+
+GPU split: TP4_EXL3. Pipeline depth: 1. Serving slots: 8.
 
 Numerical class: `same_bits`. Declared lossy knobs: none.
 
@@ -1047,6 +1279,8 @@ Measured S05 gxf_s05_mix2048: both full8/256 generate files equal the frozen BAT
 
 Original-weight native PRO tail with the existing serial four-CMP prefix, two pipeline steps and one serving slot.
 
+GPU split: TP4_PRO. Pipeline depth: 2. Serving slots: 1.
+
 Numerical class: `draft_only`. Declared lossy knobs: none.
 
 Each line below is one argv token; embedded spaces and semicolons stay in that token.
@@ -1130,11 +1364,13 @@ Generate base:
 --draft_row_us=2700
 ```
 
-Measured frozen S10/e4c188e (base5029986), ordinary binary 8d9b8b05. Original pack, native PRO and four CMPs at 180 W, context 65536, 1 slot(s), prefix reuse off. C1 rates are per stream; C2/C4/C8 rates are aggregates. code C1/C2/C4/C8: 207.123/unmeasured/unmeasured/unmeasured tok/s. MiaAI median TTFT: 100.60/unmeasured/unmeasured/unmeasured ms (small decode prompts, not Fraser). prose C1/C2/C4/C8: 150.795/unmeasured/unmeasured/unmeasured tok/s. MiaAI median TTFT: 78.95/unmeasured/unmeasured/unmeasured ms (small decode prompts, not Fraser). structured C1/C2/C4/C8: 288.582/unmeasured/unmeasured/unmeasured tok/s. MiaAI median TTFT: 73.30/unmeasured/unmeasured/unmeasured ms (small decode prompts, not Fraser). Full selected 8/256 records and 15 MiaAI request/text/native-count/finish signatures pass. Minimum CMP free at readiness: 5503 MiB. Startup expansion, artifact/source pins, original-pack stat and device/cap restoration pass. Five C1 batches and three batches at each requested C2/C4/C8 cell. No own C-build/host-test overlap. Sequential observations, no causal or global-optimum claim. Cold prefill, Fraser, mixed traffic, long-prefill pauses, 1M fit and full-context work were not requested. Current HC/current forms; no added lossy arithmetic, not official-exact. Source: evidence/gxf_s10_original_single_strict_s10_v1.json. Historical original numerical diagnostic, O xo03/xo16: eight aligned cached-one teacher inputs, 1,034,240 F32 logits. PP5 and TP4_PRO captures are equal; against R original parent PRO2 with unchanged sparse core CMP0, mean/max KL 0.0407172/0.144973 nats, raw RMS/max 0.568391/4.276049, teacher top1 8/8. Source75 baseline replay preserves those captures. Not untouched all-PRO, corpus PPL, generated agreement or current-S10 full-vocabulary distance. See evidence/xo16_serial_reference_distance_v1.json and RND_O/S 5Nov09:26.
+Measured frozen S10/e4c188e (base5029986), ordinary binary 8d9b8b05. Original pack, native PRO and four CMPs at 180 W, context 65536, 1 slot(s), prefix reuse off. C1 rates are per stream; C2/C4/C8 rates are aggregates. code C1/C2/C4/C8: 207.123/unmeasured/unmeasured/unmeasured tok/s. MiaAI median TTFT: 100.60/unmeasured/unmeasured/unmeasured ms (small decode prompts, not Fraser). prose C1/C2/C4/C8: 150.795/unmeasured/unmeasured/unmeasured tok/s. MiaAI median TTFT: 78.95/unmeasured/unmeasured/unmeasured ms (small decode prompts, not Fraser). structured C1/C2/C4/C8: 288.582/unmeasured/unmeasured/unmeasured tok/s. MiaAI median TTFT: 73.30/unmeasured/unmeasured/unmeasured ms (small decode prompts, not Fraser). Full selected 8/256 records and 15 MiaAI request/text/native-count/finish signatures pass. Minimum CMP free at readiness: 5503 MiB. Startup expansion, artifact/source pins, original-pack stat and device/cap restoration pass. Five C1 batches and three batches at each requested C2/C4/C8 cell. No own C-build/host-test overlap. Sequential observations, no causal or global-optimum claim. Cold prefill, Fraser, mixed traffic, long-prefill pauses, 1M fit and full-context work were not requested. Current HC/current forms; no added lossy arithmetic, not official-exact. Source: evidence/gxf_s10_original_single_strict_s10_v1.json. Historical original numerical diagnostic, O xo03/xo16: eight aligned cached-one teacher inputs, 1,034,240 F32 logits. PP5 and TP4_PRO captures are equal; against R original parent PRO2 with unchanged sparse core CMP0, mean/max KL 0.0407172/0.144973 nats, raw RMS/max 0.568391/4.276049, teacher top1 8/8. Source75 baseline replay preserves those captures. Not untouched all-PRO, corpus PPL, generated agreement or current-S10 full-vocabulary distance. See evidence/xo16_serial_reference_distance_v1.json and RND_O/S 5Nov09:26. Same-binary C1 route comparison also qualifies balanced-category single/decode: TP4_PRO at pipeline depth 2 with 1 serving slot (session0) beats banked PP5/session6 in all three genres with identical full outputs. TP versus banked structured284.74/250.51, code203.40/193.00, prose148.02/131.28tok/s. Banked has lower TTFT, so this decision is decode-only. Session6 on that TP4_PRO route is flat within repeat spread and is not selected.
 
 ### original_pp_depth8
 
 Original-weight PP5 placement at measured depth8 for all supported multiple-user decode categories; eight serving slots.
+
+GPU split: PP5. Pipeline depth: 8 (generate 2). Serving slots: 8.
 
 Numerical class: `draft_only`. Declared lossy knobs: none.
 
@@ -1227,6 +1463,8 @@ Measured frozen S10/e4c188e (base5029986), ordinary binary 8d9b8b05. Original pa
 
 Original-weight PP5 placement, five pipeline steps and eight serving slots for multiple-user prose/structured decode.
 
+GPU split: PP5. Pipeline depth: 5 (generate 2). Serving slots: 8.
+
 Numerical class: `draft_only`. Declared lossy knobs: none.
 
 Each line below is one argv token; embedded spaces and semicolons stay in that token.
@@ -1317,6 +1555,8 @@ Measured gxf_s07_original_other_multiple on S07/source7a066f2, original packed w
 ### thin_full_layers
 
 Single-user code decode: full fixed draft depth five with layer drafting enabled.
+
+GPU split: TP4_EXL3. Pipeline depth: 2. Serving slots: 1.
 
 Numerical class: `draft_only`. Declared lossy knobs: none.
 
@@ -1413,6 +1653,8 @@ Measured frozen S10/e4c188e, ordinary binary8d9b8b05, context65536/one true-THIN
 
 Original-weight official-reference arithmetic on the PP THIN serial M1 schedule with capacity512; default off. Standard batched prompts, physical ring wrap, rollback and TP remain open scope.
 
+GPU split: PP5. Pipeline depth: 1. Serving slots: 1.
+
 Numerical class: `reference_arithmetic`. Declared lossy knobs: none.
 
 Each line below is one argv token; embedded spaces and semicolons stay in that token.
@@ -1486,9 +1728,548 @@ Generate base:
 
 The original-weight reference recipe uses PP THIN serial M1, one session, context capacity 512. XR57 qualifies the production prepared-program prelude over 263 positions: all 34,000,640 full-vocabulary F32 logits and the first-eight-position block/carry endpoints across all 40 layers match the pinned original serial source. Two autonomous 256-draw real CLI arms match every source token ID and selected F32 logit bit; exact and control repeats pass. The fixed horizon includes post-EOS draws with --ignore_eos=1; ordinary EOS stopping remains the default. XR59 preserves canonical mc_check2 hashes 41eeb9c16e10/f49e8badff47 at both 2048/1024 widths. XR50b and XR53 provide the stated release linear/core/router and state/site/Engram/projection component proofs, including BF16 carrier and all-visible-index controls. Earlier XR48/XR49 retain their scoped packet source/state/cache proofs; those do not become a new production general-cache claim. Final-binary CLI/server/default and quiet-cost receipts, including final C1 cost, are maintained externally in COSTS.md and REPORT_v4.md and must pass before shipping. Prefix reuse/forks, speculative decoding, standard batched-prompt prefill, longer contexts, physical ring wrap, rollback, TP and image execution are outside this initial recipe. No balanced/default arithmetic or profile promotion is selected.
 
+### original_pp_banked_single
+
+Retained raw Original PP5 banked head/session6 route; no default tuple selects it after the same-binary decode win of TP4_PRO at pipeline depth 2 with 1 serving slot.
+
+GPU split: PP5. Pipeline depth: 5 (generate 1). Serving slots: 8.
+
+Numerical class: `draft_only`. Declared lossy knobs: none.
+
+Each line below is one argv token; embedded spaces and semicolons stay in that token.
+
+Serve base:
+
+```text
+--placement=pp5
+--numerics=exact
+--cmp_order=reference
+--linear_order=1
+--linear_profile=0
+--pro_emulation=0
+--card_order=0,1,3,4,2
+--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4
+--wide_rows=1024
+--rows=8
+--full_steps=1
+--prefill_cone=1
+--chunks_in_flight=1
+--step_graphs=1
+--draft=dspark
+--draft_block=5
+--draft_positions=5
+--card_memory_kept_free_mib=0
+--original_head_offload=2
+--pipeline_steps=5
+--official_hc_rows=0
+--official_reference=0
+--context_tokens=65536
+--draft_policy=1
+--draft_base_us=12700
+--draft_tail_us=2200
+--draft_row_us=2700
+--draft_learned_acceptance=0
+--draft_session_acceptance=6
+--batch_plan_ties=0
+--tp_pipeline_overlap=0
+--original_chunk_core=0
+--original_dense_staged=0
+--original_wide_experts=0
+```
+
+Serve additions:
+
+```text
+--session_slots=8
+--prefix_reuse=1
+--prefill_order=0
+--original_batch=0
+```
+
+Generate base:
+
+```text
+--placement=pp5
+--numerics=exact
+--cmp_order=reference
+--linear_order=1
+--linear_profile=0
+--pro_emulation=0
+--card_order=0,1,3,4,2
+--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4
+--wide_rows=1024
+--rows=8
+--full_steps=1
+--prefill_cone=1
+--chunks_in_flight=1
+--step_graphs=1
+--draft=dspark
+--draft_block=5
+--draft_positions=5
+--card_memory_kept_free_mib=0
+--original_head_offload=2
+--official_hc_rows=0
+--official_reference=0
+--context_tokens=65536
+--pipeline_steps=1
+--draft_policy=1
+--draft_base_us=12700
+--draft_tail_us=2200
+--draft_row_us=2700
+--draft_learned_acceptance=0
+--draft_session_acceptance=6
+--batch_plan_ties=0
+--tp_pipeline_overlap=0
+--original_chunk_core=0
+--original_dense_staged=0
+--original_wide_experts=0
+```
+
+Retained raw PP5 banked head/session6. Historical 575 independent full-F32 head vectors and short logical-state scopes match native-PRO balanced, not strict original exactness. Banked+6 paired C1 versus PP5 session0 preserves all outputs and gains0.10/9.65/7.99percent structured/code/prose; five-bank captures78/42/42/42/42 reuse144 graphs, preparation0.380s versus1.554s in separate leases and factory heap5450664 versus6813888bytes by the old same-shape formula. Later same-binary head-to-head preserves all outputs but TP4_PRO at pipeline depth 2 with 1 serving slot (session0) is faster in every decode genre:284.74/203.40/148.02 versus250.51/193.00/131.28tok/s. Banked retains much lower TTFT but no axis now selects it. Raw recipe uses native PRO PP5 layout,8allocated slots/pipeline5 at65536context, DSpark5/COST1 and one active workload. Generate uses1slot/pipeline1 with no speed claim. C2 regresses; prefill, vision, full-context and strict exactness remain unqualified. Rebased integration requires its native merge gate; defaults stay0.
+
+### original_pp_session6
+
+Original PP5 balanced/code/prose balanced/decode plan with session acceptance6; eight allocated serving slots. Measured PP5 component candidate only; no active tuple is added and no TP4_PRO route or PP5 route at pipeline depth 8 is replaced.
+
+GPU split: PP5. Pipeline depth: 5 (generate 1). Serving slots: 8.
+
+Numerical class: `draft_only`. Declared lossy knobs: none.
+
+Each line below is one argv token; embedded spaces and semicolons stay in that token.
+
+Serve base:
+
+```text
+--placement=pp5
+--numerics=exact
+--cmp_order=reference
+--linear_order=1
+--linear_profile=0
+--pro_emulation=0
+--card_order=0,1,3,4,2
+--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4
+--wide_rows=1024
+--rows=8
+--full_steps=1
+--prefill_cone=1
+--chunks_in_flight=1
+--step_graphs=1
+--draft=dspark
+--draft_block=5
+--draft_positions=5
+--card_memory_kept_free_mib=0
+--original_head_offload=0
+--pipeline_steps=5
+--official_hc_rows=0
+--official_reference=0
+--context_tokens=65536
+--draft_policy=1
+--draft_base_us=12700
+--draft_tail_us=2200
+--draft_row_us=2700
+--draft_learned_acceptance=0
+--draft_session_acceptance=6
+--batch_plan_ties=0
+--tp_pipeline_overlap=0
+--original_chunk_core=0
+--original_dense_staged=0
+--original_wide_experts=0
+```
+
+Serve additions:
+
+```text
+--session_slots=8
+--prefix_reuse=1
+--prefill_order=0
+--original_batch=0
+```
+
+Generate base:
+
+```text
+--placement=pp5
+--numerics=exact
+--cmp_order=reference
+--linear_order=1
+--linear_profile=0
+--pro_emulation=0
+--card_order=0,1,3,4,2
+--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4
+--wide_rows=1024
+--rows=8
+--full_steps=1
+--prefill_cone=1
+--chunks_in_flight=1
+--step_graphs=1
+--draft=dspark
+--draft_block=5
+--draft_positions=5
+--card_memory_kept_free_mib=0
+--original_head_offload=0
+--official_hc_rows=0
+--official_reference=0
+--context_tokens=65536
+--pipeline_steps=1
+--draft_policy=1
+--draft_base_us=12700
+--draft_tail_us=2200
+--draft_row_us=2700
+--draft_learned_acceptance=0
+--draft_session_acceptance=6
+--batch_plan_ties=0
+--tp_pipeline_overlap=0
+--original_chunk_core=0
+--original_dense_staged=0
+--original_wide_experts=0
+```
+
+Paired Original PP5 confirmation: six arms off/6/10/10/6/off, C1/C4/C8, identical T0 outputs; seeded cold T1 off/6/6/off also identical. Acceptance6 code gains8.79/13.36/6.88%, prose6.94/7.83/7.73%; structured within spread. Acceptance10 code3.48/6.98/3.55%, prose3.73/4.40/4.93%. CodeC4 TTFTp90 off/6/10=139.8/166.8/143.4ms. Select6 for balanced/decode focus and10 for TTFT; this is a scoped tradeoff, not an absolute latency optimum. Measured at65536 context, eight allocated slots, native PRO, canonical PP5 layout, COST1/12700/2200/2700, DSpark5 and head0. Generate uses one slot/pipeline1 without a generate speed claim. T1 identity covers the observed seeds, not distributional or strict original equivalence. Vision and full-context trajectories remain held; no per-value575 recapture is claimed. Later same-binary resolver confirmation at C1/C4 preserves all outputs but excludes session6 from structured balanced/decode after a0.231 percent C1 loss beyond0.0071 percent repeat spread. Code/prose keep6 for decode gains; the balanced category retains6 by the qualified workload decision. ProseC4 TTFTp90 off/6/10=112.5/138.3/112.6ms: about26ms cost for6, so TTFT focus keeps10. Structured TTFT keeps10; its decode changes are within measured spread. These are per-category decisions, not a no-loss claim for every genre on session6. Session policies are route-local modifiers. These PP5 depth5 observations do not qualify them on TP4_PRO (pipeline depth 2, 1 serving slot) or PP5 (pipeline depth 8, 8 serving slots); the older faster measured routes and all prior holds remain. No Original TTFT tuple was selectable in the pre-modifier registry, so session10 remains candidate metadata until a scoped tuple is jointly admitted.
+
+### original_pp_ttft10
+
+Original PP5 TTFT resolver plan with session acceptance10; eight allocated serving slots, one or multiple active workloads. Measured PP5 component candidate only; no active tuple is added and no TP4_PRO route or PP5 route at pipeline depth 8 is replaced.
+
+GPU split: PP5. Pipeline depth: 5 (generate 1). Serving slots: 8.
+
+Numerical class: `draft_only`. Declared lossy knobs: none.
+
+Each line below is one argv token; embedded spaces and semicolons stay in that token.
+
+Serve base:
+
+```text
+--placement=pp5
+--numerics=exact
+--cmp_order=reference
+--linear_order=1
+--linear_profile=0
+--pro_emulation=0
+--card_order=0,1,3,4,2
+--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4
+--wide_rows=1024
+--rows=8
+--full_steps=1
+--prefill_cone=1
+--chunks_in_flight=1
+--step_graphs=1
+--draft=dspark
+--draft_block=5
+--draft_positions=5
+--card_memory_kept_free_mib=0
+--original_head_offload=0
+--pipeline_steps=5
+--official_hc_rows=0
+--official_reference=0
+--context_tokens=65536
+--draft_policy=1
+--draft_base_us=12700
+--draft_tail_us=2200
+--draft_row_us=2700
+--draft_learned_acceptance=0
+--draft_session_acceptance=10
+--batch_plan_ties=0
+--tp_pipeline_overlap=0
+--original_chunk_core=0
+--original_dense_staged=0
+--original_wide_experts=0
+```
+
+Serve additions:
+
+```text
+--session_slots=8
+--prefix_reuse=1
+--prefill_order=0
+--original_batch=0
+```
+
+Generate base:
+
+```text
+--placement=pp5
+--numerics=exact
+--cmp_order=reference
+--linear_order=1
+--linear_profile=0
+--pro_emulation=0
+--card_order=0,1,3,4,2
+--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4
+--wide_rows=1024
+--rows=8
+--full_steps=1
+--prefill_cone=1
+--chunks_in_flight=1
+--step_graphs=1
+--draft=dspark
+--draft_block=5
+--draft_positions=5
+--card_memory_kept_free_mib=0
+--original_head_offload=0
+--official_hc_rows=0
+--official_reference=0
+--context_tokens=65536
+--pipeline_steps=1
+--draft_policy=1
+--draft_base_us=12700
+--draft_tail_us=2200
+--draft_row_us=2700
+--draft_learned_acceptance=0
+--draft_session_acceptance=10
+--batch_plan_ties=0
+--tp_pipeline_overlap=0
+--original_chunk_core=0
+--original_dense_staged=0
+--original_wide_experts=0
+```
+
+Paired Original PP5 confirmation: six arms off/6/10/10/6/off, C1/C4/C8, identical T0 outputs; seeded cold T1 off/6/6/off also identical. Acceptance6 code gains8.79/13.36/6.88%, prose6.94/7.83/7.73%; structured within spread. Acceptance10 code3.48/6.98/3.55%, prose3.73/4.40/4.93%. CodeC4 TTFTp90 off/6/10=139.8/166.8/143.4ms. Select6 for balanced/decode focus and10 for TTFT; this is a scoped tradeoff, not an absolute latency optimum. Measured at65536 context, eight allocated slots, native PRO, canonical PP5 layout, COST1/12700/2200/2700, DSpark5 and head0. Generate uses one slot/pipeline1 without a generate speed claim. T1 identity covers the observed seeds, not distributional or strict original equivalence. Vision and full-context trajectories remain held; no per-value575 recapture is claimed. Later same-binary resolver confirmation at C1/C4 preserves all outputs but excludes session6 from structured balanced/decode after a0.231 percent C1 loss beyond0.0071 percent repeat spread. Code/prose keep6 for decode gains; the balanced category retains6 by the qualified workload decision. ProseC4 TTFTp90 off/6/10=112.5/138.3/112.6ms: about26ms cost for6, so TTFT focus keeps10. Structured TTFT keeps10; its decode changes are within measured spread. These are per-category decisions, not a no-loss claim for every genre on session6. Session policies are route-local modifiers. These PP5 depth5 observations do not qualify them on TP4_PRO (pipeline depth 2, 1 serving slot) or PP5 (pipeline depth 8, 8 serving slots); the older faster measured routes and all prior holds remain. No Original TTFT tuple was selectable in the pre-modifier registry, so session10 remains candidate metadata until a scoped tuple is jointly admitted.
+
+### original_pp_structured0
+
+Original PP5 structured balanced/decode plan with session acceptance0, the measured head0 control; eight allocated serving slots. Measured PP5 component candidate only; no active tuple is added and no TP4_PRO route or PP5 route at pipeline depth 8 is replaced.
+
+GPU split: PP5. Pipeline depth: 5 (generate 1). Serving slots: 8.
+
+Numerical class: `draft_only`. Declared lossy knobs: none.
+
+Each line below is one argv token; embedded spaces and semicolons stay in that token.
+
+Serve base:
+
+```text
+--placement=pp5
+--numerics=exact
+--cmp_order=reference
+--linear_order=1
+--linear_profile=0
+--pro_emulation=0
+--card_order=0,1,3,4,2
+--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4
+--wide_rows=1024
+--rows=8
+--full_steps=1
+--prefill_cone=1
+--chunks_in_flight=1
+--step_graphs=1
+--draft=dspark
+--draft_block=5
+--draft_positions=5
+--card_memory_kept_free_mib=0
+--original_head_offload=0
+--pipeline_steps=5
+--official_hc_rows=0
+--official_reference=0
+--context_tokens=65536
+--draft_policy=1
+--draft_base_us=12700
+--draft_tail_us=2200
+--draft_row_us=2700
+--draft_learned_acceptance=0
+--draft_session_acceptance=0
+--batch_plan_ties=0
+--tp_pipeline_overlap=0
+--original_chunk_core=0
+--original_dense_staged=0
+--original_wide_experts=0
+```
+
+Serve additions:
+
+```text
+--session_slots=8
+--prefix_reuse=1
+--prefill_order=0
+--original_batch=0
+```
+
+Generate base:
+
+```text
+--placement=pp5
+--numerics=exact
+--cmp_order=reference
+--linear_order=1
+--linear_profile=0
+--pro_emulation=0
+--card_order=0,1,3,4,2
+--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4
+--wide_rows=1024
+--rows=8
+--full_steps=1
+--prefill_cone=1
+--chunks_in_flight=1
+--step_graphs=1
+--draft=dspark
+--draft_block=5
+--draft_positions=5
+--card_memory_kept_free_mib=0
+--original_head_offload=0
+--official_hc_rows=0
+--official_reference=0
+--context_tokens=65536
+--pipeline_steps=1
+--draft_policy=1
+--draft_base_us=12700
+--draft_tail_us=2200
+--draft_row_us=2700
+--draft_learned_acceptance=0
+--draft_session_acceptance=0
+--batch_plan_ties=0
+--tp_pipeline_overlap=0
+--original_chunk_core=0
+--original_dense_staged=0
+--original_wide_experts=0
+```
+
+Same-binary six-arm session0/6/10 confirmation at C1/C4 preserved complete outputs in all arms. Session6 structured C1 loses0.231 percent beyond0.0071 percent repeat spread; structured balanced/decode therefore selects the measured session0 control. Session10 remains the TTFT plan. All other PP5 COST1/DSpark5 settings are unchanged. Generate retains one slot/pipeline1 without a speed claim. No strict exactness, new575-vector, vision or full-context qualification. Session policies are route-local modifiers. These PP5 depth5 observations do not qualify them on TP4_PRO (pipeline depth 2, 1 serving slot) or PP5 (pipeline depth 8, 8 serving slots); the older faster measured routes and all prior holds remain. No Original TTFT tuple was selectable in the pre-modifier registry, so session10 remains candidate metadata until a scoped tuple is jointly admitted.
+
+### engram_disk_held
+
+Experimental immutable Engram placement with resident prefixes, bounded block cache and serial/direct or prepared io_uring reads. No axis enables it before native qualification.
+
+GPU split: default. Pipeline depth: default. Serving slots: default.
+
+Numerical class: `same_bits`. Declared lossy knobs: none.
+
+Each line below is one argv token; embedded spaces and semicolons stay in that token.
+
+Serve base:
+
+```text
+(none)
+```
+
+Serve additions:
+
+```text
+(none)
+```
+
+Generate base:
+
+```text
+(none)
+```
+
+CPU byte, corruption, replica-loss and concurrent-reader tests; random I/O microbenchmark only. No native serving gain claimed.
+
+### exl3_exact_shaping
+
+EXL3 exact mode (owner, 6 Nov 2026: "On EXL3, exact takes the same shaping and strictness but is not official-exact"): GPU split TP4_EXL3 on the four CMPs with exact numerics, the reference CMP order and the FP32 wire (fixed rank-order sums, no BF16 ring, no relaxed order), DSpark at eight rows, pipeline depth 1 and one session. The weights are quantized, so it is labelled not official-exact.
+
+GPU split: TP4_EXL3. Pipeline depth: default. Serving slots: 1.
+
+Numerical class: `reference_arithmetic`. Declared lossy knobs: none.
+
+Each line below is one argv token; embedded spaces and semicolons stay in that token.
+
+Serve base:
+
+```text
+--placement=tp4_exl3
+--numerics=exact
+--tp_wire_bf16=0
+--speculative=2
+--rows=8
+```
+
+Serve additions:
+
+```text
+--session_slots=1
+```
+
+Generate base:
+
+```text
+--placement=tp4_exl3
+--numerics=exact
+--tp_wire_bf16=0
+--speculative=2
+--rows=8
+```
+
+Per-split request 4 q4 on arms on_a/on_d (r7f4_gq_split_q4_tcb88_v1, per_split_axes_v1/ADMITTED_4.md): `--placement=tp4_exl3 --speculative=2 --rows=8` at pipeline depth 1 and 1 serving slot, exact numerics and FP32 wire, 158.13/117.18/85.76 tok/s structured/code/prose C1, TTFT p50 26.0/35.9/35.4 ms, the pair self-consistent and outputs recorded. --numerics=exact, --tp_wire_bf16=0 and --session_slots=1 are the split's raw defaults, stated so exact never inherits relaxed arithmetic.
+
+## Cross-axis rules
+
+Five kinds of rule join the sets of one row; each is declared in axes.json and applied by the
+generator or, for the slot count, by startup. A cap clamps a knob that one source sets above another
+source's bound; a floor raises a knob below what another source's setting needs; a set may apply only
+with values of another axis, and is left out elsewhere, never refused; a concurrency set may apply on
+serve only at one final `--session_slots` count, and elsewhere the row runs its concurrency=balanced row;
+a recipe may yield one of its knobs to the axis that owns it, so the recipe's measured value runs
+wherever that axis's set of the row gives none. Startup prints each applied cap or floor after its key
+on the `axes from` line.
+
+Caps and floors:
+
+- cap: `--rows` bounds `--draft_block`, `--draft_positions`: --rows caps the proposals verified per round at rows - 1 (commands.c). A draft block or depth that another source of the row sets above that cap is clamped to it: the extra block positions cost time and verify nothing (r5c on TP4_PRO: depth 7 on rows 6 with arm 1 lost 10.2 % to r5s, rows 6 with arm 1 at depth 5, 232.3 -> 208.5 tok/s code C1). Bounds act on the final values, explicit ones included, and change only inserted knobs (stage 3 review D1): an explicit --rows=6 keeps the clamp, --rows=8 lifts it; an explicit bounded knob is never altered and is validated as usual. A cap never lowers a knob below the least its parser takes (--draft_block 5, --draft_positions 1), also where the final speculation is off and the clamped draft knobs are inert, noted inactive (stage 3 review D5 with D2: a raw --rows=1 --speculative=0 parses).
+- floor: `--tp_draft_shards`=`1` (under `--batch_draft_rows`) raises `--tp_draft_layers`: Sharded BATCH draft rows require draft layers (model_v41.c: batch_draft_rows with draft_shards needs draft_layers). Where the final --tp_draft_shards=1 and --batch_draft_rows are composed or given (TP4_EXL3 concurrency=multiple), an inserted --tp_draft_layers is raised to 1, the value every BATCH tuple ran with before the per-split tables. Bounds act on the final values (stage 3 review D1): an explicit --tp_draft_shards=1 keeps the raise, --tp_draft_shards=0 or --batch_draft_rows=0 removes it; an explicit --tp_draft_layers is never altered and is validated as usual.
+
+Sets that apply only with values of another axis:
+
+- TP4_EXL3 category=prose: only with concurrency=multiple
+- TP4_EXL3 category=structured: only with concurrency=multiple
+
+Sets that apply on serve only at one serving slot count (elsewhere the row runs its
+concurrency=balanced row, and startup says how many sessions fit):
+
+- TP4_EXL3 concurrency=multiple: only at exactly `--session_slots=8`
+
+Recipe knobs yielded to the axis that owns them:
+
+- PP5 concurrency=multiple (`original_pp_depth8`): `--draft_block`, `--draft_positions`, `--draft_policy`, `--draft_session_acceptance`
+
+Rows with an applied cap or floor: 36.
+- PP5 code/balanced/single/balanced: --draft_block 7 -> 5 (bounded by --rows=6 from concurrency=single); --draft_positions 7 -> 5 (bounded by --rows=6 from concurrency=single)
+- PP5 code/balanced/single/ttft: --draft_block 7 -> 5 (bounded by --rows=6 from concurrency=single); --draft_positions 7 -> 5 (bounded by --rows=6 from concurrency=single)
+- PP5 code/balanced/single/decode: --draft_block 7 -> 5 (bounded by --rows=6 from concurrency=single); --draft_positions 7 -> 5 (bounded by --rows=6 from concurrency=single)
+- PP5 code/balanced/single/prefill: --draft_block 7 -> 5 (bounded by --rows=6 from concurrency=single); --draft_positions 7 -> 5 (bounded by --rows=6 from concurrency=single)
+- PP5 code/fast/single/balanced: --draft_block 7 -> 5 (bounded by --rows=6 from concurrency=single); --draft_positions 7 -> 5 (bounded by --rows=6 from concurrency=single)
+- PP5 code/fast/single/ttft: --draft_block 7 -> 5 (bounded by --rows=6 from concurrency=single); --draft_positions 7 -> 5 (bounded by --rows=6 from concurrency=single)
+- PP5 code/fast/single/decode: --draft_block 7 -> 5 (bounded by --rows=6 from concurrency=single); --draft_positions 7 -> 5 (bounded by --rows=6 from concurrency=single)
+- PP5 code/fast/single/prefill: --draft_block 7 -> 5 (bounded by --rows=6 from concurrency=single); --draft_positions 7 -> 5 (bounded by --rows=6 from concurrency=single)
+- TP4_PRO code/balanced/single/decode: --draft_block 7 -> 5 (bounded by --rows=6 from focus=decode); --draft_positions 7 -> 5 (bounded by --rows=6 from focus=decode)
+- TP4_PRO code/balanced/balanced/decode: --draft_block 7 -> 5 (bounded by --rows=6 from focus=decode); --draft_positions 7 -> 5 (bounded by --rows=6 from focus=decode)
+- TP4_PRO code/fast/single/decode: --draft_block 7 -> 5 (bounded by --rows=6 from focus=decode); --draft_positions 7 -> 5 (bounded by --rows=6 from focus=decode)
+- TP4_PRO code/fast/balanced/decode: --draft_block 7 -> 5 (bounded by --rows=6 from focus=decode); --draft_positions 7 -> 5 (bounded by --rows=6 from focus=decode)
+- TP4_EXL3 code/balanced/multiple/balanced: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 code/balanced/multiple/ttft: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 code/balanced/multiple/prefill: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 code/fast/multiple/balanced: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 code/fast/multiple/ttft: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 code/fast/multiple/prefill: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 prose/balanced/multiple/balanced: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 prose/balanced/multiple/ttft: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 prose/balanced/multiple/prefill: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 prose/fast/multiple/balanced: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 prose/fast/multiple/ttft: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 prose/fast/multiple/prefill: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 structured/balanced/multiple/balanced: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 structured/balanced/multiple/ttft: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 structured/balanced/multiple/prefill: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 structured/fast/multiple/balanced: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 structured/fast/multiple/ttft: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 structured/fast/multiple/prefill: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 balanced/balanced/multiple/balanced: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 balanced/balanced/multiple/ttft: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 balanced/balanced/multiple/prefill: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 balanced/fast/multiple/balanced: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 balanced/fast/multiple/ttft: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+- TP4_EXL3 balanced/fast/multiple/prefill: --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)
+
+## Inactive draft knobs
+
+Each axis value's set is inserted on every row of its split. A set of draft knobs acts only with speculation: its `axes from` line carries
+`(inactive: no DSpark on this route)`, which startup prints only where the final speculation is off (a route without DSpark, or an explicit `--speculative=0`). Every base runs DSpark, so the rows below are those whose composition has none.
+
+Rows with inactive draft knobs: none.
+
 ## Quality budget
 
-Proposed conservative incremental screen, not an established quality guarantee or an owner-selected default. No lossy candidate has passed; exactness=fast remains held.
+Proposed conservative incremental screen, not an established quality guarantee or an owner-selected default. No lossy candidate has passed; additional lossy fast routes remain held.
 
 Budget admitted: `false`.
 Required strata: code/short, code/long, prose/short, prose/long, structured/short, structured/long.
@@ -1547,195 +2328,192 @@ gates. A failed envelope returns the rule to a nonempty hold; the margin is not 
 
 ## Complete tuple map
 
-The map contains 360 weight-family records across 180 full tuples.
-A held row never inserts its displayed candidate knobs.
+The map contains 540 rows: 3 GPU splits by 180 full tuples. Each cell names the axis values whose sets it inserts (raw: none). A held row inserts nothing.
 
-| Category | Exactness | Concurrency | Focus | EXL3 knob set / admission | Original knob set / admission | Seven-bucket targets |
-| --- | --- | --- | --- | --- | --- | --- |
-| code | exact | single | balanced | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, decode_accuracy |
-| code | exact | single | ttft | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, prefill_accuracy |
-| code | exact | single | decode | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, decode_accuracy |
-| code | exact | single | prefill | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, prefill_accuracy |
-| code | exact | multiple | balanced | held qualification candidate | held original | exact, throughput_accuracy |
-| code | exact | multiple | ttft | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| code | exact | multiple | decode | held qualification candidate | held original | exact, throughput_accuracy |
-| code | exact | multiple | prefill | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| code | exact | balanced | balanced | held qualification candidate | held original | exact, throughput_accuracy |
-| code | exact | balanced | ttft | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| code | exact | balanced | decode | held qualification candidate | held original | exact, throughput_accuracy |
-| code | exact | balanced | prefill | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| code | balanced | single | balanced | `thin_fixed`; draft_only candidate | held original | decode_accuracy, decode_fast |
-| code | balanced | single | ttft | `thin_fixed`; draft_only candidate | held original | prefill_accuracy, prefill_fast |
-| code | balanced | single | decode | `thin_full_layers`; draft_only candidate | `original_tp_serial2`; draft_only candidate; see source-scoped GPU observations | decode_accuracy, decode_fast |
-| code | balanced | single | prefill | `thin_fixed`; draft_only candidate | held original | prefill_accuracy, prefill_fast |
-| code | balanced | multiple | balanced | held qualification candidate; candidate `batch_session` | held original | throughput_accuracy, throughput_fast |
-| code | balanced | multiple | ttft | `batch_adaptive`; same_bits candidate | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| code | balanced | multiple | decode | `batch_fixed`; draft_only candidate | `original_pp_depth8`; draft_only candidate; see source-scoped GPU observations | throughput_accuracy, throughput_fast |
-| code | balanced | multiple | prefill | `batch_adaptive`; same_bits candidate | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| code | balanced | balanced | balanced | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast |
-| code | balanced | balanced | ttft | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| code | balanced | balanced | decode | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast |
-| code | balanced | balanced | prefill | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| code | fast | single | balanced | held tier | held tier | decode_fast |
-| code | fast | single | ttft | held tier | held tier | prefill_fast |
-| code | fast | single | decode | held tier | held tier | decode_fast |
-| code | fast | single | prefill | held tier | held tier | prefill_fast |
-| code | fast | multiple | balanced | held tier | held tier | throughput_fast |
-| code | fast | multiple | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| code | fast | multiple | decode | held tier | held tier | throughput_fast |
-| code | fast | multiple | prefill | held tier | held tier | throughput_fast, prefill_fast |
-| code | fast | balanced | balanced | held tier | held tier | throughput_fast |
-| code | fast | balanced | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| code | fast | balanced | decode | held tier | held tier | throughput_fast |
-| code | fast | balanced | prefill | held tier | held tier | throughput_fast, prefill_fast |
-| prose | exact | single | balanced | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, decode_accuracy |
-| prose | exact | single | ttft | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, prefill_accuracy |
-| prose | exact | single | decode | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, decode_accuracy |
-| prose | exact | single | prefill | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, prefill_accuracy |
-| prose | exact | multiple | balanced | held qualification candidate | held original | exact, throughput_accuracy |
-| prose | exact | multiple | ttft | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| prose | exact | multiple | decode | held qualification candidate | held original | exact, throughput_accuracy |
-| prose | exact | multiple | prefill | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| prose | exact | balanced | balanced | held qualification candidate | held original | exact, throughput_accuracy |
-| prose | exact | balanced | ttft | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| prose | exact | balanced | decode | held qualification candidate | held original | exact, throughput_accuracy |
-| prose | exact | balanced | prefill | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| prose | balanced | single | balanced | `thin_fixed`; draft_only candidate | held original | decode_accuracy, decode_fast |
-| prose | balanced | single | ttft | `thin_fixed`; draft_only candidate | held original | prefill_accuracy, prefill_fast |
-| prose | balanced | single | decode | `thin_fixed`; draft_only candidate | `original_tp_serial2`; draft_only candidate; see source-scoped GPU observations | decode_accuracy, decode_fast |
-| prose | balanced | single | prefill | `thin_fixed`; draft_only candidate | held original | prefill_accuracy, prefill_fast |
-| prose | balanced | multiple | balanced | held qualification candidate; candidate `batch_adaptive` | held original | throughput_accuracy, throughput_fast |
-| prose | balanced | multiple | ttft | `batch_adaptive`; same_bits candidate | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| prose | balanced | multiple | decode | `batch_adaptive`; same_bits candidate | `original_pp_depth8`; draft_only candidate; see source-scoped GPU observations | throughput_accuracy, throughput_fast |
-| prose | balanced | multiple | prefill | `batch_adaptive`; same_bits candidate | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| prose | balanced | balanced | balanced | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast |
-| prose | balanced | balanced | ttft | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| prose | balanced | balanced | decode | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast |
-| prose | balanced | balanced | prefill | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| prose | fast | single | balanced | held tier | held tier | decode_fast |
-| prose | fast | single | ttft | held tier | held tier | prefill_fast |
-| prose | fast | single | decode | held tier | held tier | decode_fast |
-| prose | fast | single | prefill | held tier | held tier | prefill_fast |
-| prose | fast | multiple | balanced | held tier | held tier | throughput_fast |
-| prose | fast | multiple | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| prose | fast | multiple | decode | held tier | held tier | throughput_fast |
-| prose | fast | multiple | prefill | held tier | held tier | throughput_fast, prefill_fast |
-| prose | fast | balanced | balanced | held tier | held tier | throughput_fast |
-| prose | fast | balanced | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| prose | fast | balanced | decode | held tier | held tier | throughput_fast |
-| prose | fast | balanced | prefill | held tier | held tier | throughput_fast, prefill_fast |
-| structured | exact | single | balanced | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, decode_accuracy |
-| structured | exact | single | ttft | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, prefill_accuracy |
-| structured | exact | single | decode | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, decode_accuracy |
-| structured | exact | single | prefill | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, prefill_accuracy |
-| structured | exact | multiple | balanced | held qualification candidate | held original | exact, throughput_accuracy |
-| structured | exact | multiple | ttft | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| structured | exact | multiple | decode | held qualification candidate | held original | exact, throughput_accuracy |
-| structured | exact | multiple | prefill | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| structured | exact | balanced | balanced | held qualification candidate | held original | exact, throughput_accuracy |
-| structured | exact | balanced | ttft | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| structured | exact | balanced | decode | held qualification candidate | held original | exact, throughput_accuracy |
-| structured | exact | balanced | prefill | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| structured | balanced | single | balanced | `thin_fixed`; draft_only candidate | held original | decode_accuracy, decode_fast |
-| structured | balanced | single | ttft | `thin_fixed`; draft_only candidate | held original | prefill_accuracy, prefill_fast |
-| structured | balanced | single | decode | `thin_fixed`; draft_only candidate | `original_tp_serial2`; draft_only candidate; see source-scoped GPU observations | decode_accuracy, decode_fast |
-| structured | balanced | single | prefill | `thin_fixed`; draft_only candidate | held original | prefill_accuracy, prefill_fast |
-| structured | balanced | multiple | balanced | held qualification candidate; candidate `batch_adaptive` | held original | throughput_accuracy, throughput_fast |
-| structured | balanced | multiple | ttft | `batch_adaptive`; same_bits candidate | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| structured | balanced | multiple | decode | `batch_adaptive`; same_bits candidate | `original_pp_depth8`; draft_only candidate; see source-scoped GPU observations | throughput_accuracy, throughput_fast |
-| structured | balanced | multiple | prefill | `batch_adaptive`; same_bits candidate | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| structured | balanced | balanced | balanced | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast |
-| structured | balanced | balanced | ttft | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| structured | balanced | balanced | decode | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast |
-| structured | balanced | balanced | prefill | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| structured | fast | single | balanced | held tier | held tier | decode_fast |
-| structured | fast | single | ttft | held tier | held tier | prefill_fast |
-| structured | fast | single | decode | held tier | held tier | decode_fast |
-| structured | fast | single | prefill | held tier | held tier | prefill_fast |
-| structured | fast | multiple | balanced | held tier | held tier | throughput_fast |
-| structured | fast | multiple | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| structured | fast | multiple | decode | held tier | held tier | throughput_fast |
-| structured | fast | multiple | prefill | held tier | held tier | throughput_fast, prefill_fast |
-| structured | fast | balanced | balanced | held tier | held tier | throughput_fast |
-| structured | fast | balanced | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| structured | fast | balanced | decode | held tier | held tier | throughput_fast |
-| structured | fast | balanced | prefill | held tier | held tier | throughput_fast, prefill_fast |
-| vision | exact | single | balanced | held qualification candidate | held vision | exact, decode_accuracy |
-| vision | exact | single | ttft | held qualification candidate | held vision | exact, prefill_accuracy |
-| vision | exact | single | decode | held qualification candidate | held vision | exact, decode_accuracy |
-| vision | exact | single | prefill | held qualification candidate | held vision | exact, prefill_accuracy |
-| vision | exact | multiple | balanced | held qualification candidate | held vision | exact, throughput_accuracy |
-| vision | exact | multiple | ttft | held qualification candidate | held vision | exact, throughput_accuracy, prefill_accuracy |
-| vision | exact | multiple | decode | held qualification candidate | held vision | exact, throughput_accuracy |
-| vision | exact | multiple | prefill | held qualification candidate | held vision | exact, throughput_accuracy, prefill_accuracy |
-| vision | exact | balanced | balanced | held qualification candidate | held vision | exact, throughput_accuracy |
-| vision | exact | balanced | ttft | held qualification candidate | held vision | exact, throughput_accuracy, prefill_accuracy |
-| vision | exact | balanced | decode | held qualification candidate | held vision | exact, throughput_accuracy |
-| vision | exact | balanced | prefill | held qualification candidate | held vision | exact, throughput_accuracy, prefill_accuracy |
-| vision | balanced | single | balanced | held vision | held vision | decode_accuracy, decode_fast |
-| vision | balanced | single | ttft | held vision | held vision | prefill_accuracy, prefill_fast |
-| vision | balanced | single | decode | held vision | held vision | decode_accuracy, decode_fast |
-| vision | balanced | single | prefill | held vision | held vision | prefill_accuracy, prefill_fast |
-| vision | balanced | multiple | balanced | held vision | held vision | throughput_accuracy, throughput_fast |
-| vision | balanced | multiple | ttft | held vision | held vision | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| vision | balanced | multiple | decode | held vision | held vision | throughput_accuracy, throughput_fast |
-| vision | balanced | multiple | prefill | held vision | held vision | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| vision | balanced | balanced | balanced | held vision | held vision | throughput_accuracy, throughput_fast |
-| vision | balanced | balanced | ttft | held vision | held vision | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| vision | balanced | balanced | decode | held vision | held vision | throughput_accuracy, throughput_fast |
-| vision | balanced | balanced | prefill | held vision | held vision | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| vision | fast | single | balanced | held tier | held tier | decode_fast |
-| vision | fast | single | ttft | held tier | held tier | prefill_fast |
-| vision | fast | single | decode | held tier | held tier | decode_fast |
-| vision | fast | single | prefill | held tier | held tier | prefill_fast |
-| vision | fast | multiple | balanced | held tier | held tier | throughput_fast |
-| vision | fast | multiple | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| vision | fast | multiple | decode | held tier | held tier | throughput_fast |
-| vision | fast | multiple | prefill | held tier | held tier | throughput_fast, prefill_fast |
-| vision | fast | balanced | balanced | held tier | held tier | throughput_fast |
-| vision | fast | balanced | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| vision | fast | balanced | decode | held tier | held tier | throughput_fast |
-| vision | fast | balanced | prefill | held tier | held tier | throughput_fast, prefill_fast |
-| balanced | exact | single | balanced | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, decode_accuracy |
-| balanced | exact | single | ttft | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, prefill_accuracy |
-| balanced | exact | single | decode | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, decode_accuracy |
-| balanced | exact | single | prefill | held qualification candidate | `original_reference_serial_m1`; reference_arithmetic candidate; see source-scoped GPU observations | exact, prefill_accuracy |
-| balanced | exact | multiple | balanced | held qualification candidate | held original | exact, throughput_accuracy |
-| balanced | exact | multiple | ttft | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| balanced | exact | multiple | decode | held qualification candidate | held original | exact, throughput_accuracy |
-| balanced | exact | multiple | prefill | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| balanced | exact | balanced | balanced | held qualification candidate | held original | exact, throughput_accuracy |
-| balanced | exact | balanced | ttft | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| balanced | exact | balanced | decode | held qualification candidate | held original | exact, throughput_accuracy |
-| balanced | exact | balanced | prefill | held qualification candidate | held original | exact, throughput_accuracy, prefill_accuracy |
-| balanced | balanced | single | balanced | `thin_fixed`; draft_only candidate | held original | decode_accuracy, decode_fast |
-| balanced | balanced | single | ttft | `thin_fixed`; draft_only candidate | held original | prefill_accuracy, prefill_fast |
-| balanced | balanced | single | decode | `thin_fixed`; draft_only candidate | held original | decode_accuracy, decode_fast |
-| balanced | balanced | single | prefill | `thin_fixed`; draft_only candidate | held original | prefill_accuracy, prefill_fast |
-| balanced | balanced | multiple | balanced | held qualification candidate; candidate `batch_adaptive` | held original | throughput_accuracy, throughput_fast |
-| balanced | balanced | multiple | ttft | `batch_adaptive`; same_bits candidate | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| balanced | balanced | multiple | decode | `batch_adaptive`; same_bits candidate | held original | throughput_accuracy, throughput_fast |
-| balanced | balanced | multiple | prefill | `batch_adaptive`; same_bits candidate | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| balanced | balanced | balanced | balanced | held qualification candidate; candidate `batch_compromise` | held original | throughput_accuracy, throughput_fast |
-| balanced | balanced | balanced | ttft | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| balanced | balanced | balanced | decode | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast |
-| balanced | balanced | balanced | prefill | held compromise; candidate `batch_session` | held original | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
-| balanced | fast | single | balanced | held tier | held tier | decode_fast |
-| balanced | fast | single | ttft | held tier | held tier | prefill_fast |
-| balanced | fast | single | decode | held tier | held tier | decode_fast |
-| balanced | fast | single | prefill | held tier | held tier | prefill_fast |
-| balanced | fast | multiple | balanced | held tier | held tier | throughput_fast |
-| balanced | fast | multiple | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| balanced | fast | multiple | decode | held tier | held tier | throughput_fast |
-| balanced | fast | multiple | prefill | held tier | held tier | throughput_fast, prefill_fast |
-| balanced | fast | balanced | balanced | held tier | held tier | throughput_fast |
-| balanced | fast | balanced | ttft | held tier | held tier | throughput_fast, prefill_fast |
-| balanced | fast | balanced | decode | held tier | held tier | throughput_fast |
-| balanced | fast | balanced | prefill | held tier | held tier | throughput_fast, prefill_fast |
+| Category | Exactness | Concurrency | Focus | PP5 | TP4_PRO | TP4_EXL3 | Seven-bucket targets |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| code | exact | single | balanced | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, decode_accuracy |
+| code | exact | single | ttft | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, prefill_accuracy |
+| code | exact | single | decode | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, decode_accuracy |
+| code | exact | single | prefill | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, prefill_accuracy |
+| code | exact | multiple | balanced | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| code | exact | multiple | ttft | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| code | exact | multiple | decode | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| code | exact | multiple | prefill | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| code | exact | balanced | balanced | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| code | exact | balanced | ttft | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| code | exact | balanced | decode | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| code | exact | balanced | prefill | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| code | balanced | single | balanced | category=code+concurrency=single; draft_only | category=code; draft_only | category=code; draft_only | decode_accuracy, decode_fast |
+| code | balanced | single | ttft | category=code+concurrency=single; draft_only | category=code; draft_only | category=code; draft_only | prefill_accuracy, prefill_fast |
+| code | balanced | single | decode | category=code+concurrency=single+focus=decode; draft_only | category=code+focus=decode; draft_only | category=code+focus=decode; draft_only | decode_accuracy, decode_fast |
+| code | balanced | single | prefill | category=code+concurrency=single; draft_only | category=code; draft_only | category=code; draft_only | prefill_accuracy, prefill_fast |
+| code | balanced | multiple | balanced | category=code+concurrency=multiple; draft_only | held concurrency=multiple | category=code+concurrency=multiple; draft_only | throughput_accuracy, throughput_fast |
+| code | balanced | multiple | ttft | category=code+concurrency=multiple; draft_only | held concurrency=multiple | category=code+concurrency=multiple; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| code | balanced | multiple | decode | category=code+concurrency=multiple+focus=decode; draft_only | held concurrency=multiple | category=code+concurrency=multiple+focus=decode; draft_only | throughput_accuracy, throughput_fast |
+| code | balanced | multiple | prefill | category=code+concurrency=multiple; draft_only | held concurrency=multiple | category=code+concurrency=multiple; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| code | balanced | balanced | balanced | category=code; draft_only | category=code; draft_only | category=code; draft_only | throughput_accuracy, throughput_fast |
+| code | balanced | balanced | ttft | category=code; draft_only | category=code; draft_only | category=code; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| code | balanced | balanced | decode | category=code+focus=decode; draft_only | category=code+focus=decode; draft_only | category=code+focus=decode; draft_only | throughput_accuracy, throughput_fast |
+| code | balanced | balanced | prefill | category=code; draft_only | category=code; draft_only | category=code; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| code | fast | single | balanced | category=code+concurrency=single; draft_only | category=code; draft_only | category=code; draft_only | decode_fast |
+| code | fast | single | ttft | category=code+concurrency=single; draft_only | category=code; draft_only | category=code; draft_only | prefill_fast |
+| code | fast | single | decode | category=code+concurrency=single+focus=decode; draft_only | category=code+focus=decode; draft_only | category=code+focus=decode; draft_only | decode_fast |
+| code | fast | single | prefill | category=code+concurrency=single; draft_only | category=code; draft_only | category=code; draft_only | prefill_fast |
+| code | fast | multiple | balanced | category=code+concurrency=multiple; draft_only | held concurrency=multiple | category=code+concurrency=multiple; draft_only | throughput_fast |
+| code | fast | multiple | ttft | category=code+concurrency=multiple; draft_only | held concurrency=multiple | category=code+concurrency=multiple; draft_only | throughput_fast, prefill_fast |
+| code | fast | multiple | decode | category=code+concurrency=multiple+focus=decode; draft_only | held concurrency=multiple | category=code+concurrency=multiple+focus=decode; draft_only | throughput_fast |
+| code | fast | multiple | prefill | category=code+concurrency=multiple; draft_only | held concurrency=multiple | category=code+concurrency=multiple; draft_only | throughput_fast, prefill_fast |
+| code | fast | balanced | balanced | category=code; draft_only | category=code; draft_only | category=code; draft_only | throughput_fast |
+| code | fast | balanced | ttft | category=code; draft_only | category=code; draft_only | category=code; draft_only | throughput_fast, prefill_fast |
+| code | fast | balanced | decode | category=code+focus=decode; draft_only | category=code+focus=decode; draft_only | category=code+focus=decode; draft_only | throughput_fast |
+| code | fast | balanced | prefill | category=code; draft_only | category=code; draft_only | category=code; draft_only | throughput_fast, prefill_fast |
+| prose | exact | single | balanced | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, decode_accuracy |
+| prose | exact | single | ttft | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, prefill_accuracy |
+| prose | exact | single | decode | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, decode_accuracy |
+| prose | exact | single | prefill | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, prefill_accuracy |
+| prose | exact | multiple | balanced | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| prose | exact | multiple | ttft | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| prose | exact | multiple | decode | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| prose | exact | multiple | prefill | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| prose | exact | balanced | balanced | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| prose | exact | balanced | ttft | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| prose | exact | balanced | decode | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| prose | exact | balanced | prefill | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| prose | balanced | single | balanced | concurrency=single; draft_only | base; draft_only | base; draft_only | decode_accuracy, decode_fast |
+| prose | balanced | single | ttft | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_accuracy, prefill_fast |
+| prose | balanced | single | decode | concurrency=single+focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | decode_accuracy, decode_fast |
+| prose | balanced | single | prefill | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_accuracy, prefill_fast |
+| prose | balanced | multiple | balanced | concurrency=multiple; draft_only | held concurrency=multiple | category=prose+concurrency=multiple; draft_only | throughput_accuracy, throughput_fast |
+| prose | balanced | multiple | ttft | concurrency=multiple; draft_only | held concurrency=multiple | category=prose+concurrency=multiple; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| prose | balanced | multiple | decode | concurrency=multiple+focus=decode; draft_only | held concurrency=multiple | category=prose+concurrency=multiple+focus=decode; draft_only | throughput_accuracy, throughput_fast |
+| prose | balanced | multiple | prefill | concurrency=multiple; draft_only | held concurrency=multiple | category=prose+concurrency=multiple; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| prose | balanced | balanced | balanced | base; draft_only | base; draft_only | base; draft_only | throughput_accuracy, throughput_fast |
+| prose | balanced | balanced | ttft | base; draft_only | base; draft_only | base; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| prose | balanced | balanced | decode | focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | throughput_accuracy, throughput_fast |
+| prose | balanced | balanced | prefill | base; draft_only | base; draft_only | base; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| prose | fast | single | balanced | concurrency=single; draft_only | base; draft_only | base; draft_only | decode_fast |
+| prose | fast | single | ttft | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_fast |
+| prose | fast | single | decode | concurrency=single+focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | decode_fast |
+| prose | fast | single | prefill | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_fast |
+| prose | fast | multiple | balanced | concurrency=multiple; draft_only | held concurrency=multiple | category=prose+concurrency=multiple; draft_only | throughput_fast |
+| prose | fast | multiple | ttft | concurrency=multiple; draft_only | held concurrency=multiple | category=prose+concurrency=multiple; draft_only | throughput_fast, prefill_fast |
+| prose | fast | multiple | decode | concurrency=multiple+focus=decode; draft_only | held concurrency=multiple | category=prose+concurrency=multiple+focus=decode; draft_only | throughput_fast |
+| prose | fast | multiple | prefill | concurrency=multiple; draft_only | held concurrency=multiple | category=prose+concurrency=multiple; draft_only | throughput_fast, prefill_fast |
+| prose | fast | balanced | balanced | base; draft_only | base; draft_only | base; draft_only | throughput_fast |
+| prose | fast | balanced | ttft | base; draft_only | base; draft_only | base; draft_only | throughput_fast, prefill_fast |
+| prose | fast | balanced | decode | focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | throughput_fast |
+| prose | fast | balanced | prefill | base; draft_only | base; draft_only | base; draft_only | throughput_fast, prefill_fast |
+| structured | exact | single | balanced | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, decode_accuracy |
+| structured | exact | single | ttft | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, prefill_accuracy |
+| structured | exact | single | decode | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, decode_accuracy |
+| structured | exact | single | prefill | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, prefill_accuracy |
+| structured | exact | multiple | balanced | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| structured | exact | multiple | ttft | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| structured | exact | multiple | decode | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| structured | exact | multiple | prefill | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| structured | exact | balanced | balanced | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| structured | exact | balanced | ttft | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| structured | exact | balanced | decode | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| structured | exact | balanced | prefill | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| structured | balanced | single | balanced | concurrency=single; draft_only | base; draft_only | base; draft_only | decode_accuracy, decode_fast |
+| structured | balanced | single | ttft | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_accuracy, prefill_fast |
+| structured | balanced | single | decode | concurrency=single+focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | decode_accuracy, decode_fast |
+| structured | balanced | single | prefill | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_accuracy, prefill_fast |
+| structured | balanced | multiple | balanced | concurrency=multiple; draft_only | held concurrency=multiple | category=structured+concurrency=multiple; draft_only | throughput_accuracy, throughput_fast |
+| structured | balanced | multiple | ttft | concurrency=multiple; draft_only | held concurrency=multiple | category=structured+concurrency=multiple; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| structured | balanced | multiple | decode | concurrency=multiple+focus=decode; draft_only | held concurrency=multiple | category=structured+concurrency=multiple+focus=decode; draft_only | throughput_accuracy, throughput_fast |
+| structured | balanced | multiple | prefill | concurrency=multiple; draft_only | held concurrency=multiple | category=structured+concurrency=multiple; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| structured | balanced | balanced | balanced | base; draft_only | base; draft_only | base; draft_only | throughput_accuracy, throughput_fast |
+| structured | balanced | balanced | ttft | base; draft_only | base; draft_only | base; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| structured | balanced | balanced | decode | focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | throughput_accuracy, throughput_fast |
+| structured | balanced | balanced | prefill | base; draft_only | base; draft_only | base; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| structured | fast | single | balanced | concurrency=single; draft_only | base; draft_only | base; draft_only | decode_fast |
+| structured | fast | single | ttft | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_fast |
+| structured | fast | single | decode | concurrency=single+focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | decode_fast |
+| structured | fast | single | prefill | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_fast |
+| structured | fast | multiple | balanced | concurrency=multiple; draft_only | held concurrency=multiple | category=structured+concurrency=multiple; draft_only | throughput_fast |
+| structured | fast | multiple | ttft | concurrency=multiple; draft_only | held concurrency=multiple | category=structured+concurrency=multiple; draft_only | throughput_fast, prefill_fast |
+| structured | fast | multiple | decode | concurrency=multiple+focus=decode; draft_only | held concurrency=multiple | category=structured+concurrency=multiple+focus=decode; draft_only | throughput_fast |
+| structured | fast | multiple | prefill | concurrency=multiple; draft_only | held concurrency=multiple | category=structured+concurrency=multiple; draft_only | throughput_fast, prefill_fast |
+| structured | fast | balanced | balanced | base; draft_only | base; draft_only | base; draft_only | throughput_fast |
+| structured | fast | balanced | ttft | base; draft_only | base; draft_only | base; draft_only | throughput_fast, prefill_fast |
+| structured | fast | balanced | decode | focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | throughput_fast |
+| structured | fast | balanced | prefill | base; draft_only | base; draft_only | base; draft_only | throughput_fast, prefill_fast |
+| vision | exact | single | balanced | held vision | held vision | held vision | exact, decode_accuracy |
+| vision | exact | single | ttft | held vision | held vision | held vision | exact, prefill_accuracy |
+| vision | exact | single | decode | held vision | held vision | held vision | exact, decode_accuracy |
+| vision | exact | single | prefill | held vision | held vision | held vision | exact, prefill_accuracy |
+| vision | exact | multiple | balanced | held vision | held vision | held vision | exact, throughput_accuracy |
+| vision | exact | multiple | ttft | held vision | held vision | held vision | exact, throughput_accuracy, prefill_accuracy |
+| vision | exact | multiple | decode | held vision | held vision | held vision | exact, throughput_accuracy |
+| vision | exact | multiple | prefill | held vision | held vision | held vision | exact, throughput_accuracy, prefill_accuracy |
+| vision | exact | balanced | balanced | held vision | held vision | held vision | exact, throughput_accuracy |
+| vision | exact | balanced | ttft | held vision | held vision | held vision | exact, throughput_accuracy, prefill_accuracy |
+| vision | exact | balanced | decode | held vision | held vision | held vision | exact, throughput_accuracy |
+| vision | exact | balanced | prefill | held vision | held vision | held vision | exact, throughput_accuracy, prefill_accuracy |
+| vision | balanced | single | balanced | held vision | held vision | held vision | decode_accuracy, decode_fast |
+| vision | balanced | single | ttft | held vision | held vision | held vision | prefill_accuracy, prefill_fast |
+| vision | balanced | single | decode | held vision | held vision | held vision | decode_accuracy, decode_fast |
+| vision | balanced | single | prefill | held vision | held vision | held vision | prefill_accuracy, prefill_fast |
+| vision | balanced | multiple | balanced | held vision | held vision | held vision | throughput_accuracy, throughput_fast |
+| vision | balanced | multiple | ttft | held vision | held vision | held vision | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| vision | balanced | multiple | decode | held vision | held vision | held vision | throughput_accuracy, throughput_fast |
+| vision | balanced | multiple | prefill | held vision | held vision | held vision | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| vision | balanced | balanced | balanced | held vision | held vision | held vision | throughput_accuracy, throughput_fast |
+| vision | balanced | balanced | ttft | held vision | held vision | held vision | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| vision | balanced | balanced | decode | held vision | held vision | held vision | throughput_accuracy, throughput_fast |
+| vision | balanced | balanced | prefill | held vision | held vision | held vision | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| vision | fast | single | balanced | held vision | held vision | held vision | decode_fast |
+| vision | fast | single | ttft | held vision | held vision | held vision | prefill_fast |
+| vision | fast | single | decode | held vision | held vision | held vision | decode_fast |
+| vision | fast | single | prefill | held vision | held vision | held vision | prefill_fast |
+| vision | fast | multiple | balanced | held vision | held vision | held vision | throughput_fast |
+| vision | fast | multiple | ttft | held vision | held vision | held vision | throughput_fast, prefill_fast |
+| vision | fast | multiple | decode | held vision | held vision | held vision | throughput_fast |
+| vision | fast | multiple | prefill | held vision | held vision | held vision | throughput_fast, prefill_fast |
+| vision | fast | balanced | balanced | held vision | held vision | held vision | throughput_fast |
+| vision | fast | balanced | ttft | held vision | held vision | held vision | throughput_fast, prefill_fast |
+| vision | fast | balanced | decode | held vision | held vision | held vision | throughput_fast |
+| vision | fast | balanced | prefill | held vision | held vision | held vision | throughput_fast, prefill_fast |
+| balanced | exact | single | balanced | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, decode_accuracy |
+| balanced | exact | single | ttft | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, prefill_accuracy |
+| balanced | exact | single | decode | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, decode_accuracy |
+| balanced | exact | single | prefill | original_reference_serial_m1; reference_arithmetic | held exactness=exact | exl3_exact_shaping; reference_arithmetic | exact, prefill_accuracy |
+| balanced | exact | multiple | balanced | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| balanced | exact | multiple | ttft | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| balanced | exact | multiple | decode | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| balanced | exact | multiple | prefill | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| balanced | exact | balanced | balanced | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| balanced | exact | balanced | ttft | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| balanced | exact | balanced | decode | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy |
+| balanced | exact | balanced | prefill | held exact scope | held exactness=exact | held exact scope | exact, throughput_accuracy, prefill_accuracy |
+| balanced | balanced | single | balanced | concurrency=single; draft_only | base; draft_only | base; draft_only | decode_accuracy, decode_fast |
+| balanced | balanced | single | ttft | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_accuracy, prefill_fast |
+| balanced | balanced | single | decode | concurrency=single+focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | decode_accuracy, decode_fast |
+| balanced | balanced | single | prefill | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_accuracy, prefill_fast |
+| balanced | balanced | multiple | balanced | concurrency=multiple; draft_only | held concurrency=multiple | concurrency=multiple; same_bits | throughput_accuracy, throughput_fast |
+| balanced | balanced | multiple | ttft | concurrency=multiple; draft_only | held concurrency=multiple | concurrency=multiple; same_bits | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| balanced | balanced | multiple | decode | concurrency=multiple+focus=decode; draft_only | held concurrency=multiple | concurrency=multiple+focus=decode; draft_only | throughput_accuracy, throughput_fast |
+| balanced | balanced | multiple | prefill | concurrency=multiple; draft_only | held concurrency=multiple | concurrency=multiple; same_bits | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| balanced | balanced | balanced | balanced | base; draft_only | base; draft_only | base; draft_only | throughput_accuracy, throughput_fast |
+| balanced | balanced | balanced | ttft | base; draft_only | base; draft_only | base; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| balanced | balanced | balanced | decode | focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | throughput_accuracy, throughput_fast |
+| balanced | balanced | balanced | prefill | base; draft_only | base; draft_only | base; draft_only | throughput_accuracy, throughput_fast, prefill_accuracy, prefill_fast |
+| balanced | fast | single | balanced | concurrency=single; draft_only | base; draft_only | base; draft_only | decode_fast |
+| balanced | fast | single | ttft | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_fast |
+| balanced | fast | single | decode | concurrency=single+focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | decode_fast |
+| balanced | fast | single | prefill | concurrency=single; draft_only | base; draft_only | base; draft_only | prefill_fast |
+| balanced | fast | multiple | balanced | concurrency=multiple; draft_only | held concurrency=multiple | concurrency=multiple; same_bits | throughput_fast |
+| balanced | fast | multiple | ttft | concurrency=multiple; draft_only | held concurrency=multiple | concurrency=multiple; same_bits | throughput_fast, prefill_fast |
+| balanced | fast | multiple | decode | concurrency=multiple+focus=decode; draft_only | held concurrency=multiple | concurrency=multiple+focus=decode; draft_only | throughput_fast |
+| balanced | fast | multiple | prefill | concurrency=multiple; draft_only | held concurrency=multiple | concurrency=multiple; same_bits | throughput_fast, prefill_fast |
+| balanced | fast | balanced | balanced | base; draft_only | base; draft_only | base; draft_only | throughput_fast |
+| balanced | fast | balanced | ttft | base; draft_only | base; draft_only | base; draft_only | throughput_fast, prefill_fast |
+| balanced | fast | balanced | decode | focus=decode; draft_only | focus=decode; draft_only | focus=decode; draft_only | throughput_fast |
+| balanced | fast | balanced | prefill | base; draft_only | base; draft_only | base; draft_only | throughput_fast, prefill_fast |
 
 Hold conditions:
 
-- fast: No candidate has complete paired KL, logit deviation, held-out PPL, T=0 agreement and whole-workload speed evidence within an admitted error budget. Unqualified or excessive-loss settings remain raw CLI knobs only.
-- original: This tuple has no qualified original rule. Legacy serial TP4_PRO and PP5depth2/5/8 exist, and main75 now parses overlap/original BATCH/wide/chunk-core/staged/HC selectors. Their independent evidence does not qualify arbitrary joins, mixed/balanced concurrency or prefill/TTFT envelopes. Query-piece/dense-shard selectors and complete reference forms remain separate dependencies. No placement or weights are silently replaced.
+- fast: Additional lossy routes are held: no admitted empirical error budget or complete paired numerical/whole-workload receipts. This hold does not prohibit identical non-lossy balanced plans.
 - vision: Vision-axis selection awaits a vision benchmark and applicable runtime/identity evidence.
-- compromise: The one-recipe C1/C2-C8 compromise is not qualified. N policy/choice, non-code margins, Fraser median/worst and long-prefill pause comparisons remain required. The all-balanced tuple is the intended general-purpose recommendation after these gates.

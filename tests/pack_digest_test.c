@@ -129,14 +129,14 @@ int main(void)
     expect(pack_digest_of_piece(sample, SAMPLE_BYTE_COUNT,
 				LARGE_PIECE_POSITION) ==
 		   pack_digest_of_piece(
-			   sample, PIECE_WORD_COUNT * PACK_DIGEST_WORD_BYTES,
+			   sample, (size_t)(PIECE_WORD_COUNT * PACK_DIGEST_WORD_BYTES),
 			   LARGE_PIECE_POSITION) +
 			   pack_digest_of_piece(
-				   sample + PIECE_WORD_COUNT *
-						    PACK_DIGEST_WORD_BYTES,
+				   sample + (size_t)(PIECE_WORD_COUNT *
+						    PACK_DIGEST_WORD_BYTES),
 				   SAMPLE_BYTE_COUNT -
-					   PIECE_WORD_COUNT *
-						   PACK_DIGEST_WORD_BYTES,
+					   (size_t)(PIECE_WORD_COUNT *
+						   PACK_DIGEST_WORD_BYTES),
 				   LARGE_PIECE_POSITION + PIECE_WORD_COUNT),
 	   "two pieces far into an extent add up to the whole (positions wrap modulo 2^64)");
 

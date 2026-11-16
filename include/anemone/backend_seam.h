@@ -155,7 +155,7 @@
  * tensor cores), in place of class 120's emulation of class 80's sums: the kernel files whose sums emulate class 80
  * are taken in their *_native builds (Makefile). The value is no compute capability (sm_121 is another chip): it
  * names "class 120, native". The backend never describes a card so; the caller that chooses the PRO's native
- * arithmetic (main.c, the default) gives this class to the plan in place of 120. Its bits differ from class 80's,
+ * arithmetic (commands.c, the default) gives this class to the plan in place of 120. Its bits differ from class 80's,
  * so the outputs depend on the layers such a card holds. */
 #define ARITHMETIC_CLASS_SM_120_NATIVE 1200u
 

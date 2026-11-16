@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
- * draft_share_records.h (tp4_v3_claude, default off): the draft's rows from the result card to the other ranks of a
+ * draft_share_records.h (tp4_v3_b, default off): the draft's rows from the result card to the other ranks of a
  * TP group, for the draft's head, Markov bias and sampler cut by outputs (model_v41_tp2_stage.h's draft_shards). C11
  * and CUDA.
  *   - draft_share, on the sending card, in a step whose own step area has a DRAFTS row for its verifier (the
@@ -12,13 +12,13 @@
  *   - The word's value for a step and verifier: (uint32_t)(2 (DRAFT_SHARE_VERIFIERS sequence + verifier)) +
  *     1, the sequence of the card's own step area; written once a step and verifier, never reset (a fresh area's zero
  *     never matches). A BATCH step's verifiers share one area in turn: the sender rewrites it for the next verifier
- *     behind its last sampler shard of this one, which takes every rank's record of it. Every store it covers is followed by a system fence of
- *     its thread, a barrier and, in the last block of the receiver's group (a ticket counter that block sets back to
- *     zero), one st.release.sys; the waiter polls ld.acquire.sys under a clock64 deadline, then traps.
- *   - Reuse: the sender rewrites an area only in a later step, behind its target sampler shard, which takes every
- *     rank's record of that step, which a rank publishes behind its draft launches of the step before.
- * A share area (each receiving rank): the rows, bfloat16 [8][5,120], at 0; the step area's copy (block, 8 rows) at
- * DRAFT_SHARE_STEP; the views' copies at DRAFT_SHARE_VIEWS; the word at DRAFT_SHARE_WORD.
+ *     behind its last sampler shard of this one, which takes every rank's record of it. Every store it covers is
+ * followed by a system fence of     its thread, a barrier and, in the last block of the receiver's group (a ticket
+ * counter that block sets back to     zero), one st.release.sys; the waiter polls ld.acquire.sys under a clock64
+ * deadline, then traps.   - Reuse: the sender rewrites an area only in a later step, behind its target sampler shard,
+ * which takes every     rank's record of that step, which a rank publishes behind its draft launches of the step
+ * before. A share area (each receiving rank): the rows, bfloat16 [8][5,120], at 0; the step area's copy (block, 8 rows)
+ * at DRAFT_SHARE_STEP; the views' copies at DRAFT_SHARE_VIEWS; the word at DRAFT_SHARE_WORD.
  */
 #ifndef DRAFT_SHARE_RECORDS_H
 #define DRAFT_SHARE_RECORDS_H

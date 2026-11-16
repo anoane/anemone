@@ -134,9 +134,10 @@ struct dense_linear_arguments {
 LINEAR_RECORD_HAS(dense_linear_arguments, DENSE_ARGUMENT_BYTES);
 
 /* --tp_router_mma (kernel_head_mma.cu router_mma_entry, _reduce): the router of 9 to 64 rows (bfloat16 weights,
- * outputs a multiple of 16) by split-K on the tensor cores, GNmac's router class (a split-K BF16 GEMM, FP32 sums, a fixed-order
- * reduce): the dense record (no flags, float32 out), then float32 partials [split_count][row_count][output_size]; the
- * reduce adds the splits from +0 in ascending order into the output. Another order than the dense product's. */
+ * outputs a multiple of 16) by split-K on the tensor cores, GNmac's router class (a split-K BF16 GEMM, FP32 sums, a
+ * fixed-order reduce): the dense record (no flags, float32 out), then float32 partials
+ * [split_count][row_count][output_size]; the reduce adds the splits from +0 in ascending order into the output. Another
+ * order than the dense product's. */
 struct router_mma_arguments {
 	struct dense_linear_arguments dense;
 	uint64_t partials_offset;

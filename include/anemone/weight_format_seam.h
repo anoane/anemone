@@ -7,8 +7,9 @@
  *     kernels read (no conversion at load). The engine never asks a format anything per token: the answers are
  *     taken once at load. Which kernels decode a format on a card is the backend's knowledge: backend_seam.h
  *     gains that query (format_supported) with the first linear kernels.
- *   - A shape carries bits_per_weight because one pack mixes widths: this EXL3 implementation stores 2 or 3
- *     bits per weight, chosen per matrix. Every other format has one figure and refuses another.
+ *   - A shape carries bits_per_weight because one pack mixes widths: this EXL3 implementation stores the widths
+ *     of EXL3_SUPPORTED_BITS_X2 (exl3_records.h), chosen per matrix. Every other format has one figure and refuses
+ *     another.
  *   - An extent is a multiple of the pack's extent alignment. A matrix inside it starts at a multiple of
  *     WEIGHT_FORMAT_MATRIX_ALIGNMENT_BYTES, with zero fill up to the next one; stored_byte_count is the
  *     bytes of the matrix itself, without that fill.
@@ -59,7 +60,7 @@ enum weight_format_code {
 		0, /* no matrix of a format: a pack's tensor of plain elements */
 	WEIGHT_FORMAT_FLOAT16 = 1, /* unquantized */
 	WEIGHT_FORMAT_EXL3 =
-		2, /* mul1 trellis, 2 or 3 bits per weight; exl3_records.h */
+		2, /* mul1 trellis, a whole or half K bits per weight; exl3_records.h */
 	WEIGHT_FORMAT_E2M1_SCALED =
 		3, /* sign and 3-bit float, one power-of-two scale per 32 weights */
 	WEIGHT_FORMAT_INT4_SCALED =
@@ -72,7 +73,7 @@ enum weight_format_code {
 struct matrix_shape_record {
 	uint32_t output_size;
 	uint32_t input_size;
-	uint32_t bits_per_weight; /* EXL3: 2 or 3; a format of one width checks that this is its figure */
+	uint32_t bits_per_weight; /* EXL3: a stored width (exl3_records.h); a format of one width checks its figure */
 	uint32_t reserved_must_be_zero;
 };
 
@@ -80,14 +81,15 @@ struct weight_format_operations {
 	const char *name;
 	/* First users: the converter, and the loader's check of a pack index. A shape the format does not store (a
      * size of zero or one its blocks do not divide, a bits_per_weight that is not the format's, a reserved field
-     * that is not zero, a byte count beyond 64 bits) is STATUS_INVALID_ARGUMENT. */
+     * that is not zero, a byte count beyond 64 bits) is STATUS_INVALID_ARGUMENT; a bits_per_weight the format
+     * defines but this build does not decode is STATUS_UNSUPPORTED. */
 	MUST_CHECK result_status (*stored_byte_count)(
 		const struct matrix_shape_record *shape,
 		uint64_t *byte_count_out);
 };
 
 /* The table of a format, or NULL for WEIGHT_FORMAT_NONE, a value outside the enumeration or a format this
- * build does not carry (EXL3 mul1 K2/K3, E2M1_SCALED and E4M3_SCALED). */
+ * build does not carry (EXL3 mul1, E2M1_SCALED and E4M3_SCALED). */
 const struct weight_format_operations *
 weight_format_operations_of(enum weight_format_code format);
 

@@ -14,7 +14,8 @@
 #define HASH_BITS 64u
 #define DRAFT_LOOKUP_LEAST_BUCKET_BITS 10u
 #define DRAFT_LOOKUP_MOST_BUCKET_BITS \
-	22u /* 16 MiB a session at most: 4M buckets, a 1M context's n-grams of up to 4 lengths (main.c's 2 to 4: 3) */
+	22u /* 16 MiB a session at most: 4M buckets, a 1M context's n-grams of up to 4 lengths
+	       (commands.c's 2 to 4: 3) */
 
 uint32_t draft_lookup_bucket_bits(uint32_t capacity, uint32_t ngram_least,
 				  uint32_t ngram_most)

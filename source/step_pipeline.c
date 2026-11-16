@@ -53,6 +53,8 @@
 
 #include "anemone/hooks.h"
 #include "step_driver.h"
+#include "engram_step.h"
+#include "checked_size.h"
 #include "step_runs.h"
 
 #define OK STATUS_OK
@@ -66,6 +68,7 @@
 #define PREFIX_MASK ((1u << PREFIX_CARDS) - 1u)
 #define OVERLAP_CARDS (PREFIX_CARDS + 1u)
 #define OVERLAP_WORKERS 2u
+#define OWNER_WORD_BITS 64u
 #define HAND_OFF_TABLES \
 	2u /* of the pipeline's: the hand-offs in, their marks */
 #define THEN(call)        \
@@ -87,6 +90,8 @@ struct pipeline_visit {
 
 struct pipeline_slot {
 	const struct execution_program *program;
+	struct engram_step
+		*engram_step; /* step I/O: this slot's blocks; NULL: gathers */
 	const uint32_t *run_graphs; /* NULL: eager */
 	unsigned char *block; /* staging of the driver's layout */
 	uint64_t *row_ids;
@@ -134,6 +139,8 @@ struct step_pipeline {
 	uint32_t *run_hand_offs; /* [segment]: the hand-offs behind earlier segments */
 	unsigned char *staging; /* depth blocks */
 	uint64_t *row_ids; /* depth slots' */
+	uint64_t *owner_bits; /* [slot][owner_words], only for attached flight banks */
+	uint32_t owner_words, owner_card, owner_first_visit, owner_last_visit;
 	uint8_t *sent;
 	uint32_t *syncs;
 	struct step_row_record *rows; /* depth slots' */
@@ -222,6 +229,23 @@ static bool task_is_ready(const struct step_driver *driver,
 			   (lease_end <= task ||
 			    older->tasks_done[card] > lease_end ||
 			    older->visit_count[card] <= lease_end);
+		if (is_ready && pipeline->owner_words != 0 &&
+		    card == pipeline->owner_card &&
+		    task == pipeline->owner_first_visit &&
+		    older->visit_count[card] > pipeline->owner_last_visit &&
+		    older->tasks_done[card] <= pipeline->owner_last_visit) {
+			const uint64_t *const own =
+				pipeline->owner_bits +
+				(size_t)(slot - pipeline->slots) *
+					pipeline->owner_words;
+			const uint64_t *const previous =
+				pipeline->owner_bits +
+				(size_t)(older - pipeline->slots) *
+					pipeline->owner_words;
+			for (uint32_t word = 0;
+			     word < pipeline->owner_words && is_ready; word++)
+				is_ready = (own[word] & previous[word]) == 0;
+		}
 	}
 	const bool is_early = task == 0 &&
 			      (pipeline->early_cards >> card & 1u) != 0;
@@ -335,9 +359,9 @@ MUST_CHECK static result_status task_run(struct step_driver *driver,
 				 false)) :
 			 status;
 	if (runs && !is_current) {
-		status =
-			THEN(step_card_begin(driver, slot->block, slot->row_ids,
-					     slot->row_count, card, task == 0));
+		status = THEN(step_card_begin(
+			driver, slot->engram_step, slot->block, slot->row_ids,
+			slot->row_count, card, task == 0));
 		status = THEN(
 			step_views_begin(driver, program, slot->block, card));
 		pipeline->step_on_card[card] = slot->sequence;
@@ -510,8 +534,8 @@ MUST_CHECK static result_status group_slot_run(struct step_driver *driver,
 			false));
 	for (uint32_t card = 0; card < program->card_count && status == OK;
 	     card++) {
-		status = step_card_begin(driver, slot->block, slot->row_ids,
-					 slot->row_count, card,
+		status = step_card_begin(driver, slot->engram_step, slot->block,
+					 slot->row_ids, slot->row_count, card,
 					 false); /* gathered at submit */
 		status = THEN(
 			step_views_begin(driver, program, slot->block, card));
@@ -589,8 +613,9 @@ MUST_CHECK static result_status overlap_slot_run(struct step_driver *driver,
 			false);
 	for (uint32_t card = first_card; card < card_end && status == OK;
 	     card++) {
-		status = step_card_begin(driver, slot->block, slot->row_ids,
-					 slot->row_count, card, false);
+		status = step_card_begin(driver, slot->engram_step, slot->block,
+					 slot->row_ids, slot->row_count, card,
+					 false);
 		status = THEN(
 			step_views_begin(driver, program, slot->block, card));
 	}
@@ -930,7 +955,7 @@ MUST_CHECK static result_status pipeline_start(struct step_driver *driver,
 	if (driver != NULL && driver->failure != OK) {
 		return driver->failure;
 	}
-	if (step_rounds_is_batch(driver)) {
+	if (driver != NULL && step_rounds_is_batch(driver)) {
 		if (overlap || depth != 1u || driver->pipeline != NULL ||
 		    driver->sequence != 0 || driver->batch_eager_started)
 			return STATUS_INVALID_ARGUMENT;
@@ -938,9 +963,12 @@ MUST_CHECK static result_status pipeline_start(struct step_driver *driver,
 		driver->batch_eager_started = true;
 		return OK;
 	}
-	if (driver == NULL || driver->pipeline != NULL ||
-	    driver->sequence != 0 || depth < LEAST_DEPTH ||
-	    depth > STEP_PIPELINE_MOST) {
+	/* a driver's largest program has rows: program_prepare refuses 0 */
+	if (driver == NULL || driver->largest_row_count == 0 ||
+	    driver->pipeline != NULL || driver->sequence != 0 ||
+	    depth < LEAST_DEPTH || depth > STEP_PIPELINE_MOST ||
+	    (driver->flight_bank_count != 0 &&
+	     depth > driver->flight_bank_count)) {
 		LOG_ERROR(
 			"step pipeline: refused: no driver, a second or late start, or a depth outside %u to %u",
 			LEAST_DEPTH, STEP_PIPELINE_MOST);
@@ -955,49 +983,76 @@ MUST_CHECK static result_status pipeline_start(struct step_driver *driver,
 			"step pipeline: programs with expert pauses take a step at a time");
 		return STATUS_UNSUPPORTED;
 	}
-	const uint64_t slot_bytes =
-		(driver->staging_bytes + BACKEND_STAGING_ALIGNMENT_BYTES - 1u) /
-		BACKEND_STAGING_ALIGNMENT_BYTES *
-		BACKEND_STAGING_ALIGNMENT_BYTES;
-	const uint64_t slot_row_ids = (uint64_t)driver->largest_row_count *
-				      driver->table_count *
-				      driver->rows_per_token;
-	const uint64_t slot_syncs =
-		(uint64_t)first->limits.session_capacity * STEP_SYNC_FIELDS;
+	const size_t slot_bytes = size_round_up(
+		driver->staging_bytes, BACKEND_STAGING_ALIGNMENT_BYTES);
+	const size_t slot_row_ids = size_multiply(
+		driver->largest_row_count,
+		size_multiply(driver->table_count, driver->rows_per_token));
+	const size_t slot_syncs =
+		size_multiply(first->limits.session_capacity, STEP_SYNC_FIELDS);
+	const size_t row_id_count =
+		size_add(size_multiply(depth, slot_row_ids), 1u);
+	const size_t sent_count =
+		size_add(size_multiply(depth, first->hand_off_count), 1u);
+	const size_t row_count =
+		size_multiply(depth, driver->largest_row_count);
+	const size_t visit_count =
+		size_add(first->segment_count, first->card_count);
+	size_t sync_count =
+		size_add(size_multiply(depth, slot_syncs),
+			 size_multiply(HAND_OFF_TABLES, first->hand_off_count));
+	sync_count = size_add(sync_count, size_add(first->segment_count, 1u));
+	const size_t staging_bytes = size_multiply(depth, slot_bytes);
+	if (row_id_count > SIZE_MAX / sizeof(uint64_t) ||
+	    sent_count == SIZE_MAX ||
+	    row_count > SIZE_MAX / sizeof(struct step_row_record) ||
+	    visit_count > SIZE_MAX / sizeof(struct pipeline_visit) ||
+	    sync_count > SIZE_MAX / sizeof(uint32_t) ||
+	    staging_bytes == SIZE_MAX) {
+		return STATUS_INVALID_ARGUMENT;
+	}
+
 	struct step_pipeline *const pipeline = calloc(1, sizeof(*pipeline));
 	if (pipeline == NULL) {
 		return STATUS_OUT_OF_MEMORY;
 	}
 	pipeline->depth = depth;
 	pipeline->prefix_segments = split;
+	if (driver->flight_bank_count != 0) {
+		const uint64_t owner_words =
+			((uint64_t)first->limits.session_capacity +
+			 OWNER_WORD_BITS - 1u) /
+			OWNER_WORD_BITS;
+		if (owner_words > SIZE_MAX / sizeof(uint64_t) / depth) {
+			free(pipeline);
+			return STATUS_OUT_OF_MEMORY;
+		}
+		pipeline->owner_words = (uint32_t)owner_words;
+		pipeline->owner_bits =
+			calloc((size_t)depth * pipeline->owner_words,
+			       sizeof(uint64_t));
+	}
 	pipeline->slot_marks = driver->backend->mark_record != NULL &&
 					       driver->backend->mark_follow !=
 						       NULL ?
 				       BACKEND_MAXIMUM_MARKS / depth :
 				       0;
-	pipeline->row_ids = calloc(depth * slot_row_ids + 1u, sizeof(uint64_t));
-	pipeline->sent = calloc((uint64_t)depth * first->hand_off_count + 1u,
-				sizeof(uint8_t));
-	pipeline->rows = calloc((uint64_t)depth * driver->largest_row_count,
-				sizeof(*pipeline->rows));
-	pipeline->visits =
-		calloc((uint64_t)first->segment_count + first->card_count,
-		       sizeof(*pipeline->visits));
+	pipeline->row_ids = calloc(row_id_count, sizeof(uint64_t));
+	pipeline->sent = calloc(sent_count, sizeof(uint8_t));
+	pipeline->rows = calloc(row_count, sizeof(*pipeline->rows));
+	pipeline->visits = calloc(visit_count, sizeof(*pipeline->visits));
 	/* the syncs, then the hand-offs in, their marks, the segments' hand-offs before them */
-	pipeline->syncs = calloc(depth * slot_syncs +
-					 (uint64_t)HAND_OFF_TABLES *
-						 first->hand_off_count +
-					 first->segment_count + 1u,
-				 sizeof(uint32_t));
-	result_status status = pipeline->row_ids == NULL ||
-					       pipeline->sent == NULL ||
-					       pipeline->rows == NULL ||
-					       pipeline->visits == NULL ||
-					       pipeline->syncs == NULL ?
-				       STATUS_OUT_OF_MEMORY :
-				       driver->backend->staging_allocate(
-					       depth * slot_bytes,
-					       (void **)&pipeline->staging);
+	pipeline->syncs = calloc(sync_count, sizeof(uint32_t));
+	result_status status =
+		pipeline->row_ids == NULL || pipeline->sent == NULL ||
+				pipeline->rows == NULL ||
+				pipeline->visits == NULL ||
+				pipeline->syncs == NULL ||
+				(pipeline->owner_words != 0 &&
+				 pipeline->owner_bits == NULL) ?
+			STATUS_OUT_OF_MEMORY :
+			driver->backend->staging_allocate(
+				staging_bytes, (void **)&pipeline->staging);
 	pthread_condattr_t monotonic;
 	pipeline->has_lock = status == OK &&
 			     pthread_mutex_init(&pipeline->lock, NULL) == 0;
@@ -1020,6 +1075,15 @@ MUST_CHECK static result_status pipeline_start(struct step_driver *driver,
 		pipeline->run_hand_offs =
 			pipeline->hand_off_marks + first->hand_off_count;
 		visits_prepare(driver, pipeline);
+		if (driver->flight_bank_count != 0) {
+			const struct visit_lease *const guard =
+				&driver->flight_owner_guard;
+			pipeline->owner_card = guard->card;
+			pipeline->owner_first_visit = visit_holding(
+				pipeline, guard->card, guard->first_segment);
+			pipeline->owner_last_visit = visit_holding(
+				pipeline, guard->card, guard->last_segment);
+		}
 	}
 	for (uint32_t index = 0; index < depth && status == OK; index++) {
 		pipeline->slots[index] = (struct pipeline_slot){
@@ -1031,6 +1095,11 @@ MUST_CHECK static result_status pipeline_start(struct step_driver *driver,
 			.rows = pipeline->rows +
 				(uint64_t)index * driver->largest_row_count
 		};
+		status = engram_steps_of(driver->engram) != NULL ?
+				 engram_step_create(
+					 engram_steps_of(driver->engram),
+					 &pipeline->slots[index].engram_step) :
+				 status;
 	}
 	driver->pipeline = pipeline;
 	sigset_t sent_signals, before;
@@ -1126,6 +1195,9 @@ result_status step_submit(struct step_driver *driver,
 		&pipeline->slots[sequence % pipeline->depth];
 	slot->program = step_program_for_rows(driver, rows, row_count,
 					      &slot->run_graphs);
+	slot->program = step_flight_program(
+		driver, slot->program, (uint32_t)(sequence % pipeline->depth),
+		&slot->run_graphs);
 	slot->sequence = sequence;
 	slot->row_count = row_count;
 	slot->is_front = step_is_front(rows, row_count);
@@ -1140,6 +1212,17 @@ result_status step_submit(struct step_driver *driver,
 		driver->sessions_changed && slot->program != NULL &&
 		!step_is_headless(slot->program, rows, row_count);
 	memcpy(slot->rows, rows, row_count * sizeof(*rows));
+	if (pipeline->owner_words != 0) {
+		uint64_t *const owners = pipeline->owner_bits +
+					 (size_t)(slot - pipeline->slots) *
+						 pipeline->owner_words;
+		memset(owners, 0,
+		       (size_t)pipeline->owner_words * sizeof(*owners));
+		for (uint32_t row = 0; row < row_count; row++)
+			owners[rows[row].session_slot / OWNER_WORD_BITS] |=
+				UINT64_C(1)
+				<< (rows[row].session_slot % OWNER_WORD_BITS);
+	}
 	memset(slot->sent, 0, driver->programs[0]->hand_off_count);
 	step_block_write(slot->block, sequence, rows, row_count);
 	if (slot->program != NULL) {
@@ -1156,13 +1239,18 @@ result_status step_submit(struct step_driver *driver,
 	status = slot->program == NULL ?
 			 STATUS_INVALID_ARGUMENT :
 			 step_row_ids(driver, rows, row_count, slot->row_ids);
+	/* step I/O: every table's blocks issued now, so a card's visit only waits (the rows' tables behind its first
+	 * layers are read while earlier cards run) */
+	status = THEN(step_engram_issue(driver, slot->engram_step, slot->block,
+					slot->row_ids, row_count));
 	/* the coordinator of TP flights (group_slot_run) puts the n-gram rows up as gathered here, behind the step in
 	 * flight: a chunk's gathers (about 17 ms at 2,048 rows) leave the cards' path between steps */
 	for (uint32_t card = 0; status == OK && driver->companion_segments != NULL &&
 				card < slot->program->card_count;
 	     card++)
-		status = THEN(step_card_gather(driver, slot->block,
-					       slot->row_ids, row_count, card));
+		status = THEN(step_card_gather(driver, slot->engram_step,
+					       slot->block, slot->row_ids,
+					       row_count, card));
 	slot->sync_count = status == OK ?
 				   step_mirror_ranges(driver, rows, row_count,
 						      slot->syncs) :
@@ -1264,7 +1352,19 @@ void step_pipeline_free(struct step_driver *driver, bool staging_is_read)
 	if (pipeline == NULL) {
 		return;
 	}
-	if (staging_is_read && driver->backend->staging_retire != NULL) {
+	/* Step I/O's threads write rows into the staging: every slot's record is drained first, and a read that did not
+	 * return keeps the staging allocated (a retire would reclaim it from a CPU writer too). */
+	bool engram_drained = true;
+	for (uint32_t index = 0; index < STEP_PIPELINE_MOST; index++) {
+		engram_drained = engram_step_destroy(
+					 pipeline->slots[index].engram_step) &&
+				 engram_drained;
+		pipeline->slots[index].engram_step = NULL;
+	}
+	if (!engram_drained) {
+		LOG_ERROR(
+			"step pipeline: its staging memory stays allocated: an n-gram read may still write into it");
+	} else if (staging_is_read && driver->backend->staging_retire != NULL) {
 		driver->backend->staging_retire(pipeline->staging);
 	} else if (!staging_is_read) {
 		driver->backend->staging_free(pipeline->staging);
@@ -1276,6 +1376,7 @@ void step_pipeline_free(struct step_driver *driver, bool staging_is_read)
 		(void)pthread_mutex_destroy(&pipeline->lock);
 	}
 	free(pipeline->row_ids);
+	free(pipeline->owner_bits);
 	free(pipeline->sent);
 	free(pipeline->rows);
 	free(pipeline->visits);
@@ -1283,3 +1384,22 @@ void step_pipeline_free(struct step_driver *driver, bool staging_is_read)
 	free(pipeline);
 	driver->pipeline = NULL;
 }
+
+/* Test observation only: the release and profile translation units hold neither this function nor a way to a slot. */
+#if CHECKING_HOOKS_ENABLED
+result_status step_pipeline_slot_record(const struct step_driver *driver,
+					uint32_t slot_index,
+					struct engram_step **engram_step_out,
+					unsigned char **block_out)
+{
+	const struct step_pipeline *const pipeline =
+		driver != NULL ? driver->pipeline : NULL;
+	if (pipeline == NULL || slot_index >= pipeline->depth ||
+	    engram_step_out == NULL || block_out == NULL) {
+		return STATUS_INVALID_ARGUMENT;
+	}
+	*engram_step_out = pipeline->slots[slot_index].engram_step;
+	*block_out = pipeline->slots[slot_index].block;
+	return OK;
+}
+#endif

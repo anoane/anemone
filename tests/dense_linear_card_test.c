@@ -968,7 +968,7 @@ int main(int argument_count, char **arguments)
     static struct replay_sources sources;
     static const char break_option[] = "--break";
     static const char word_break[] = "word";
-    struct storage_description description = { 0, 0, 0 };
+    struct storage_description description = { 0 };
     uint64_t digests[BACKEND_MAXIMUM_CARDS];
     uint32_t card_count = 0;
     int first_argument = 1;

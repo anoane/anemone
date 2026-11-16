@@ -180,6 +180,11 @@ MUST_CHECK result_status
 tokenizer_token_bytes(const struct text_tokenizer *tokenizer, uint32_t token_id,
 		      const char **bytes_out, uint32_t *byte_count_out);
 
+/* Existing one-byte fallback ID, checked at tokenizer_open; no allocation and safe for concurrent readers. */
+MUST_CHECK result_status
+tokenizer_byte_token(const struct text_tokenizer *tokenizer, uint32_t byte,
+		     uint32_t *token_out);
+
 /* The bytes of the UTF-8 sequence at text[position], and whether it is one; when it is not, the bytes of its maximal
  * subpart, which one U+FFFD stands for. 0, not one, for a position at or past end or a NULL argument. First users:
  * encode, and the chat template's check of the strings of its JSON. */

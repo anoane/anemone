@@ -1189,7 +1189,8 @@ static void test_draft_usage(void)
 					   strstr(text,
 						  "\"accepted\":[1,0,0,0,0,0,0]") !=
 						   NULL,
-				   "compact and full retain every owner-script counter, fixed positions and source order");
+				   "compact and full retain every owner-script counter, fixed positions and source "
+				   "order");
 			    if (mode == CHAT_DRAFT_USAGE_FULL) {
 				    expect(strstr(text, "[7,5,3,2]") != NULL &&
 						   strstr(text,

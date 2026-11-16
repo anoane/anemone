@@ -2,6 +2,7 @@
 /* Host-only fixture. MAIN executes it; the build script only compiles and links. */
 #include "step_rounds.h"
 #include "step_driver.h"
+#include "byte_identity.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -17,13 +18,41 @@
 #define TEST_ROWS (STEP_BATCH_MAXIMUM_SESSIONS * TEST_OWNER_ROWS)
 #define TEST_SEQUENCE ((UINT64_C(1) << 32) + UINT64_C(17))
 #define TEST_POISON 0xa5
-#define REQUIRE(condition)                                                 \
-	do {                                                               \
-		if (!(condition)) {                                        \
-			fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, \
-				#condition);                               \
-			exit(1);                                           \
-		}                                                          \
+/* Fixture values: the positions and tokens of slot s start at a stride of their own, so no two slots share one. */
+#define TEST_FIRST_POSITION 10u
+#define TEST_POSITION_STRIDE 16u
+#define TEST_FIRST_TOKEN 10u
+#define TEST_TOKEN_STRIDE 20u
+#define TEST_REJECTED_TOKEN 700u
+#define TEST_FIRST_PROPOSAL 1000u
+#define TEST_PROPOSAL_STRIDE 16u
+#define TEST_CONFIDENCE_STEP 0.125f
+#define TEST_LOGIT_STEP 0.25f
+#define TEST_DRAFT_CONFIDENCE 0.25f
+/* Masks of sessions: every one of the 8, and slots 0, TEST_MIDDLE_SLOT and TEST_LAST_SLOT. */
+#define TEST_EVERY_SESSION 0xffu
+#define TEST_KEPT_SLOTS 0x89u
+#define TEST_MIDDLE_SLOT 3u
+#define TEST_LAST_SLOT 7u
+#define TEST_SESSIONS 8u
+#define TEST_SECOND_PROPOSED_ROW 2u
+/* A stride coprime to TEST_ROWS: a permutation of the rows that moves rows between owners. */
+#define TEST_PERMUTATION_STRIDE 17u
+#define TEST_ORDINARY_POSITIONS 128u
+#define TEST_END_TOKEN_CASES 2u
+#define TEST_SEQUENCE_HIGH_BIT (UINT64_C(1) << 32)
+#define TEST_UNKNOWN_ROW_FLAG UINT32_C(0x80000000)
+#define TEST_SHORT_ROUND_CAPACITY 2
+#define TEST_HALF_ROUND_CAPACITY 4
+#define TEST_ROUND_OFFSET 1024
+#define TEST_RESULT_AREA_BYTES 2048
+#define REQUIRE(condition)                                             \
+	do {                                                           \
+		if (!(condition)) {                                    \
+			(void)fprintf(stderr, "%s:%d: %s\n", __FILE__, \
+				      __LINE__, #condition);           \
+			exit(1);                                       \
+		}                                                      \
 	} while (0)
 
 struct fixture {
@@ -64,7 +93,8 @@ static void round_set(struct fixture *fixture, uint32_t slot, uint32_t accepted,
 		const uint32_t row = first + position;
 		fixture->results[row].token_id =
 			position < accepted ? fixture->rows[row + 1u].token_id :
-					      (int32_t)(700u + slot + position);
+					      (int32_t)(TEST_REJECTED_TOKEN +
+							slot + position);
 	}
 	if (end_token)
 		fixture->results[first + accepted].token_id = TEST_END_TOKEN;
@@ -79,9 +109,10 @@ static void round_set(struct fixture *fixture, uint32_t slot, uint32_t accepted,
 	round->proposal_count = TEST_DRAFTS;
 	for (uint32_t position = 0; position < TEST_DRAFTS; position++) {
 		round->proposals[position] =
-			(int32_t)(1000u + slot * 16u + position);
+			(int32_t)(TEST_FIRST_PROPOSAL +
+				  slot * TEST_PROPOSAL_STRIDE + position);
 		round->confidence_logits[position] =
-			(float)(position + 1u) * 0.125f;
+			(float)(position + 1u) * TEST_CONFIDENCE_STEP;
 	}
 }
 
@@ -106,15 +137,19 @@ static void initialize(struct fixture *fixture)
 			const uint32_t row = owner_row(slot, position);
 			fixture->rows[row] = (struct step_row_record){
 				.position =
-					(int32_t)(10u + slot * 16u + position),
-				.token_id =
-					(int32_t)(10u + slot * 20u + position),
+					(int32_t)(TEST_FIRST_POSITION +
+						  slot * TEST_POSITION_STRIDE +
+						  position),
+				.token_id = (int32_t)(TEST_FIRST_TOKEN +
+						      slot * TEST_TOKEN_STRIDE +
+						      position),
 				.session_slot = slot,
 				.flags = STEP_ROW_LOGITS |
 					 (position == 0 ? STEP_ROW_DRAFTS :
 							  STEP_ROW_PROPOSED)
 			};
-			fixture->results[row].logit = (float)row * -0.25f;
+			fixture->results[row].logit =
+				(float)row * -TEST_LOGIT_STEP;
 		}
 		round_set(fixture, slot, slot % TEST_OWNER_ROWS, TEST_DRAFTS,
 			  false);
@@ -132,14 +167,14 @@ accept(const struct step_round_description *description, uint32_t mask)
 		if ((mask & (1u << slot)) == 0) {
 			struct step_round inactive = { 0 };
 			inactive.session_slot = STEP_NO_SESSION;
-			REQUIRE(memcmp(&inactive, &output.rounds[slot],
-				       sizeof(inactive)) == 0);
+			REQUIRE(bytes_identical(&inactive, &output.rounds[slot],
+						sizeof(inactive)));
 		} else {
 			const uint32_t index =
 				description->round_capacity <= 1u ? 0 : slot;
-			REQUIRE(memcmp(&description->rounds[index],
-				       &output.rounds[slot],
-				       sizeof(output.rounds[slot])) == 0);
+			REQUIRE(bytes_identical(&description->rounds[index],
+						&output.rounds[slot],
+						sizeof(output.rounds[slot])));
 		}
 	}
 	checks++;
@@ -152,7 +187,7 @@ static void refuse(const struct step_round_description *description)
 	memset(&output, TEST_POISON, sizeof(output));
 	memcpy(&before, &output, sizeof(before));
 	REQUIRE(step_rounds_validate(description, &output) != STATUS_OK);
-	REQUIRE(memcmp(&before, &output, sizeof(output)) == 0);
+	REQUIRE(bytes_identical(&before, &output, sizeof(output)));
 	refusals++;
 }
 
@@ -182,7 +217,7 @@ static void valid_cases(const struct fixture *base)
 {
 	struct fixture fixture;
 	const struct step_round_table reference =
-		accept(&base->description, 0xffu);
+		accept(&base->description, TEST_EVERY_SESSION);
 	for (uint32_t shift = 0; shift < STEP_BATCH_MAXIMUM_SESSIONS; shift++) {
 		copy(&fixture, base);
 		for (uint32_t row = 0; row < TEST_ROWS; row++) {
@@ -195,14 +230,16 @@ static void valid_cases(const struct fixture *base)
 			fixture.results[row] = base->results[source];
 		}
 		const struct step_round_table output =
-			accept(&fixture.description, 0xffu);
-		REQUIRE(memcmp(&reference, &output, sizeof(output)) == 0);
+			accept(&fixture.description, TEST_EVERY_SESSION);
+		REQUIRE(bytes_identical(&reference, &output, sizeof(output)));
 	}
 	/* The old permutation oracle is deliberately not a cache-write admission oracle. */
 	for (uint32_t shift = 0; shift < TEST_ROWS; shift++) {
 		copy(&fixture, base);
 		for (uint32_t row = 0; row < TEST_ROWS; row++) {
-			const uint32_t source = (row * 17u + shift) % TEST_ROWS;
+			const uint32_t source =
+				(row * TEST_PERMUTATION_STRIDE + shift) %
+				TEST_ROWS;
 			fixture.rows[row] = base->rows[source];
 			fixture.results[row] = base->results[source];
 		}
@@ -210,14 +247,15 @@ static void valid_cases(const struct fixture *base)
 	}
 	copy(&fixture, base);
 	for (uint32_t slot = 0; slot < STEP_BATCH_MAXIMUM_SESSIONS; slot++) {
-		if (slot == 0 || slot == 3 || slot == 7)
+		if (slot == 0 || slot == TEST_MIDDLE_SLOT ||
+		    slot == TEST_LAST_SLOT)
 			continue;
 		fixture.rows[owner_row(slot, 0)].flags &=
 			~(uint32_t)STEP_ROW_DRAFTS;
 		memset(&fixture.rounds[slot], TEST_POISON,
 		       sizeof(fixture.rounds[slot]));
 	}
-	(void)accept(&fixture.description, 0x89u);
+	(void)accept(&fixture.description, TEST_KEPT_SLOTS);
 	for (uint32_t capacity = 0; capacity <= 1u; capacity++) {
 		for (uint32_t slot = 0; slot < STEP_BATCH_MAXIMUM_SESSIONS;
 		     slot++) {
@@ -227,9 +265,9 @@ static void valid_cases(const struct fixture *base)
 			fixture.description.round_capacity = capacity;
 			const struct step_round_table output =
 				accept(&fixture.description, 1u << slot);
-			REQUIRE(memcmp(&output.rounds[slot],
-				       &reference.rounds[slot],
-				       sizeof(reference.rounds[slot])) == 0);
+			REQUIRE(bytes_identical(
+				&output.rounds[slot], &reference.rounds[slot],
+				sizeof(reference.rounds[slot])));
 		}
 	}
 	copy(&fixture, base);
@@ -239,12 +277,12 @@ static void valid_cases(const struct fixture *base)
 		fixture.rows[row].flags = STEP_ROW_FRONT;
 	(void)accept(&fixture.description, 0);
 	for (uint32_t row = 0; row < STEP_BATCH_MAXIMUM_ROWS; row++) {
-		fixture.rows[row] =
-			(struct step_row_record){ .position =
-							  (int32_t)(row % 128u),
-						  .token_id = 1,
-						  .session_slot = row / 128u,
-						  .flags = 0 };
+		fixture.rows[row] = (struct step_row_record){
+			.position = (int32_t)(row % TEST_ORDINARY_POSITIONS),
+			.token_id = 1,
+			.session_slot = row / TEST_ORDINARY_POSITIONS,
+			.flags = 0
+		};
 		fixture.results[row].token_id = STEP_NO_TOKEN;
 	}
 	fixture.description.row_count = STEP_BATCH_MAXIMUM_ROWS;
@@ -253,22 +291,22 @@ static void valid_cases(const struct fixture *base)
 	copy(&fixture, base);
 	fixture.results[0].logit = NAN;
 	fixture.results[1].logit = -INFINITY;
-	fixture.rounds[7].confidence_logits[TEST_DRAFTS] = -0.0f;
-	(void)accept(&fixture.description, 0xffu);
+	fixture.rounds[TEST_LAST_SLOT].confidence_logits[TEST_DRAFTS] = -0.0f;
+	(void)accept(&fixture.description, TEST_EVERY_SESSION);
 	/* A change to one valid session cannot change any other session's round. */
 	for (uint32_t slot = 0; slot < STEP_BATCH_MAXIMUM_SESSIONS; slot++) {
 		copy(&fixture, base);
 		round_set(&fixture, slot, (slot + 1u) % TEST_OWNER_ROWS,
 			  TEST_DRAFTS, false);
 		const struct step_round_table output =
-			accept(&fixture.description, 0xffu);
+			accept(&fixture.description, TEST_EVERY_SESSION);
 		for (uint32_t other = 0; other < STEP_BATCH_MAXIMUM_SESSIONS;
 		     other++)
 			if (other != slot)
-				REQUIRE(memcmp(&output.rounds[other],
-					       &reference.rounds[other],
-					       sizeof(output.rounds[other])) ==
-					0);
+				REQUIRE(bytes_identical(
+					&output.rounds[other],
+					&reference.rounds[other],
+					sizeof(output.rounds[other])));
 	}
 }
 
@@ -277,7 +315,8 @@ static void acceptance_cases(const struct fixture *base)
 	struct fixture fixture;
 	for (uint32_t proposed = 0; proposed <= TEST_DRAFTS; proposed++) {
 		for (uint32_t accepted = 0; accepted <= proposed; accepted++) {
-			for (uint32_t eos = 0; eos < 2u; eos++) {
+			for (uint32_t eos = 0; eos < TEST_END_TOKEN_CASES;
+			     eos++) {
 				copy(&fixture, base);
 				round_set(&fixture, 0, accepted, proposed,
 					  eos != 0);
@@ -325,70 +364,93 @@ static void acceptance_cases(const struct fixture *base)
 		     position++) {
 			fixture.rounds[0].proposals[position] =
 				position < drafts ?
-					(int32_t)(1000u + position) :
+					(int32_t)(TEST_FIRST_PROPOSAL +
+						  position) :
 					0;
 			fixture.rounds[0].confidence_logits[position] =
-				position < drafts ? -0.25f : 0.0f;
+				position < drafts ? -TEST_DRAFT_CONFIDENCE :
+						    0.0f;
 		}
 		(void)accept(&fixture.description, 1u);
 	}
 }
+
+enum round_corruption {
+	ROUND_SEQUENCE,
+	ROUND_SESSION_SLOT,
+	ROUND_NO_EMITTED,
+	ROUND_EMITTED_PAST_OWNER,
+	ROUND_ANCHOR_POSITION,
+	ROUND_ANCHOR_TOKEN,
+	ROUND_PROPOSAL_COUNT,
+	ROUND_RESERVED,
+	ROUND_NEGATIVE_PROPOSAL,
+	ROUND_PROPOSAL_PAST_VOCABULARY,
+	ROUND_NAN_CONFIDENCE,
+	ROUND_INFINITE_CONFIDENCE,
+	ROUND_NEGATIVE_INFINITE_CONFIDENCE,
+	ROUND_PROPOSAL_PAST_DRAFTS,
+	ROUND_CONFIDENCE_PAST_DRAFTS,
+	ROUND_NAN_PAST_DRAFTS,
+	ROUND_CORRUPTIONS
+};
 
 static void corrupt_rounds(const struct fixture *base)
 {
 	struct fixture fixture;
 	/* Every owner is independently corrupted, including the last owner after seven valid ones. */
 	for (uint32_t slot = 0; slot < STEP_BATCH_MAXIMUM_SESSIONS; slot++) {
-		for (uint32_t field = 0; field < 16u; field++) {
+		for (uint32_t field = 0; field < ROUND_CORRUPTIONS; field++) {
 			copy(&fixture, base);
 			struct step_round *const round = &fixture.rounds[slot];
 			switch (field) {
-			case 0:
-				round->sequence ^= UINT64_C(1) << 32;
+			case ROUND_SEQUENCE:
+				round->sequence ^= TEST_SEQUENCE_HIGH_BIT;
 				break;
-			case 1:
-				round->session_slot = (slot + 1u) % 8u;
+			case ROUND_SESSION_SLOT:
+				round->session_slot =
+					(slot + 1u) % TEST_SESSIONS;
 				break;
-			case 2:
+			case ROUND_NO_EMITTED:
 				round->emitted_count = 0;
 				break;
-			case 3:
+			case ROUND_EMITTED_PAST_OWNER:
 				round->emitted_count = TEST_OWNER_ROWS + 1u;
 				break;
-			case 4:
+			case ROUND_ANCHOR_POSITION:
 				round->anchor_position++;
 				break;
-			case 5:
+			case ROUND_ANCHOR_TOKEN:
 				round->anchor_token++;
 				break;
-			case 6:
+			case ROUND_PROPOSAL_COUNT:
 				round->proposal_count--;
 				break;
-			case 7:
+			case ROUND_RESERVED:
 				round->reserved_zero = 1;
 				break;
-			case 8:
+			case ROUND_NEGATIVE_PROPOSAL:
 				round->proposals[0] = -1;
 				break;
-			case 9:
+			case ROUND_PROPOSAL_PAST_VOCABULARY:
 				round->proposals[0] = TEST_VOCABULARY;
 				break;
-			case 10:
+			case ROUND_NAN_CONFIDENCE:
 				round->confidence_logits[0] = NAN;
 				break;
-			case 11:
+			case ROUND_INFINITE_CONFIDENCE:
 				round->confidence_logits[0] = INFINITY;
 				break;
-			case 12:
+			case ROUND_NEGATIVE_INFINITE_CONFIDENCE:
 				round->confidence_logits[0] = -INFINITY;
 				break;
-			case 13:
+			case ROUND_PROPOSAL_PAST_DRAFTS:
 				round->proposals[TEST_DRAFTS] = 1;
 				break;
-			case 14:
+			case ROUND_CONFIDENCE_PAST_DRAFTS:
 				round->confidence_logits[TEST_DRAFTS] = 1.0f;
 				break;
-			case 15:
+			case ROUND_NAN_PAST_DRAFTS:
 				round->confidence_logits[TEST_DRAFTS] = NAN;
 				break;
 			default:
@@ -400,82 +462,109 @@ static void corrupt_rounds(const struct fixture *base)
 	}
 }
 
+enum row_corruption {
+	ROW_SESSION_PAST_LAST,
+	ROW_NEGATIVE_POSITION,
+	ROW_POSITION_PAST_CONTEXT,
+	ROW_NEGATIVE_TOKEN,
+	ROW_TOKEN_PAST_VOCABULARY,
+	ROW_UNKNOWN_FLAG,
+	ROW_FRONT_FLAG,
+	ROW_PROPOSED_ANCHOR,
+	ROW_NO_LOGITS,
+	ROW_SECOND_ANCHOR,
+	ROW_REPEATED_POSITION,
+	ROW_POSITION_GAP,
+	ROW_UNPROPOSED_DRAFT,
+	ROW_NO_RESULT_TOKEN,
+	ROW_RESULT_PAST_VOCABULARY,
+	ROW_CONTEXT_SHORT,
+	ROW_HEADER_SEQUENCE,
+	ROW_HEADER_ROW_COUNT,
+	ROW_HEADER_RESERVED,
+	ROW_ORDINARY_TOKEN_ZERO,
+	ROW_PROPOSED_WITHOUT_DRAFTS,
+	ROW_LOGITS_ONLY,
+	ROW_CORRUPTIONS
+};
+
 static void corrupt_rows(const struct fixture *base)
 {
 	struct fixture fixture;
-	const uint32_t anchor = owner_row(7u, 0);
-	for (uint32_t field = 0; field < 22u; field++) {
+	const uint32_t anchor = owner_row(TEST_LAST_SLOT, 0);
+	for (uint32_t field = 0; field < ROW_CORRUPTIONS; field++) {
 		copy(&fixture, base);
 		struct step_row_record *const row = &fixture.rows[anchor];
 		switch (field) {
-		case 0:
+		case ROW_SESSION_PAST_LAST:
 			row->session_slot = STEP_BATCH_MAXIMUM_SESSIONS;
 			break;
-		case 1:
+		case ROW_NEGATIVE_POSITION:
 			row->position = -1;
 			break;
-		case 2:
+		case ROW_POSITION_PAST_CONTEXT:
 			row->position = TEST_CONTEXT;
 			break;
-		case 3:
+		case ROW_NEGATIVE_TOKEN:
 			row->token_id = -1;
 			break;
-		case 4:
+		case ROW_TOKEN_PAST_VOCABULARY:
 			row->token_id = TEST_VOCABULARY;
 			break;
-		case 5:
-			row->flags |= UINT32_C(0x80000000);
+		case ROW_UNKNOWN_FLAG:
+			row->flags |= TEST_UNKNOWN_ROW_FLAG;
 			break;
-		case 6:
+		case ROW_FRONT_FLAG:
 			row->flags |= STEP_ROW_FRONT;
 			break;
-		case 7:
+		case ROW_PROPOSED_ANCHOR:
 			row->flags |= STEP_ROW_PROPOSED;
 			break;
-		case 8:
+		case ROW_NO_LOGITS:
 			row->flags &= ~(uint32_t)STEP_ROW_LOGITS;
 			break;
-		case 9:
+		case ROW_SECOND_ANCHOR:
 			fixture.rows[anchor + 1u].flags = row->flags;
 			break;
-		case 10:
+		case ROW_REPEATED_POSITION:
 			fixture.rows[anchor + 1u].position = row->position;
 			break;
-		case 11:
+		case ROW_POSITION_GAP:
 			fixture.rows[anchor + TEST_DRAFTS].position++;
 			break;
-		case 12:
+		case ROW_UNPROPOSED_DRAFT:
 			fixture.rows[anchor + 1u].flags = STEP_ROW_LOGITS;
 			break;
-		case 13:
+		case ROW_NO_RESULT_TOKEN:
 			fixture.results[anchor].token_id = STEP_NO_TOKEN;
 			break;
-		case 14:
+		case ROW_RESULT_PAST_VOCABULARY:
 			fixture.results[anchor].token_id = TEST_VOCABULARY;
 			break;
-		case 15:
+		case ROW_CONTEXT_SHORT:
 			fixture.description.context_token_limit =
 				(uint32_t)row->position + TEST_OWNER_ROWS;
 			break;
-		case 16:
-			fixture.header.sequence ^= UINT64_C(1) << 32;
+		case ROW_HEADER_SEQUENCE:
+			fixture.header.sequence ^= TEST_SEQUENCE_HIGH_BIT;
 			break;
-		case 17:
+		case ROW_HEADER_ROW_COUNT:
 			fixture.header.row_count--;
 			break;
-		case 18:
+		case ROW_HEADER_RESERVED:
 			fixture.header.reserved_zero = 1;
 			break;
-		case 19:
+		case ROW_ORDINARY_TOKEN_ZERO:
 			ordinary(&fixture);
 			fixture.results[anchor].token_id = 0;
 			break;
-		case 20:
+		case ROW_PROPOSED_WITHOUT_DRAFTS:
 			row->flags = STEP_ROW_LOGITS | STEP_ROW_PROPOSED;
 			break;
-		case 21:
+		case ROW_LOGITS_ONLY:
 			row->flags = STEP_ROW_LOGITS;
-			fixture.rows[anchor + 2u].flags = STEP_ROW_LOGITS;
+			fixture.rows[anchor + TEST_SECOND_PROPOSED_ROW].flags =
+				STEP_ROW_LOGITS;
 			break;
 		default:
 			REQUIRE(false);
@@ -489,83 +578,110 @@ static void corrupt_rows(const struct fixture *base)
 	refuse(&fixture.description);
 }
 
+enum description_corruption {
+	DESCRIPTION_NO_ROWS,
+	DESCRIPTION_NO_RESULTS,
+	DESCRIPTION_NO_HEADER,
+	DESCRIPTION_NO_ROUNDS,
+	DESCRIPTION_ZERO_SEQUENCE,
+	DESCRIPTION_RESERVED,
+	DESCRIPTION_NO_ROW,
+	DESCRIPTION_ROWS_PAST_BATCH,
+	DESCRIPTION_NO_CONTEXT,
+	DESCRIPTION_CONTEXT_MAXIMUM,
+	DESCRIPTION_NO_SESSION,
+	DESCRIPTION_SESSIONS_PAST_BATCH,
+	DESCRIPTION_NO_VOCABULARY,
+	DESCRIPTION_VOCABULARY_MAXIMUM,
+	DESCRIPTION_NO_DRAFT,
+	DESCRIPTION_DRAFTS_PAST_MOST,
+	DESCRIPTION_END_PAST_VOCABULARY,
+	DESCRIPTION_SHORT_ROUND_CAPACITY,
+	DESCRIPTION_ROUND_CAPACITY_MAXIMUM,
+	DESCRIPTION_NO_ROUND_CAPACITY,
+	DESCRIPTION_ONE_ROUND,
+	DESCRIPTION_HALF_ROUND_CAPACITY,
+	DESCRIPTION_SEQUENCE,
+	DESCRIPTION_CORRUPTIONS
+};
+
 static void corrupt_description(const struct fixture *base)
 {
 	struct fixture fixture;
-	for (uint32_t field = 0; field < 23u; field++) {
+	for (uint32_t field = 0; field < DESCRIPTION_CORRUPTIONS; field++) {
 		copy(&fixture, base);
 		struct step_round_description *const description =
 			&fixture.description;
 		switch (field) {
-		case 0:
+		case DESCRIPTION_NO_ROWS:
 			description->rows = NULL;
 			break;
-		case 1:
+		case DESCRIPTION_NO_RESULTS:
 			description->results = NULL;
 			break;
-		case 2:
+		case DESCRIPTION_NO_HEADER:
 			description->result_header = NULL;
 			break;
-		case 3:
+		case DESCRIPTION_NO_ROUNDS:
 			description->rounds = NULL;
 			break;
-		case 4:
+		case DESCRIPTION_ZERO_SEQUENCE:
 			description->sequence = 0;
 			break;
-		case 5:
+		case DESCRIPTION_RESERVED:
 			description->reserved_zero = 1;
 			break;
-		case 6:
+		case DESCRIPTION_NO_ROW:
 			description->row_count = 0;
 			break;
-		case 7:
+		case DESCRIPTION_ROWS_PAST_BATCH:
 			description->row_count = STEP_BATCH_MAXIMUM_ROWS + 1u;
 			break;
-		case 8:
+		case DESCRIPTION_NO_CONTEXT:
 			description->context_token_limit = 0;
 			break;
-		case 9:
+		case DESCRIPTION_CONTEXT_MAXIMUM:
 			description->context_token_limit = UINT32_MAX;
 			break;
-		case 10:
+		case DESCRIPTION_NO_SESSION:
 			description->session_capacity = 0;
 			break;
-		case 11:
+		case DESCRIPTION_SESSIONS_PAST_BATCH:
 			description->session_capacity =
 				STEP_BATCH_MAXIMUM_SESSIONS + 1u;
 			break;
-		case 12:
+		case DESCRIPTION_NO_VOCABULARY:
 			description->vocabulary_size = 0;
 			break;
-		case 13:
+		case DESCRIPTION_VOCABULARY_MAXIMUM:
 			description->vocabulary_size = UINT32_MAX;
 			break;
-		case 14:
+		case DESCRIPTION_NO_DRAFT:
 			description->draft_positions = 0;
 			break;
-		case 15:
+		case DESCRIPTION_DRAFTS_PAST_MOST:
 			description->draft_positions = STEP_DRAFT_MOST + 1u;
 			break;
-		case 16:
+		case DESCRIPTION_END_PAST_VOCABULARY:
 			description->end_token_id = TEST_VOCABULARY;
 			break;
-		case 17:
-			description->round_capacity = 2;
+		case DESCRIPTION_SHORT_ROUND_CAPACITY:
+			description->round_capacity = TEST_SHORT_ROUND_CAPACITY;
 			break;
-		case 18:
+		case DESCRIPTION_ROUND_CAPACITY_MAXIMUM:
 			description->round_capacity = UINT32_MAX;
 			break;
-		case 19:
+		case DESCRIPTION_NO_ROUND_CAPACITY:
 			description->round_capacity = 0;
 			break;
-		case 20:
+		case DESCRIPTION_ONE_ROUND:
 			description->round_capacity = 1;
 			break;
-		case 21:
-			description->round_capacity = 4;
+		case DESCRIPTION_HALF_ROUND_CAPACITY:
+			description->round_capacity = TEST_HALF_ROUND_CAPACITY;
 			break;
-		case 22:
-			description->sequence ^= UINT64_C(1) << 32;
+		case DESCRIPTION_SEQUENCE:
+			description->sequence ^= TEST_SEQUENCE_HIGH_BIT;
 			break;
 		default:
 			REQUIRE(false);
@@ -579,6 +695,15 @@ static void corrupt_description(const struct fixture *base)
 	refusals++;
 }
 
+enum overlap {
+	OVERLAP_ROWS,
+	OVERLAP_RESULTS,
+	OVERLAP_ROUNDS,
+	OVERLAP_HEADER,
+	OVERLAP_DESCRIPTION,
+	OVERLAPS
+};
+
 static void overlap_cases(const struct fixture *base)
 {
 	/* This valid storage is never dereferenced through the wrong view: overlap is rejected first. */
@@ -590,24 +715,24 @@ static void overlap_cases(const struct fixture *base)
 		struct step_result header;
 		struct step_round_description description;
 	} storage, before;
-	for (uint32_t field = 0; field < 5u; field++) {
+	for (uint32_t field = 0; field < OVERLAPS; field++) {
 		struct step_round_description description = base->description;
 		memset(&storage, TEST_POISON, sizeof(storage));
 		const struct step_round_description *input = &description;
 		switch (field) {
-		case 0:
+		case OVERLAP_ROWS:
 			description.rows = storage.rows;
 			break;
-		case 1:
+		case OVERLAP_RESULTS:
 			description.results = storage.results;
 			break;
-		case 2:
+		case OVERLAP_ROUNDS:
 			description.rounds = storage.rounds;
 			break;
-		case 3:
+		case OVERLAP_HEADER:
 			description.result_header = &storage.header;
 			break;
-		case 4:
+		case OVERLAP_DESCRIPTION:
 			storage.description = description;
 			input = &storage.description;
 			break;
@@ -618,7 +743,7 @@ static void overlap_cases(const struct fixture *base)
 		memcpy(&before, &storage, sizeof(storage));
 		REQUIRE(step_rounds_validate(input, &storage.table) ==
 			STATUS_INVALID_ARGUMENT);
-		REQUIRE(memcmp(&before, &storage, sizeof(storage)) == 0);
+		REQUIRE(bytes_identical(&before, &storage, sizeof(storage)));
 		refusals++;
 	}
 }
@@ -647,6 +772,13 @@ static void slab_bytes(unsigned char *bytes, const struct fixture *fixture)
 	}
 }
 
+enum header_corruption {
+	HEADER_SEQUENCE,
+	HEADER_ROW_COUNT,
+	HEADER_RESERVED,
+	HEADER_CORRUPTIONS
+};
+
 static void driver_boundary(const struct fixture *base)
 {
 	struct step_driver empty = { 0 };
@@ -655,10 +787,10 @@ static void driver_boundary(const struct fixture *base)
 	REQUIRE(step_rounds_domain_attach(&empty, TEST_VOCABULARY,
 					  TEST_END_TOKEN) ==
 		STATUS_INVALID_ARGUMENT);
-	REQUIRE(memcmp(&empty, &retained_empty, sizeof(empty)) == 0);
+	REQUIRE(bytes_identical(&empty, &retained_empty, sizeof(empty)));
 
 	struct program_card_record card = { .result_offset = 0,
-					    .round_offset = 1024 };
+					    .round_offset = TEST_ROUND_OFFSET };
 	struct execution_program program = {
 		.cards = &card,
 		.kind = PROGRAM_BATCH,
@@ -678,44 +810,45 @@ static void driver_boundary(const struct fixture *base)
 					  TEST_END_TOKEN) == STATUS_OK);
 	REQUIRE(step_rounds_domain_attach(&driver, TEST_VOCABULARY,
 					  TEST_END_TOKEN - 1u) != STATUS_OK);
-	unsigned char bytes[2048] = { 0 };
+	unsigned char bytes[TEST_RESULT_AREA_BYTES] = { 0 };
 	slab_bytes(bytes, base);
 	memcpy(bytes + card.round_offset, base->rounds, sizeof(base->rounds));
 	struct step_row_result output[TEST_ROWS], before[TEST_ROWS];
 	memset(output, TEST_POISON, sizeof(output));
 	memcpy(before, output, sizeof(before));
-	struct step_round corrupted = base->rounds[7];
+	struct step_round corrupted = base->rounds[TEST_LAST_SLOT];
 	corrupted.anchor_token ^= 1;
-	memcpy(bytes + card.round_offset + 7u * sizeof(corrupted), &corrupted,
-	       sizeof(corrupted));
+	memcpy(bytes + card.round_offset + TEST_LAST_SLOT * sizeof(corrupted),
+	       &corrupted, sizeof(corrupted));
 	REQUIRE(step_batch_result_take(&driver, bytes, TEST_SEQUENCE,
 				       base->rows, TEST_ROWS,
 				       output) == STATUS_DEVICE_ERROR);
-	REQUIRE(memcmp(before, output, sizeof(before)) == 0 &&
+	REQUIRE(bytes_identical(before, output, sizeof(before)) &&
 		driver.last_rounds.valid_mask == 0);
 	/* Isolate every header fault: all rounds are valid before the header is changed. */
 	memcpy(bytes + card.round_offset, base->rounds, sizeof(base->rounds));
 	for (uint32_t slab = 0;
 	     slab < STEP_BATCH_MAXIMUM_ROWS / STEP_BATCH_SLAB_ROWS; slab++) {
-		for (uint32_t field = 0; field < 3; field++) {
+		for (uint32_t field = 0; field < HEADER_CORRUPTIONS; field++) {
 			slab_bytes(bytes, base);
 			struct step_result header;
 			unsigned char *const area =
 				bytes +
 				(size_t)slab * STEP_BATCH_SLAB_RESULT_BYTES;
 			memcpy(&header, area, sizeof(header));
-			if (field == 0)
-				header.sequence ^= UINT64_C(1) << 32;
-			if (field == 1)
+			if (field == HEADER_SEQUENCE)
+				header.sequence ^= TEST_SEQUENCE_HIGH_BIT;
+			if (field == HEADER_ROW_COUNT)
 				header.row_count++;
-			if (field == 2)
+			if (field == HEADER_RESERVED)
 				header.reserved_zero = 1;
 			memcpy(area, &header, sizeof(header));
 			REQUIRE(step_batch_result_take(
 					&driver, bytes, TEST_SEQUENCE,
 					base->rows, TEST_ROWS,
 					output) == STATUS_DEVICE_ERROR);
-			REQUIRE(memcmp(output, before, sizeof(before)) == 0 &&
+			REQUIRE(bytes_identical(output, before,
+						sizeof(before)) &&
 				driver.last_rounds.valid_mask == 0);
 		}
 	}
@@ -724,18 +857,19 @@ static void driver_boundary(const struct fixture *base)
 	REQUIRE(step_batch_result_take(&driver, bytes, TEST_SEQUENCE,
 				       base->rows, TEST_ROWS,
 				       output) == STATUS_OK);
-	REQUIRE(memcmp(output, base->results, sizeof(output)) == 0 &&
-		driver.last_rounds.valid_mask == 0xffu);
+	REQUIRE(bytes_identical(output, base->results, sizeof(output)) &&
+		driver.last_rounds.valid_mask == TEST_EVERY_SESSION);
 	driver.has_finished = true;
 	struct step_round next, retained;
 	memset(&next, TEST_POISON, sizeof(next));
 	memcpy(&retained, &next, sizeof(next));
 	REQUIRE(step_round_take(&driver, &next) == STATUS_INVALID_ARGUMENT);
-	REQUIRE(memcmp(&next, &retained, sizeof(next)) == 0);
+	REQUIRE(bytes_identical(&next, &retained, sizeof(next)));
 	for (uint32_t slot = 0; slot < STEP_BATCH_MAXIMUM_SESSIONS; slot++) {
 		REQUIRE(step_round_take_for_session(&driver, slot, &next) ==
 			STATUS_OK);
-		REQUIRE(memcmp(&next, &base->rounds[slot], sizeof(next)) == 0);
+		REQUIRE(bytes_identical(&next, &base->rounds[slot],
+					sizeof(next)));
 	}
 	REQUIRE(step_rounds_domain_attach(&driver, TEST_VOCABULARY,
 					  TEST_END_TOKEN) != STATUS_OK);
@@ -747,7 +881,7 @@ static void driver_boundary(const struct fixture *base)
 				       ordinary_fixture.rows, TEST_ROWS,
 				       output) == STATUS_OK);
 	REQUIRE(driver.last_rounds.valid_mask == 0);
-	REQUIRE(step_round_take_for_session(&driver, 7, &next) ==
+	REQUIRE(step_round_take_for_session(&driver, TEST_LAST_SLOT, &next) ==
 		STATUS_INVALID_ARGUMENT);
 	REQUIRE(step_round_take(&driver, &next) == STATUS_OK &&
 		next.session_slot == STEP_NO_SESSION);

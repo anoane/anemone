@@ -117,6 +117,7 @@ static bool read_float(struct replay *replay, const char *name, uint64_t offset,
 			       offset <= tensor->element_count &&
 			       count <= tensor->element_count - offset,
 		       name) &&
+	       tensor != NULL &&
 	       test_linear_expect_status(
 		       test_capture_read(
 			       replay->reference, name, TEST_CAPTURE_FLOAT32,
@@ -141,6 +142,7 @@ static bool read_vectors(struct replay *replay, uint32_t call, uint32_t row,
 					tensor->type == TEST_CAPTURE_BFLOAT16 &&
 					tensor->element_count == rotary_values,
 				name) ||
+	    tensor == NULL ||
 	    !test_linear_expect_status(
 		    test_capture_read(
 			    replay->reference, name, TEST_CAPTURE_BFLOAT16,
@@ -205,7 +207,8 @@ static bool run_case(struct replay *replay, uint32_t call, uint32_t rows,
 	test_linear_card_clear(card);
 	const uint32_t heads = call == 1 ? 1 : MODEL_HEADS_VALUE;
 	const uint64_t row_bytes = (uint64_t)heads * width * sizeof(uint16_t),
-		       rotation_bytes = (uint64_t)rows * OFFICIAL_ROPE_WIDTH *
+		       rotation_bytes = (uint64_t)rows *
+					(uint64_t)OFFICIAL_ROPE_WIDTH *
 					sizeof(float);
 	struct official_rope_description description = {
 		.input = test_linear_card_work(card, row_bytes * rows),
@@ -222,7 +225,8 @@ static bool run_case(struct replay *replay, uint32_t call, uint32_t rows,
 	char name[NAME_BYTES];
 	(void)snprintf(name, sizeof(name), "layer_0.rope_%u.frequencies", call);
 	bool passed = test_linear_card_has_room(card) &&
-		      read_float(replay, name, 0, rows * OFFICIAL_ROPE_WIDTH,
+		      read_float(replay, name, 0,
+				 (uint32_t)(rows * OFFICIAL_ROPE_WIDTH),
 				 rotation) &&
 		      test_linear_card_put(card, description.rotation, 0,
 					   rotation, rotation_bytes);

@@ -19,6 +19,8 @@
 #define HIGH_ROW_BIT 2u
 #define HIGH_COLUMN_BIT 4u
 #define HALF_TILE 8u
+#define WHOLE_WIDTH_MOST 8u
+#define HALF_WIDTH_SCALE 16u
 
 uint16_t test_exl3_codebook(uint32_t state)
 {
@@ -53,27 +55,53 @@ uint32_t test_exl3_position(uint32_t input, uint32_t output)
 	return UINT32_MAX;
 }
 
-uint16_t test_exl3_reconstruct(const uint32_t *tiles, uint32_t inputs,
-			       uint32_t outputs, uint32_t bits, uint32_t input,
-			       uint32_t output)
+/* Bits ring position `position` steps: a whole K's K, a half K's KA or KA + 1 (odd positions) */
+static uint32_t ring_step(uint32_t stored_width, uint32_t position)
+{
+	return stored_width <= WHOLE_WIDTH_MOST ?
+		       stored_width :
+		       stored_width / HALF_WIDTH_SCALE + (position & 1u);
+}
+
+uint16_t test_exl3_state(const unsigned char *tiles, uint32_t inputs,
+			 uint32_t outputs, uint32_t stored_width,
+			 uint32_t input, uint32_t output)
 {
 	(void)inputs;
-	const uint32_t ring_bits = TILE_VALUES * bits;
+	uint32_t ring_bits = 0;
+	for (uint32_t position = 0; position < TILE_VALUES; position++) {
+		ring_bits += ring_step(stored_width, position);
+	}
 	const uint64_t tile =
 		(uint64_t)(input / TILE_WIDTH) * (outputs / TILE_WIDTH) +
 		output / TILE_WIDTH;
-	const uint32_t *const words = tiles + tile * ring_bits / WORD_BITS;
+	const unsigned char *const bytes = tiles + tile * ring_bits / BYTE_BITS;
 	const uint32_t position =
 		test_exl3_position(input % TILE_WIDTH, output % TILE_WIDTH);
+	uint32_t window_end = 0;
+	for (uint32_t step = 0; step <= position; step++) {
+		window_end += ring_step(stored_width, step);
+	}
 	uint32_t state = 0;
 	for (uint32_t bit = 0; bit < STATE_BITS; bit++) {
-		const uint32_t ring_bit = ((position + 1u) * bits + ring_bits -
-					   STATE_BITS + bit) %
-					  ring_bits;
+		const uint32_t ring_bit =
+			(window_end + ring_bits - STATE_BITS + bit) % ring_bits;
+		/* MSB-first in little-endian uint32 words: bit 0 is a word's least significant */
+		const uint32_t word_bit = WORD_BITS - 1u - ring_bit % WORD_BITS;
+		const uint32_t byte =
+			ring_bit / WORD_BITS * (WORD_BITS / BYTE_BITS) +
+			word_bit / BYTE_BITS;
 		state = state * ROW_PAIR +
-			((words[ring_bit / WORD_BITS] >>
-			  (WORD_BITS - 1u - ring_bit % WORD_BITS)) &
+			(((uint32_t)bytes[byte] >> (word_bit % BYTE_BITS)) &
 			 1u);
 	}
-	return test_exl3_codebook(state);
+	return (uint16_t)state;
+}
+
+uint16_t test_exl3_reconstruct(const unsigned char *tiles, uint32_t inputs,
+			       uint32_t outputs, uint32_t stored_width,
+			       uint32_t input, uint32_t output)
+{
+	return test_exl3_codebook(test_exl3_state(tiles, inputs, outputs,
+						  stored_width, input, output));
 }

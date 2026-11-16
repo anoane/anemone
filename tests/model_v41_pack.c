@@ -624,7 +624,11 @@ static uint32_t tensors_list(struct test_model_v41_change change, bool has_draft
 			    if (change.kind == TEST_MODEL_V41_CHANGE_EXL3) {
 				    tensors[count].spec.weight_format =
 					    WEIGHT_FORMAT_EXL3;
+				    /* without a name, a value is every routed matrix's stored width */
 				    tensors[count].spec.bits_per_weight =
+					    change.name == NULL &&
+							    change.value != 0 ?
+						    change.value :
 					    (TEST_EXL3_K2_LAYERS >> layer &
 					     1u) != 0 ?
 						    TEST_EXL3_K2_BITS :

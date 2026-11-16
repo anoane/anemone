@@ -273,9 +273,10 @@ linear_tensor_core_of_columns(float accumulator[ELEMENTS_PER_LANE], const uint32
 {
 #if defined(__CUDA_ARCH_FEAT_SM120_ALL) && \
 	!defined(LINEAR_CLASS_FORMS) /* the exact profile */
-	class_80_instruction(accumulator, weights, fed_low_inputs,
-			     fed_high_inputs, form == LINEAR_FORM_CARRIED,
-			     column_count);
+	class_80_instruction_by_element(accumulator, weights, fed_low_inputs,
+					fed_high_inputs,
+					form == LINEAR_FORM_CARRIED,
+					column_count);
 #else
     (void)column_count;
     if (form == LINEAR_FORM_CARRIED) {
@@ -307,7 +308,7 @@ __device__ __forceinline__ void linear_tensor_core(float accumulator[ELEMENTS_PE
 /* The eight E2M1 codes of one stored word as the four registers of operand A: the code at bit 4 r + 16 h of the
  * word is half h of register r; its magnitude bits go to magnitude_bit on. Where a code shifted to magnitude_bit and
  * to its sign's place cannot overlap (the bfloat16 placement), one multiply makes both shifts of a pair of codes
- * isolated in place, those of registers 1 and 3 from 4 bits higher (all 2^32 words: tmp/rnd/20261025/e2m1_place). */
+ * isolated in place, those of registers 1 and 3 from 4 bits higher (all 2^32 words, checked on 25 Oct 2026). */
 __device__ static __forceinline__ void linear_place_e2m1(uint32_t word, uint32_t magnitude_bit,
                                                          uint32_t weights[REGISTERS_PER_OPERAND_A])
 {
