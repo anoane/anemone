@@ -81,6 +81,10 @@
 #define STAGE_WORKERS_ABOVE_MOST \
 	33u /* the --copy_workers value the refusal case names: one above the most */
 #define STAGE_COPY_WORKERS 2u /* the stage case's --copy_workers=2 */
+#define STAGE_COMMAND_WORDS 3u /* anemone autotune PACK */
+#define STAGE_TOKENS_ABOVE_MOST        \
+	(AUTOTUNE_ENGRAM_TRACES_MOST + \
+	 1u) /* one --tokens file more than the Engram stage takes */
 #define SUFFIX_ROOM \
 	32u /* a path buffer's room for the longest receipt or state suffix */
 #define DECIMAL_BASE 10
@@ -610,39 +614,67 @@ static void autotune_refusal_cases(const char *source, const char *directory)
 	       "a later refusal (the fixture source is no pack) names its reason too");
 	(void)rmdir(shared);
 }
-/* The owner's split of autotune into stages: --stage takes copy, the copy stage refuses the lookup tuning's token
- * files, and without a stage the tuning still needs them; the copy stage's --copy_workers takes 1 to
- * PREPARE_COPY_WORKERS_MOST. Each is refused before any file is opened. */
+/* The owner's split of autotune into stages: --stage takes copy (load and engram run their own commands); the copy
+ * stage refuses the Engram stage's token files and --retune; a run without a stage refuses the retired combined
+ * tuning's --prompt by name and a seventeenth --tokens file, and its --help names the stages in their order; the copy
+ * stage's --copy_workers takes 1 to PREPARE_COPY_WORKERS_MOST. Each is refused before any file is opened. */
 static void stage_option_cases(void)
 {
 	char program[] = "anemone", command[] = "autotune",
 	     source[] = "/nonexistent/stage-case.anemone",
 	     copy[] = "--stage=copy", unknown[] = "--stage=tune",
 	     tokens[] = "--tokens=/nonexistent/stage-case.u32",
-	     no_workers[] = "--copy_workers=0",
+	     prompt[] = "--prompt=1024", retune[] = "--retune",
+	     help[] = "--help", no_workers[] = "--copy_workers=0",
 	     too_many[] = "--copy_workers=33";
 	char *with_unknown[] = { program, command, source, unknown };
 	char *without_workers[] = { program, command, source, copy,
 				    no_workers };
 	char *above_most[] = { program, command, source, copy, too_many };
 	char *copy_with_tokens[] = { program, command, source, copy, tokens };
-	char *no_stage_no_tokens[] = { program, command, source };
+	char *copy_with_retune[] = { program, command, source, copy, retune };
+	char *no_stage_prompt[] = { program, command, source, tokens, prompt };
+	char *no_stage_help[] = { program, command, source, help };
+	char *many_tokens[STAGE_COMMAND_WORDS + STAGE_TOKENS_ABOVE_MOST] = {
+		program, command, source
+	};
+	for (uint32_t index = 0; index < STAGE_TOKENS_ABOVE_MOST; index++)
+		many_tokens[STAGE_COMMAND_WORDS + index] = tokens;
 	expect(autotune_says(
 		       (int)(sizeof(with_unknown) / sizeof(with_unknown[0])),
 		       with_unknown, EXIT_FAILURE,
-		       "autotune: refused: no such stage (copy and load so far): --stage=tune"),
+		       "autotune: refused: no such stage (copy, load and engram): --stage=tune"),
 	       "a stage this build has not is refused by name");
 	expect(autotune_says(
 		       (int)(sizeof(copy_with_tokens) /
 			     sizeof(copy_with_tokens[0])),
 		       copy_with_tokens, EXIT_FAILURE,
-		       "autotune: refused: --tokens and --prompt are the lookup tuning's, not the copy stage's"),
-	       "the copy stage refuses the lookup tuning's token files");
-	expect(autotune_says((int)(sizeof(no_stage_no_tokens) /
-				   sizeof(no_stage_no_tokens[0])),
-			     no_stage_no_tokens, EXIT_FAILURE,
-			     "usage: anemone autotune PACK --tokens="),
-	       "without a stage the tuning still needs its token files");
+		       "autotune: refused: --tokens is the Engram stage's option, not the copy stage's: --tokens"),
+	       "the copy stage refuses the Engram stage's token files");
+	expect(autotune_says(
+		       (int)(sizeof(copy_with_retune) /
+			     sizeof(copy_with_retune[0])),
+		       copy_with_retune, EXIT_FAILURE,
+		       "autotune: refused: --retune measures the load and Engram stages again: the run without --stage "
+		       "takes it, not the copy stage: --retune"),
+	       "the copy stage refuses --retune by name");
+	expect(autotune_says(
+		       (int)(sizeof(no_stage_prompt) /
+			     sizeof(no_stage_prompt[0])),
+		       no_stage_prompt, EXIT_FAILURE,
+		       "autotune: refused: --prompt went with the combined tuning: the Engram stage replays every "
+		       "--tokens case whole: --prompt=1024"),
+	       "without a stage the retired combined tuning's --prompt is refused by name");
+	expect(autotune_says((int)(sizeof(many_tokens) / sizeof(many_tokens[0])),
+			     many_tokens, EXIT_FAILURE,
+			     "autotune: refused: at most 16 --tokens files"),
+	       "without a stage a seventeenth --tokens file is refused, as the Engram stage refuses it");
+	expect(autotune_says(
+		       (int)(sizeof(no_stage_help) / sizeof(no_stage_help[0])),
+		       no_stage_help, EXIT_SUCCESS,
+		       "Without --stage: the copy, then the load stage, then the Engram stage (skipped without "
+		       "--tokens); a stage whose section names this pack and these copies is skipped unless --retune."),
+	       "the usage names the stages a run without --stage runs, in their order");
 	expect(PREPARE_COPY_WORKERS_MOST + 1u == STAGE_WORKERS_ABOVE_MOST &&
 		       autotune_says(
 			       (int)(sizeof(without_workers) /
@@ -654,6 +686,51 @@ static void stage_option_cases(void)
 			       above_most, EXIT_FAILURE,
 			       "autotune: refused: --copy_workers takes 1 to 32 workers: --copy_workers=33"),
 	       "the copy stage refuses no workers and more than the most, by name");
+}
+/* Without XDG_CONFIG_HOME and HOME there is no default profile: both stages refuse it by name (they printed the usage
+ * alone before), and the copy stage's own refusal of the token files still comes first. The environment is restored
+ * after. */
+static void homeless_cases(void)
+{
+	static const char *const names[] = { "XDG_CONFIG_HOME", "HOME" };
+	char *saved[sizeof(names) / sizeof(names[0])] = { NULL };
+	char program[] = "anemone", command[] = "autotune",
+	     source[] = "/nonexistent/stage-case.anemone",
+	     copy[] = "--stage=copy", load[] = "--stage=load",
+	     tokens[] = "--tokens=/nonexistent/stage-case.u32";
+	char *copy_stage[] = { program, command, source, copy, tokens };
+	char *load_stage[] = { program, command, source, load };
+	const int copy_count =
+		(int)(sizeof(copy_stage) / sizeof(copy_stage[0]));
+	static const char refusal[] =
+		"autotune: refused: no default profile without XDG_CONFIG_HOME or HOME: give --profile=ABSOLUTE";
+	bool unset = true;
+	for (size_t index = 0; index < sizeof(names) / sizeof(names[0]);
+	     index++) {
+		const char *const value = getenv(names[index]);
+		saved[index] = value != NULL ? strdup(value) : NULL;
+		unset = unset && (value == NULL || saved[index] != NULL) &&
+			unsetenv(names[index]) == 0;
+	}
+	expect(unset &&
+		       autotune_says(copy_count - 1, copy_stage, EXIT_FAILURE,
+				     refusal) &&
+		       autotune_says((int)(sizeof(load_stage) /
+					   sizeof(load_stage[0])),
+				     load_stage, EXIT_FAILURE, refusal),
+	       "without XDG_CONFIG_HOME and HOME, both stages refuse the default profile by name");
+	expect(unset &&
+		       autotune_says(
+			       copy_count, copy_stage, EXIT_FAILURE,
+			       "autotune: refused: --tokens is the Engram stage's option"),
+	       "without HOME, the copy stage still refuses the token files first");
+	for (size_t index = 0; index < sizeof(names) / sizeof(names[0]);
+	     index++) {
+		if (saved[index] != NULL)
+			expect(setenv(names[index], saved[index], 1) == 0,
+			       "the environment is restored");
+		free(saved[index]);
+	}
 }
 /* Whether the file at path holds exactly the bytes bytes of expected. */
 static bool file_holds(const char *path, const unsigned char *expected,
@@ -694,11 +771,11 @@ static uint32_t retained_buffers(const char *text)
 		       UINT32_MAX;
 }
 /* --stage=copy end to end: a real pack (the n-gram test pack) beside the source copied to the first device and
- * verified, with its verification and search receipts, and nothing of a tuning written: no tune state, and the load
- * stage's profile in place (the documented copy -> load -> copy flow on one --profile) byte-identical after the stage
- * and after its --plan. The copy's decisions record it complete. The default pairs the source hashes and
- * --copy_hash_pairs=0 does not: a fresh copy at 0 keeps one source buffer a worker fewer (the pending chunk) and
- * writes the same manifest. */
+ * verified, with its verification and search receipts, and nothing of a tuning written: no stage's state (neither
+ * <profile>.load-state nor <profile>.engram-state), and the load stage's profile in place (the documented copy ->
+ * load -> copy flow on one --profile) byte-identical after the stage and after its --plan. The copy's decisions
+ * record it complete. The default pairs the source hashes and --copy_hash_pairs=0 does not: a fresh copy at 0 keeps
+ * one source buffer a worker fewer (the pending chunk) and writes the same manifest. */
 static void stage_copy_case(const char *source_directory,
 			    const char *target_directory)
 {
@@ -709,7 +786,8 @@ static void stage_copy_case(const char *source_directory,
 	/* the paths joined with append_path, and the suffixed ones with room for their suffix: gcc 14's
 	   format-truncation check reads a formatted path copy as long as its source array */
 	char source[PATH_MAX], folder[PATH_MAX], profile[PATH_MAX],
-		leaf[STAGE_LEAF_BYTES], tune_state[PATH_MAX + SUFFIX_ROOM],
+		leaf[STAGE_LEAF_BYTES], load_state[PATH_MAX + SUFFIX_ROOM],
+		engram_state[PATH_MAX + SUFFIX_ROOM],
 		decisions[PATH_MAX + SUFFIX_ROOM],
 		manifest[PATH_MAX + SUFFIX_ROOM],
 		verified[PATH_MAX + SUFFIX_ROOM],
@@ -734,8 +812,10 @@ static void stage_copy_case(const char *source_directory,
 			   "/stage-stderr") &&
 	       append_path(profile, sizeof(profile), folder,
 			   "/storage-profile.json") &&
-	       suffixed(tune_state, sizeof(tune_state), profile,
-			".tune-state") &&
+	       suffixed(load_state, sizeof(load_state), profile,
+			".load-state") &&
+	       suffixed(engram_state, sizeof(engram_state), profile,
+			".engram-state") &&
 	       suffixed(decisions, sizeof(decisions), profile, ".copy.json") &&
 	       suffixed(manifest, sizeof(manifest), profile,
 			".replicas.json") &&
@@ -823,9 +903,10 @@ static void stage_copy_case(const char *source_directory,
 		       strstr(text, "\"copy_workers\":2") != NULL &&
 		       file_holds(profile, (const unsigned char *)stage_profile,
 				  (uint64_t)stage_profile_length) &&
-		       access(tune_state, F_OK) != 0,
-	       "the copy stage records its decisions complete, its two workers, no tune state, and leaves the load "
-	       "stage profile byte-identical");
+		       access(load_state, F_OK) != 0 &&
+		       access(engram_state, F_OK) != 0,
+	       "the copy stage records its decisions complete, its two workers, no stage's state, and leaves the "
+	       "load stage profile byte-identical");
 	char paired_manifest[CAPTURE_BYTES], plain_manifest[CAPTURE_BYTES],
 		plain_option[] = "--copy_hash_pairs=0";
 	const size_t paired_bytes =
@@ -1405,13 +1486,21 @@ static void search_receipt_case(const struct prepare_copy_options *options,
 	expect(read == strlen(expected) &&
 		       memcmp(found_text, expected, read) == 0,
 	       "its full verification writes the search's receipt: the source, its size and header digest");
+	/* the search admits no replica beside a source whose drive it cannot compare (replicas.h): one no topology
+	   describes or whose medium names no drive, a RAM-backed one (tmpfs, ramfs) sharing none */
 	struct local_device_description source_device, point_device;
+	const bool source_compared =
+		local_device_describe(options->manifest->source,
+				      &source_device) == STATUS_OK &&
+		((source_device.count != 0 &&
+		  source_device.count <= LOCAL_DEVICE_PHYSICAL_MOST) ||
+		 strcmp(source_device.filesystem, "tmpfs") == 0 ||
+		 strcmp(source_device.filesystem, "ramfs") == 0);
 	const bool admitted =
 		local_device_describe(point, &point_device) == STATUS_OK &&
 		local_device_media_refusal(&point_device, false) == NULL &&
-		!(local_device_describe(options->manifest->source,
-					&source_device) == STATUS_OK &&
-		  local_device_overlaps(&source_device, &point_device));
+		source_compared &&
+		!local_device_overlaps(&source_device, &point_device);
 	length = snprintf(line, sizeof(line), "/dev/fixture0 %s ext4 rw 0 0\n",
 			  point);
 	FILE *const mounts = prepared && length > 0 &&
@@ -1427,10 +1516,10 @@ static void search_receipt_case(const struct prepare_copy_options *options,
 		.header_digest = FIXTURE_HEADER_DIGEST
 	};
 	char found[REPLICAS_MOST][REPLICA_PATH_CAPACITY];
+	const char *const copies[] = { options->manifest->source };
 	const uint32_t count =
-		listed ? replicas_find_mounts(mounts, options->manifest->source,
-					      &header, found, REPLICAS_MOST,
-					      false) :
+		listed ? replicas_find_mounts(mounts, copies, 1u, &header,
+					      found, REPLICAS_MOST, false) :
 			 0;
 	if (mounts != NULL)
 		(void)fclose(mounts);
@@ -1450,6 +1539,7 @@ int main(void)
 	pure_cases();
 	destination_cases();
 	stage_option_cases();
+	homeless_cases();
 	const char *const first_parent =
 		getenv("ANEMONE_NATIVE_COPY_TEST_FIRST");
 	const char *const second_parent =

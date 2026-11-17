@@ -196,6 +196,22 @@ MUST_CHECK result_status tensor_plan_fit(struct model_limits *limits,
 					 uint32_t *unit_homes);
 MUST_CHECK result_status replicas_found_add(
 	const char (*found_paths)[REPLICA_PATH_CAPACITY], uint32_t found);
+/* Whether turbo load's search runs beside the copies serve was given (one or more since 17 Nov 2026): unless
+ * --turbo_load=0, a storage profile's tuned load chose the copies, or they are already the most a load reads. */
+bool turbo_load_searches(void);
+/* A storage profile's tuned load chose the copies (storage_profile_apply). */
+extern bool tuned_load_active;
+/* Turbo load's search: replicas_find_policy (replicas.h), or a test's stand-in. */
+extern uint32_t (*turbo_load_search)(const char *const *copies,
+				     uint32_t copy_count,
+				     const struct pack_header *header,
+				     char (*paths)[REPLICA_PATH_CAPACITY],
+				     uint32_t capacity, bool external);
+/* Serve's copies before its load: turbo load's search beside the given copies when turbo_load_searches() (with its
+ * "find the replicas" step line), then, for a load given more than one copy, the one `turbo load: the load reads N
+ * copies:` line naming each copy and whether it was given or found by the search (none for a tuned load: the profile's
+ * copies, which its storage load: line names). False when the search's step failed (its line names the failure). */
+MUST_CHECK bool turbo_load_copies(const struct pack_header *header);
 MUST_CHECK bool engram_settings_resolve(void);
 MUST_CHECK result_status engram_steps_start(void);
 MUST_CHECK result_status engram_steps_start_or_fall_back(void);

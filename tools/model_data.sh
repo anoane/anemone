@@ -25,6 +25,7 @@ convert=$script_directory/convert
 "$python" "$convert/make_pack.py" verify "$destination/original.anemone" --jobs "$jobs"
 (cd "$destination" && sha256sum -c "$repository/docs/user/model-data/outputs.sha256")
 "$python" "$convert/make_hybrid.py" "$official" "$exl3" "$destination/hybrid"
-"$python" "$convert/make_virtual_pack.py" --native "$destination/original.anemone" --hybrid "$destination/hybrid" --exl3-config "$exl3/quantization_config.json" --output "$destination/model.exl3map"
+# The pinned sources make the map the engine lists as established (source/model_v41.h): its descriptor says so.
+"$python" "$convert/make_virtual_pack.py" --native "$destination/original.anemone" --hybrid "$destination/hybrid" --exl3-config "$exl3/quantization_config.json" --quality-established "LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-2.9bpw @ 0be63c33, TP4_EXL3's default map: qualified by the release gates' TP4_EXL3 identity checks (RELEASE_NOTES.md) and its golden metrics (docs/results/GOLDEN_METRICS.md)" --output "$destination/model.exl3map"
 (cd "$destination" && sha256sum tokenizer.bin original.anemone model.exl3map > SHA256SUMS)
 echo "Prepared $destination; retain the original pack, hybrid links and EXL3 source shards at their absolute paths."

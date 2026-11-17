@@ -1237,6 +1237,19 @@ static void expect_outside_layers(const struct program_case *made,
 		       sampler.session_capacity == SESSIONS &&
 		       sampler.vocabulary_size == MODEL_VOCABULARY_VALUE,
 	       "the head's input is the final norm, its float32 logits of the flagged rows are what the sampler reads");
+	struct sampler_logits_part parts[BACKEND_MAXIMUM_CARDS];
+	uint32_t part_count = 0;
+	expect(made->program->kind != PROGRAM_THIN ||
+		       (sampler_logits_parts(made->program,
+					     MODEL_VOCABULARY_VALUE, parts,
+					     BACKEND_MAXIMUM_CARDS,
+					     &part_count) == STATUS_OK &&
+			part_count == 1u &&
+			parts[0].card == made->plan->result_card &&
+			parts[0].offset == sampler.logits_offset &&
+			parts[0].first_token == 0 &&
+			parts[0].token_count == MODEL_VOCABULARY_VALUE),
+	       "the capture's logits parts: the result card's whole head, where its sampler reads it");
     }
 }
 

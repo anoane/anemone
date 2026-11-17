@@ -47,8 +47,8 @@ struct storage_profile {
 #define STORAGE_PROFILE_STAGES_SCHEMA 3u
 #define STORAGE_LOAD_SECTION_SCHEMA 1u
 #define STORAGE_LOAD_SECTION_NAME "load"
-#define STORAGE_LOAD_PACK_IDENTITY_DIGITS \
-	16u /* the header digest in hexadecimal */
+#define STORAGE_PACK_IDENTITY_DIGITS \
+	16u /* every stage section's header digest, in hexadecimal */
 struct storage_load_section {
 	char source[REPLICA_PATH_CAPACITY];
 	char pack_identity[STORAGE_PROFILE_KEY_BYTES];
@@ -84,10 +84,83 @@ struct storage_load_choice {
 void storage_load_choose(const struct storage_load_section *section,
 			 bool explicit_readers, bool explicit_piece,
 			 struct storage_load_choice *choice);
-/* Writes section (length bytes of JSON) as the "load" member of the profile at path, atomically: a new schema 3
- * profile when there is none, else the member replaced or added with every other byte kept. A file that is no schema 3
- * profile of real_source is refused, its reason in *refusal, so the stage never replaces another tuning's profile.
- * storage_load_section_qualify turns a candidate section (enabled 0) into a qualified one (enabled 1), alone. */
+/* The Engram stage's section of a schema 3 profile (anemone autotune PACK --stage=engram;
+ * docs/user/STORAGE_PROFILE.md), its own schema: its identity as the load section's (the pack, the copies' device keys
+ * in order), the flight shape it was measured in (interface STORAGE_ENGRAM_INTERFACE, steps of slots) and its step I/O
+ * selection (threads a copy, spin, pin), enabled 0 for a candidate. storage_engram_section_read: false with reason
+ * missing, not_a_stage_profile, no_engram_section or engram_section_malformed. storage_engram_section_matches: whether
+ * it names this pack and exactly these copies, by their device keys (storage_device_key_for; an empty key matches
+ * none) in order, and this shape (false:
+ * engram_section_stale_pack, _stale_copies or _stale_shape). It never holds a RAM share: the tables' place is the RAM
+ * fit's. */
+#define STORAGE_ENGRAM_SECTION_SCHEMA 1u
+#define STORAGE_ENGRAM_INTERFACE "uring_step"
+struct storage_engram_section {
+	char source[REPLICA_PATH_CAPACITY];
+	char pack_identity[STORAGE_PROFILE_KEY_BYTES];
+	char keys[STORAGE_MAXIMUM_COPIES][STORAGE_PROFILE_KEY_BYTES];
+	uint64_t file_byte_count;
+	uint32_t copy_count, enabled, steps, slots, threads_per_copy, spin_us,
+		pin;
+};
+bool storage_engram_section_read(const char *path,
+				 struct storage_engram_section *output,
+				 char reason[STORAGE_PROFILE_REASON_BYTES]);
+bool storage_engram_section_matches(
+	const struct storage_engram_section *section,
+	const struct pack_header *header,
+	const char (*copy_keys)[STORAGE_PROFILE_KEY_BYTES], uint32_t copy_count,
+	uint32_t steps, uint32_t slots,
+	char reason[STORAGE_PROFILE_REASON_BYTES]);
+/* Knob over profile over default, a parameter at a time, as storage_load_choose: choice holds the knob's or the
+ * default's values on entry; an applicable section (NULL: none) replaces each one no knob gave, and says so, only while
+ * the tables are read from disk (ram_percent below ENGRAM_RAM_PERCENT): with every table in RAM no step I/O starts and
+ * the section is not applied. */
+struct storage_engram_choice {
+	uint32_t threads_per_copy, spin_us, pin;
+	bool threads_from_profile, spin_from_profile, pin_from_profile;
+};
+void storage_engram_choose(const struct storage_engram_section *section,
+			   uint32_t ram_percent, bool explicit_threads,
+			   bool explicit_spin, bool explicit_pin,
+			   struct storage_engram_choice *choice);
+/* Serving's application of the profile's engram section where step I/O starts (commands.c's engram_steps_start), its
+ * test seam: with the tables on disk (ram_percent below ENGRAM_RAM_PERCENT) the section of the profile at profile
+ * (NULL or empty: none) is read, and applied through storage_engram_choose when it is enabled and names this pack
+ * (header), exactly the disk store's admitted copies by their device keys in order (copy_keys; an empty key matches
+ * none) and serving's flight shape (steps of slots); each knob given (explicit_*) keeps choice's value. reason gets
+ * why it is not applied (profile_off, tables_in_ram, the read's or the match's reason, engram_section_candidate),
+ * empty when it is. With every table in RAM nothing is read. The RAM share is an input only: it stays the RAM fit's. */
+struct storage_engram_serving {
+	const char *profile;
+	const struct pack_header *header;
+	const char (*copy_keys)[STORAGE_PROFILE_KEY_BYTES];
+	uint32_t copy_count, steps, slots, ram_percent;
+	bool explicit_threads, explicit_spin, explicit_pin;
+};
+void storage_engram_section_apply(const struct storage_engram_serving *serving,
+				  struct storage_engram_choice *choice,
+				  char reason[STORAGE_PROFILE_REASON_BYTES]);
+/* The schema 3 container, a stage's member by name (STORAGE_LOAD_SECTION_NAME or STORAGE_ENGRAM_SECTION_NAME; any
+ * other is STATUS_INVALID_ARGUMENT): file plumbing only, so every stage's parameters, state and decision stay its own.
+ * storage_stage_section_write writes section (length bytes of JSON) as that member of the profile at path, atomically:
+ * a new schema 3 profile when there is none, else the member replaced or added with every other byte kept. A file that
+ * is no schema 3 profile of real_source is refused, its reason in *refusal, so a stage never replaces another tuning's
+ * profile. storage_stage_section_qualify turns that member's candidate (enabled 0) into a qualified one (enabled 1),
+ * alone. storage_stage_section_writable is read-only, before a stage measures: STATUS_OK when a write could write path
+ * (no file, or a schema 3 profile of real_source), else its refusal in *refusal; the write's own check stays
+ * authoritative. The storage_load_section_* calls are these for the load stage's member. */
+#define STORAGE_ENGRAM_SECTION_NAME "engram"
+MUST_CHECK result_status storage_stage_section_write(
+	const char *path, const char *real_source, const char *member_name,
+	const char *section, size_t length, const char **refusal);
+MUST_CHECK result_status storage_stage_section_qualify(const char *path,
+						       const char *real_source,
+						       const char *member_name,
+						       const char **refusal);
+MUST_CHECK result_status storage_stage_section_writable(const char *path,
+							const char *real_source,
+							const char **refusal);
 MUST_CHECK result_status storage_load_section_write(const char *path,
 						    const char *real_source,
 						    const char *section,
@@ -96,8 +169,6 @@ MUST_CHECK result_status storage_load_section_write(const char *path,
 MUST_CHECK result_status storage_load_section_qualify(const char *path,
 						      const char *real_source,
 						      const char **refusal);
-/* Read-only, before the stage measures: STATUS_OK when storage_load_section_write could write path (no file, or a
- * schema 3 profile of real_source), else its refusal in *refusal. The write's own check stays authoritative. */
 MUST_CHECK result_status storage_load_section_writable(const char *path,
 						       const char *real_source,
 						       const char **refusal);

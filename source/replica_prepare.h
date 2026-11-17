@@ -7,16 +7,16 @@
 /* The copy's worker threads, one pool shared by all targets: each takes one chunk at a time, reads and hashes it once
  * and writes it to every target, then flushes, reads back and compares it on each (k targets: 1 read + 1 hash + k
  * writes + k readbacks a chunk), so a copy runs at workers chunks over the sum of those stages until a drive binds
- * (S1, 14 Nov 2026: 4 workers 96 % busy, one SHA-256 stream a chunk 42 % of their time). The default is request 25b's
- * winner (15 Nov 2026, 96 GiB from nvme_8tb, A D D A against 4): one target 4.993 GB/s against 3.617 (x1.38), two
- * targets 4.545 against 2.773 (x1.64), the full re-verification about 12.3 GB/s against 5.4; the same bytes and
- * digests at any count. A copy-stage parameter, `anemone autotune --copy_workers` (4: the earlier default). */
+ * (measured 14 Nov 2026: 4 workers 96 % busy, one SHA-256 stream a chunk 42 % of their time). The default won on 15 Nov
+ * 2026 (96 GiB from the source's NVMe drive, A D D A against 4): one target 4.993 GB/s against 3.617 (x1.38), two
+ * targets 4.545 against 2.773 (x1.64), the full re-verification about 12.3 GB/s against 5.4; the same bytes and digests
+ * at any count. A copy-stage parameter, `anemone autotune --copy_workers` (4: the earlier default). */
 #define PREPARE_COPY_WORKERS_DEFAULT 24u
 #define PREPARE_COPY_WORKERS_MOST 32u
-/* Two-chunk source hashing (prepare_copy_options.pair_source_hashes), on by default: request 27 (15 Nov 2026, 96 GiB
- * from nvme_8tb to one target at 24 workers, A D D A) copied at 4.927 and 5.024 GB/s paired against 4.843 and 4.996
- * with one hash a chunk (+1.14 %), with the same manifest digests (R23: two streams run x1.54 a thread).
- * `anemone autotune --copy_hash_pairs=0` hashes one chunk at a time (the earlier default). */
+/* Two-chunk source hashing (prepare_copy_options.pair_source_hashes), on by default: measured on 15 Nov 2026 (96 GiB
+ * from the source's NVMe drive to one target at 24 workers, A D D A), the copy ran at 4.927 and 5.024 GB/s paired
+ * against 4.843 and 4.996 with one hash a chunk (+1.14 %), with the same manifest digests (two SHA-256 streams run
+ * x1.54 a thread). `anemone autotune --copy_hash_pairs=0` hashes one chunk at a time (the earlier default). */
 #define PREPARE_PAIR_SOURCE_HASHES_DEFAULT true
 #define PREPARE_PARTIAL_SUFFIX \
 	".partial" /* autotune's resumable checkpoint beside its target */

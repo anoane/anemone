@@ -1,4 +1,4 @@
-# Anemone v0.0.3-alpha
+# Anemone v0.0.4-alpha
 
 SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -40,10 +40,10 @@ recipe is text-only. See the [user manual](docs/USAGE.md) for input and profile 
   (category, exactness, concurrency, focus) pick the rest.
 - **Lossless, compact state.** FP16 state carriers at about 3,200 bytes per token per card: the smallest lossless
   footprint in the comparison ([H7](docs/results/COMPARISON_MATRIX.md#h-kv-cache-and-state-memory)).
-- **Storage autotune.** `anemone autotune` prepares and verifies the copies and tunes the load for each machine, in
-  separate stages with their own parameters: the copy stage records its decisions beside the profile, and the load
-  stage writes the profile's load section. An Engram stage of its own is still to come
-  ([STORAGE_PROFILE.md](docs/user/STORAGE_PROFILE.md)).
+- **Storage autotune.** `anemone autotune` prepares and verifies the copies and tunes the load and the Engram step
+  I/O for each machine, in separate stages with their own parameters: the copy stage records its decisions beside the
+  profile, the load stage writes the profile's load section, and the Engram stage, replaying real prompts, its engram
+  section ([STORAGE_PROFILE.md](docs/user/STORAGE_PROFILE.md)).
 - **Proven changes.** Every merge has CPU proof on the reference machine:
   - address, thread and undefined-behaviour sanitizers;
   - an adversarial review of the code;
@@ -61,26 +61,28 @@ fits, the start is refused.
 
 | Profile and placement | Sessions at 1M (default) |
 | --- | ---: |
-| Original weights, PP5 (4 × CMP 170HX + RTX PRO 6000), the default | 5 |
+| Original weights, PP5 (4 × CMP 170HX + RTX PRO 6000), the default | 6 |
 | Original weights, `--placement=tp4_pro` | 1 |
 | EXL3 balanced, TP4, 2.9 bpw map (default) | 1 |
 | EXL3, TP4, 2.68 bpw map (opt-in, no quality claim yet) | 2 |
 | Original exact | 1 session of 512 tokens (bounded recipe) |
 
-Measured with the startup fit of a plain default serve of each placement on the reference machine, with no other engine
-on the cards: the placement, the tables, the pack or map and its verified copies, and no other option. TP4_PRO's start
-prints `session slots: max -> 1 of 1048576 tokens each`. For PP5 that is `serve --placement=pp5` with the tables and the
-pack only: the default resolver applies the PP5 base recipe itself, and the start prints
-`session slots: max -> 5 of 1048576 tokens each`. It is ready in about 24 s, loading 195 GiB of host memory at 16.6
-GiB/s from three verified copies. That start read each copy with 2 PP loader readers; the default is now 4, which loaded
-real PP5 serves in 16.42 s against 17.03 s with 2
+Measured with the startup fit of a plain default serve of each placement on the reference machine, with no other
+engine on the cards: the placement, the tables, the pack or map and its verified copies, and no other option. PP5 was
+measured on 17 Nov 2026 (v0.0.4-alpha), the others on 16 Nov 2026 (v0.0.3-alpha), whose plans v0.0.4-alpha
+leaves as they were. TP4_PRO's start prints `session slots: max -> 1 of 1048576 tokens each`. For PP5 that is
+`serve --placement=pp5` with the tables and the pack only: the default resolver applies the PP5 base recipe itself, and
+the start prints `session slots: max -> 6 of 1048576 tokens each` (5 on v0.0.3-alpha). On 16 Nov 2026 it was
+ready in about 24 s, loading 195 GiB of host
+memory at 16.6 GiB/s from three verified copies. That start read each copy with 2 PP loader readers; the default is now
+4, which loaded real PP5 serves in 16.42 s against 17.03 s with 2
 ([`--reader_threads_per_copy`](docs/USAGE.md#knob-reader_threads_per_copy)). The benchmark recipes in
 [SERVER_PROFILES.md](docs/SERVER_PROFILES.md) pin 65,536 tokens × 8 sessions for the comparison runs: drop those two
 options to serve 1M sessions. More memory per card, or a smaller context, fits more sessions.
 
 To trade context for sessions by hand:
 - `--context_tokens=N`: the context of every session, a multiple of 16, at least 16,384 on TP placements. For
-  example, the original balanced PP5 recipe fits 28 sessions at `--context_tokens=65536`.
+  example, the original balanced PP5 recipe fits 30 sessions at `--context_tokens=65536` (28 on v0.0.3-alpha).
 - `--session_slots=N`: a fixed count. A count the cards cannot hold is refused before the load, with the most that
   fit.
 
@@ -107,10 +109,23 @@ Run this once per machine, and again after adding or replacing a drive.
    anemone autotune /srv/model.anemone --stage=load --profile=/srv/runtime/storage-profile.json
    anemone autotune /srv/model.anemone --stage=load --profile=/srv/runtime/storage-profile.json --qualify
    ```
-4. **Serve** with a command from [SERVER_PROFILES.md](docs/SERVER_PROFILES.md). Turbo load opens the verified copies
+4. **Tune the Engram step I/O (optional).** It matters only when the Engram fit puts tables on disk. The Engram
+   stage replays real prompts through serving's step I/O on these copies and writes a candidate section into the
+   profile; `--qualify` enables it. Make its token files from the prompts of the public golden dataset
+   ([anoane/anemone-ds41f1017-golden](https://huggingface.co/datasets/anoane/anemone-ds41f1017-golden)), one
+   messages file a prompt, with `tools/measure/engram_trace` (`make -f tools/measure/engram_trace.mk`):
+   ```sh
+   build/release/engram_trace tokenize tokenizer.bin prompt1.json /srv/prompt1_ids.u32
+   anemone autotune /srv/model.anemone --stage=engram --tokens=/srv/prompt1_ids.u32 --tokens=/srv/prompt2_ids.u32 --profile=/srv/runtime/storage-profile.json
+   anemone autotune /srv/model.anemone --stage=engram --profile=/srv/runtime/storage-profile.json --qualify
+   ```
+   `anemone autotune /srv/model.anemone --tokens=... --profile=...` without `--stage` runs steps 2, 3 and 4 in order
+   and skips a stage whose section already names this pack and these copies (`--retune` measures it again).
+5. **Serve** with a command from [SERVER_PROFILES.md](docs/SERVER_PROFILES.md). Turbo load opens the verified copies
    by itself: the startup lines `turbo load: copy N <path>` name them. The Engram fit prints where the tables go
-   (`engram ram percent: …`). Every command sets `CUDA_DEVICE_ORDER=PCI_BUS_ID`, and it is required: without it the
-   RTX PRO 6000 can be enumerated first and the PP5 startup fit fails ([INSTALL.md](INSTALL.md#card-placement)).
+   (`engram ram percent: …`). The engine numbers the visible cards by PCI address itself, whatever the order of a
+   `CUDA_VISIBLE_DEVICES` list (`--card_order` orders them); every command still sets `CUDA_DEVICE_ORDER=PCI_BUS_ID`,
+   so that a `CUDA_VISIBLE_DEVICES` list of ordinals selects the same cards ([INSTALL.md](INSTALL.md#card-placement)).
 
 ## Target hardware
 
@@ -175,13 +190,13 @@ or API key.
 
 ## Measured performance and limits
 
-Retained **6 November 2026, tcb82** measurements. Donor decode permits prefix reuse;
+Retained **6 November 2026** measurements. Donor decode permits prefix reuse;
 conditional-head quality covers 54 cases and 7,878 positions, with exact quality
 reported as reference self-comparison. Current reruns,
 protocols and qualification limits are in the [full matrix](docs/results/COMPARISON_MATRIX.md),
 [benchmark methods](docs/results/BENCHMARKS.md) and [golden metrics](docs/results/GOLDEN_METRICS.md).
 
-| 6 November 2026, tcb82 measurement | TP4 EXL3 balanced | Original PP5 balanced | Original exact |
+| 6 November 2026 measurement | TP4 EXL3 balanced | Original PP5 balanced | Original exact |
 | --- | ---: | ---: | ---: |
 | C1 structured donor decode (tok/s) | 337.2 | 248.7 | 7.8 |
 | C8 structured aggregate donor decode (tok/s) | 920.8 | 810.2 | outside one-session, capacity 512 scope |
@@ -284,6 +299,7 @@ Special thanks to:
 - **GNmac** ([@GNmac](https://x.com/GNmac)) — [CMP 170HX project](https://github.com/GNmac-lab/deepseek-v41-flash-1017-cmp170hx).
 - **Sean Phan** ([@seanphan](https://x.com/seanphan)) — [PixelML/club-170hx](https://github.com/PixelML/club-170hx).
 - **Turboderp** ([@turboderp_](https://x.com/turboderp_)) — [ExLlamaV3](https://github.com/turboderp-org/exllamav3).
+- **Petri Krohn** ([@PetriKrohn](https://github.com/PetriKrohn)) — [CMP 170HX unlock research](https://github.com/dartraiden/NVIDIA-patcher/issues/73) and the [FACEB13D talk](https://talks.mrmcd.net/2026/talk/ZDRJLV/), with Jon Pry, Cab, Humvee55, BlackSun, duggasco, Amogh Munikote and the others named in the [full credits](docs/CREDITS.md).
 - Members of the private **CMP 170HX Owners** group chat on X.
 - The [**cmpunlocker Discord channel**](https://discord.gg/CdHSakKSFv).
 

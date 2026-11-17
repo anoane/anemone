@@ -193,12 +193,12 @@ MUST_CHECK result_status server_open(const struct server_options *options,
 MUST_CHECK result_status server_storage_info(struct http_server *server,
 					     const char *text, size_t bytes);
 void server_close(struct http_server *server); /* accepts NULL */
-/* The engine's description gives the model's name and context. The nonblocking stop descriptor carries signal
- * bytes: SIGHUP reloads keys transactionally; any other byte/EOF stops. Main installs the signal handlers.
- * At most 64 distinct usernames are retained over this server's lifetime, including removed users' totals;
- * a reload exceeding that bound fails with the old set intact. Requests retain their authenticated username.
- * Exact prefix modes refuse multiple slots without prefill_first or prefill_order, and refuse
- * PREFILL_ORDER_SHORT_ROWS until its cold-plan reuse is qualified (INVALID_ARGUMENT). */
+/* The engine's description gives the model's name and context. The nonblocking stop descriptor carries signal bytes:
+ * SIGHUP reloads keys transactionally; any other byte/EOF stops. The caller (serve, source/commands.c) installs the
+ * signal handlers: SIGINT, SIGTERM and SIGHUP write their number into it. At most 64 distinct usernames are retained
+ * over this server's lifetime, including removed users' totals; a reload exceeding that bound fails with the old set
+ * intact. Requests retain their authenticated username. Exact prefix modes refuse multiple slots without prefill_first
+ * or prefill_order, and refuse PREFILL_ORDER_SHORT_ROWS until its cold-plan reuse is qualified (INVALID_ARGUMENT). */
 MUST_CHECK result_status server_run(struct http_server *server,
 				    struct inference_engine *engine,
 				    const struct text_tokenizer *tokenizer,

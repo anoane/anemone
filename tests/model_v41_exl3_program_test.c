@@ -16,6 +16,7 @@
 #include "anemone/linear_records.h"
 #include "anemone/sampler_records.h"
 #include "anemone/sampler_shard_records.h"
+#include "anemone/sampler.h"
 #include "anemone/tp_exchange_records.h"
 #include "anemone/step.h"
 #include "host_memory_backend.h"
@@ -663,6 +664,23 @@ static void check_case(const struct pack_record *pack, uint32_t capacity,
 				check_program(model, program, &companions);
 				check_handles(program, "four-CMP program");
 			}
+			struct sampler_logits_part parts[BACKEND_MAXIMUM_CARDS];
+			uint32_t part_count = 0;
+			expect(program == NULL || kinds[kind] != PROGRAM_THIN ||
+				       (sampler_logits_parts(
+						program, MODEL_VOCABULARY_VALUE,
+						parts, BACKEND_MAXIMUM_CARDS,
+						&part_count) == STATUS_OK &&
+					part_count == 1u &&
+					parts[0].card == program->result_card &&
+					parts[0].offset ==
+						program->cards
+							[program->result_card]
+								.logits_offset &&
+					parts[0].first_token == 0 &&
+					parts[0].token_count ==
+						MODEL_VOCABULARY_VALUE),
+			       "the capture's logits parts without head shards: the result card's whole head");
 			free(program);
 		}
 		struct v41_tp2_program_description published = { 0 };
@@ -904,6 +922,7 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 				       &program, &companions) == STATUS_OK &&
 				       program != NULL,
 			       "head shards: every kind prepares");
+			uint64_t target_logits[EXL3_CARDS] = { 0 };
 			for (uint32_t card = 0; program != NULL && card < EXL3_CARDS; card++) {
 				uint32_t samplers = 0, streams = 0, heads = 0, shares = 0, calls = 0, pushes = 0,
 					 fast = 0, grouped = 0;
@@ -1027,6 +1046,10 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 					memcpy(&arguments, launch->argument, sizeof(arguments));
 					samplers++;
 					calls |= 1u << arguments.call;
+					target_logits[card] =
+						arguments.call == 0 ?
+							arguments.logits_offset :
+							target_logits[card];
 					expect(arguments.rank == card &&
 						       arguments.first_token ==
 							       card * shard &&
@@ -1055,6 +1078,36 @@ static void check_head_shards(const struct pack_record *pack, uint32_t capacity,
 					       "settings copy");
 				}
 				const bool thin = kinds[kind] == PROGRAM_THIN;
+				if (thin && card + 1u == EXL3_CARDS) {
+					struct sampler_logits_part
+						parts[BACKEND_MAXIMUM_CARDS];
+					uint32_t part_count = 0;
+					bool parts_hold =
+						sampler_logits_parts(
+							program,
+							MODEL_VOCABULARY_VALUE,
+							parts,
+							BACKEND_MAXIMUM_CARDS,
+							&part_count) ==
+							STATUS_OK &&
+						part_count == EXL3_CARDS;
+					for (uint32_t rank = 0;
+					     parts_hold && rank < EXL3_CARDS;
+					     rank++)
+						parts_hold =
+							parts[rank].card ==
+								rank &&
+							parts[rank].offset ==
+								target_logits
+									[rank] &&
+							parts[rank].first_token ==
+								rank * shard &&
+							parts[rank].token_count ==
+								shard;
+					expect(parts_hold,
+					       "the capture's logits parts: each rank's cut "
+					       "where its target sampler shard reads it");
+				}
 				const uint32_t positions = description.limits.draft_positions;
 				const uint32_t cuts = thin ? (drafts ? EXL3_DRAFT_CUTS : 1u) : 0u;
 				expect(fast != 0,
@@ -1192,6 +1245,14 @@ static void check_batch(const struct pack_record *pack, bool shards,
 			       program != NULL &&
 			       program->kind == PROGRAM_BATCH,
 		       "a BATCH program prepares");
+		struct sampler_logits_part parts[BACKEND_MAXIMUM_CARDS];
+		uint32_t part_count = 0;
+		expect(program == NULL ||
+			       sampler_logits_parts(
+				       program, MODEL_VOCABULARY_VALUE, parts,
+				       BACKEND_MAXIMUM_CARDS,
+				       &part_count) == STATUS_INVALID_ARGUMENT,
+		       "a BATCH program has no capture logits parts");
 		const uint32_t slabs =
 			(rows[index] + LINEAR_MAXIMUM_ROWS - 1u) /
 			LINEAR_MAXIMUM_ROWS;

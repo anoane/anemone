@@ -44,3 +44,14 @@ int help_knobs(const char *prefix, FILE *stream)
 		(void)fprintf(stream, "No knobs match prefix '%s'.\n", prefix);
 	return ferror(stream) != 0 || !found ? 1 : 0;
 }
+
+bool knob_catalogued(const char *argument)
+{
+	const size_t bytes = strcspn(argument, "=");
+	for (size_t index = 0; index < sizeof(cli_knobs) / sizeof(cli_knobs[0]);
+	     index++)
+		if (strlen(cli_knobs[index].name) == bytes &&
+		    strncmp(cli_knobs[index].name, argument, bytes) == 0)
+			return true;
+	return false;
+}

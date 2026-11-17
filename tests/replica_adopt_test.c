@@ -128,8 +128,8 @@ static uint32_t search(const char *root, const char *point,
 	}
 	const uint32_t count =
 		stream != NULL ?
-			replicas_find_mounts(stream, real_source, header, found,
-					     REPLICAS_MOST, false) :
+			replicas_find_mounts(stream, &real_source, 1u, header,
+					     found, REPLICAS_MOST, false) :
 			0;
 	if (stream != NULL)
 		(void)fclose(stream);

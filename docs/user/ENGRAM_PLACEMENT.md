@@ -28,12 +28,21 @@ paired serving qualification is pending.
 | `--engram_sources=PACK[,PACK...]` | Optional independent flat table sources. Source model weights are ignored. |
 | `--turbo-nvme-engrams=1` | Interleave runtime reads among table sources on distinct physical devices. Default 0. Requires disk placement and at least two sources. |
 | `--engram_step_io=1` | Read a step's blocks at once when its row ids are known, on I/O threads per copy that verify each block and fall back to another copy. The default when serving PP5 or TP4_PRO from disk tables; `--engram_step_io=0` keeps the per-row gathers, the default elsewhere. The startup line `engram step io:` names the path. |
-| `--engram_io_threads=1..4`, `--engram_spin_us=0..100000`, `--engram_io_pin=0\|1` | Step I/O threads per copy (default 2), their busy-poll window after the last read before sleeping (default 200 µs), and pinning to each drive's completion CPU and its sibling (default 1). |
+| `--engram_io_threads=1..4`, `--engram_spin_us=0..100000`, `--engram_io_pin=0\|1` | Step I/O threads per copy (default 2), their busy-poll window after the last read before sleeping (default 200 µs), and pinning to each drive's completion CPU and its sibling (default 1). A value not given as a knob comes from the storage profile's enabled engram section when it names this pack, these copies and this flight shape (`anemone autotune PACK --stage=engram`), else from the default. |
 | `--engram_hot_set=FILE --engram_hot_sha256=HEX [--engram_hot_mib=N]` | A static hot set of table blocks held in RAM and served like the RAM prefix (default none, at most 512 MiB). |
 
 Serving PP5 (request 7, every stream identical to all-RAM): with step I/O, a 131k-token cold prefill took 27.4 s
 against 27.2 s with the tables in RAM and 47.9 s with per-row gathers; decode at one session ran 2.2 % slower than
 all-RAM and at four and eight sessions equal, on about 0.8 cores of I/O.
+
+The step I/O defaults were measured on an earlier set of drives. The Engram stage of autotune measures them on this
+host's drives through serving's own step I/O, replaying real prompts at seven decode and prefill levels, and writes
+its choice into the storage profile's `"engram"` section as a candidate ([storage
+preparation](STORAGE_PROFILE.md)). Serving applies an enabled section only while tables are read from disk, a
+parameter at a time (knob, then profile, then default), and never its RAM share: that stays the fit's. The startup
+line names each parameter's source and whether the section was applied, and why not: `engram step io: 2 copies, 2
+threads a copy (profile = default), spin 200 us (profile = default), pin 1 (profile = default), ...; engram section
+applied`.
 
 Step I/O gives each block read its own deadline: the cards' 10 s wait limit over twice (copies + 1), 1.25 s with
 three copies, so a stalled read is read again on another copy before a pipeline that sees no progress fails the step.
@@ -65,8 +74,10 @@ Device selection rejects unknown topology, removable/rotational media, SD,
 USB, Thunderbolt/USB4 enclosures (without the external override) and network
 filesystems. Composite dm/md devices resolve to their physical members, which
 must each qualify; partitions and bind mounts of one physical device share an
-identity. No speed probe is run: a slow device is not refused by selection,
-and measured shares come only from autotune.
+identity. No speed probe is run: a slow device is not refused by selection.
+Step I/O gives each read to the copy with the fewest reads in flight, so a
+slower copy takes fewer; per-copy lookup shares come only from a schema 2
+storage profile (the retired combined tuning's).
 New replica writes require at least 20% of total filesystem space to remain
 available, in addition to the existing explicit free-space floor. Existing
 read-only copies can be used even when their filesystem is already below that

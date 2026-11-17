@@ -17,6 +17,8 @@
 	256u /* events queued for the front end: one step's at most, many times */
 #define DRAWING_ROWS \
 	1u /* a pipeline's step takes one session that draws: each such session flies in steps apart */
+#define ENGINE_LINE_APART_BYTES \
+	64u /* a cache line: members this far apart never share one */
 
 enum slot_phase {
 	SLOT_IDLE,
@@ -156,6 +158,14 @@ struct inference_engine {
 	bool metrics_enabled; /* protected by lock; only iteration accounting opts in */
 	bool is_ending;
 	bool checkpoint_barrier; /* no flight follows a prompt's last row until its checkpoint is copied */
+	/* engine_submit_forced's continuation, NULL for every other command: written under the lock by a forced submit
+	 * and by its command's end, read by the stepping thread. The two gaps, never written, keep every other byte 64
+	 * or more from it: every member before it and the arrays engine_open lays after the struct (the queued commands
+	 * first). So the cache line it lies on, which no thread writes while no forced command runs, holds nothing else
+	 * at any alignment the engine is allocated at (b6's rule); appended, it moves no member. */
+	unsigned char forced_apart[ENGINE_LINE_APART_BYTES];
+	const struct engine_forced_continuation *forced;
+	unsigned char forced_apart_after[ENGINE_LINE_APART_BYTES];
 };
 
 /* Product timestamps; zero if the monotonic clock fails. No optional timing hooks. */

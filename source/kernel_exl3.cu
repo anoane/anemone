@@ -298,7 +298,7 @@ __device__ static void exl3_product(struct exl3_expert_record record,
 	{                                                                 \
 		exl3_product<bits_x2, down, slices>(record, arena);       \
 	}
-#define EXL3_PRODUCT_WIDTH(width, bits_x2)                            \
+#define EXL3_PRODUCT_WIDTH(width, bits_x2, ...)                       \
 	EXL3_PRODUCT_ENTRY(exl3_gate_up_##width, bits_x2, false,      \
 			   EXL3_PRODUCT_SLICES)                       \
 	EXL3_PRODUCT_ENTRY(exl3_gate_up_##width##_s8, bits_x2, false, \
@@ -307,10 +307,7 @@ __device__ static void exl3_product(struct exl3_expert_record record,
 			   EXL3_PRODUCT_SLICES)                       \
 	EXL3_PRODUCT_ENTRY(exl3_down_##width##_s8, bits_x2, true,     \
 			   EXL3_RELAXED_SLICES)
-EXL3_PRODUCT_WIDTH(k2, EXL3_BITS_X2_K2)
-EXL3_PRODUCT_WIDTH(k2_5, EXL3_BITS_X2_K2_5)
-EXL3_PRODUCT_WIDTH(k3, EXL3_BITS_X2_K3)
-EXL3_PRODUCT_WIDTH(k4, EXL3_BITS_X2_K4)
+EXL3_WIDTHS(EXL3_EVERY_WIDTH, EXL3_PRODUCT_WIDTH, )
 #undef EXL3_PRODUCT_WIDTH
 #undef EXL3_PRODUCT_ENTRY
 

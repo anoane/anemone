@@ -1,17 +1,27 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
  * The load stage of autotune (storage_autotune_load.c) and the profile's load section (storage_profile.h):
- *   - the A D D A verdict: the higher mean wins even inside the spread, and only an exact tie goes to the simpler arm;
+ *   - the grid's order: each arm once a pass, no two consecutive points sharing readers or piece, every readers and
+ *     piece value at the middle position of pass 1, pass 2 its reverse; each arm ranked by its two points' mean;
+ *   - the A D D A D A A D verdict: the higher mean wins even inside the spread, only an exact tie goes to the simpler
+ *     arm, and all eight points count;
+ *   - the drives' cool bound, the cool wait's end (its bound, or the lease's end when sooner) and the page counters'
+ *     JSON (a counter the kernel lacks written as null);
  *   - knob over profile over default, a parameter at a time, and no section changes nothing;
- *   - the stage's options: the copy stage's and the lookup tuning's refused by name, before any file opens;
+ *   - the stage's options: the copy stage's and the Engram stage's refused by name, before any file opens;
  *   - the section's read, write, replacement and qualification, every other member of the profile kept byte for byte,
  *     and a schema 2 profile or another source's refused;
  *   - in the two-device scratch environment, the stage end to end on the n-gram test pack beside a receipted replica:
- *     a run cut short exits for a retry and the next one resumes from its progress, the section names both copies,
- *     every point and the selection, and matches only this pack and these copies.
+ *     a state of the earlier schema is named and not resumed, a run cut short exits for a retry and the next one
+ *     resumes from its progress, (checking builds) a stop signal during a warm-up or a cool wait leaves that point
+ *     unmeasured for the next run, and so does the lease's end (the clock at its end during a warm-up; drives held hot
+ *     through a cool wait under a short lease, the wait ending with the lease), warming up before the grid and before
+ *     the confirmation, the section names both copies, every point (with its pass, CPU split, page counters and cool
+ *     wait) and the selection, and matches only this pack and these copies.
  */
 #include "storage_autotune.h"
 #include "anemone/engram.h"
+#include "anemone/hooks.h"
 #include "anemone/pack.h"
 #include "anemone/replicas.h"
 #include "anemone/storage_exl3.h"
@@ -42,8 +52,9 @@
 #define KNOB_READERS 3u
 #define KNOB_PIECE_BYTES (32ull << 20u)
 #define POINTS_FIRST_RUN 10u
-#define LOAD_FIRST_ABBA_POINT \
-	36u /* the grid's 35 points, then the A D D A's (storage_autotune_load.c) */
+#define LOAD_FIRST_ABBA_POINT        \
+	(AUTOTUNE_LOAD_GRID_POINTS + \
+	 1u) /* the grid's 70 points, then the A D D A D A A D's */
 /* to A1: the third run resumes inside the A D D A */
 #define POINTS_SECOND_RUN (LOAD_FIRST_ABBA_POINT - POINTS_FIRST_RUN)
 #define STAGE_COPIES 2u /* the source and its replica */
@@ -57,6 +68,32 @@
 #define LOAD_WARMUP_PASSES_EXPECTED \
 	2u /* storage_autotune_load.c's LOAD_WARMUP_PASSES */
 #define ENGRAM_MEMBER ",\"engram\":{\"kept\":[1,2]}"
+/* rank_cases' grid: every point at the base rate but the steady arm's two, the spiky arm's fast and slow ones and the
+ * default's */
+#define RANK_BASE_RATE 1.0
+#define RANK_STEADY_READERS 3u
+#define RANK_STEADY_PIECE 64u
+#define RANK_STEADY_RATE 2.6
+#define RANK_SPIKY_READERS 2u
+#define RANK_SPIKY_PIECE 8u
+#define RANK_SPIKY_HIGH 5.0
+#define RANK_SPIKY_LOW 0.1
+#define RANK_DEFAULT_PIECE 16u
+#define RANK_DEFAULT_RATE 9.0
+#define COOL_FIXTURE_MILLICELSIUS 30000
+#define NANOSECONDS_PER_SECOND 1000000000ull
+#define COOL_FIXTURE_BEGIN \
+	(1000ull * NANOSECONDS_PER_SECOND) /* a wait's start, 1000 s */
+#define STOPPED_COOL_CALL \
+	2u /* the stopped run's cool waits: its first point's, then the stopped one's */
+#define LEASE_SECONDS \
+	4u /* the leased run's --seconds: the lease ends during its first point's cool wait, the drives held hot */
+#define COOL_POLL_SECONDS \
+	5u /* storage_autotune_load.c's LOAD_COOL_POLL_SECONDS */
+#define COOL_FIXTURE_DRIVES 2u
+#define WARMUPS_RESUMED_IN_GRID \
+	2u /* a run resumed inside the grid: before its grid point and its first confirmation point */
+#define OLD_SCHEMA_STATE 3u /* the earlier stage's state schema */
 #define DIRECTORY_MODE (S_IRUSR | S_IWUSR | S_IXUSR)
 #define FILE_MODE (S_IRUSR | S_IWUSR)
 #define MAP_FOLDER "/dev/shm/anemone-load-map-XXXXXX"
@@ -157,21 +194,28 @@ static int autotune_captured(int count, char **arguments,
 	return status;
 }
 
-/* The A D D A rates in their order: the challenger, the default, the default, the challenger. */
-static const double challenger_apart[AUTOTUNE_LOAD_ABBA_POINTS] = { 10.0, 9.9,
-								    9.95,
-								    10.05 };
-static const double challenger_within[AUTOTUNE_LOAD_ABBA_POINTS] = { 10.0, 9.0,
-								     11.0,
-								     10.2 };
-static const double default_ahead[AUTOTUNE_LOAD_ABBA_POINTS] = { 10.0, 12.0,
-								 12.1, 10.1 };
-/* R26's (15 Nov 2026): the challenger's first point was the first touch of its arena */
-static const double cold_first[AUTOTUNE_LOAD_ABBA_POINTS] = { 8.865, 34.63,
-							      44.96, 47.61 };
+/* The confirmation's rates in their order, A D D A D A A D: the challenger (A) and the default (D). */
+static const double challenger_apart[AUTOTUNE_LOAD_ABBA_POINTS] = {
+	10.0, 9.9, 9.95, 10.05, 9.92, 10.02, 10.03, 9.93
+};
+static const double challenger_within[AUTOTUNE_LOAD_ABBA_POINTS] = {
+	10.0, 9.0, 11.0, 10.2, 9.5, 10.1, 10.15, 10.5
+};
+static const double default_ahead[AUTOTUNE_LOAD_ABBA_POINTS] = {
+	10.0, 12.0, 12.1, 10.1, 12.05, 10.05, 10.08, 12.02
+};
+/* the load stage's first real run (15 Nov 2026): the challenger's first point was the first touch of its arena */
+static const double cold_first[AUTOTUNE_LOAD_ABBA_POINTS] = {
+	8.865, 34.63, 44.96, 47.61, 45.5, 46.9, 47.2, 46.1
+};
 /* equal at the reported precision (three decimals), apart below it */
-static const double exact_tie[AUTOTUNE_LOAD_ABBA_POINTS] = { 10.0001, 10.0002,
-							     10.0002, 10.0001 };
+static const double exact_tie[AUTOTUNE_LOAD_ABBA_POINTS] = {
+	10.0001, 10.0002, 10.0002, 10.0001, 10.0002, 10.0001, 10.0001, 10.0002
+};
+/* the first four points (A D D A) favour the challenger, all eight the default */
+static const double second_half[AUTOTUNE_LOAD_ABBA_POINTS] = { 10.0, 9.9, 9.9,
+							       10.0, 9.9, 8.0,
+							       8.0,  9.9 };
 
 static void verdict_cases(void)
 {
@@ -208,6 +252,146 @@ static void verdict_cases(void)
 		       !verdict.exact_tie && verdict.margin < 0.0 &&
 		       verdict.spread > AUTOTUNE_LOAD_SPREAD_BOUND,
 	       "a spread over the bound is flagged, and the verdict is the higher mean's as before");
+	autotune_load_verdict(second_half, false, &verdict);
+	expect(verdict.default_wins && verdict.margin < 0.0,
+	       "all eight points count: a challenger ahead over the first four loses over the eight");
+}
+
+/* The grid's order through autotune_load_arm_of: pass 1 holds each arm once, inside a pass no two consecutive points
+ * share readers or piece, every readers and every piece value sits at pass 1's middle position on average, and pass 2
+ * is pass 1 reversed, so each arm's two positions sum to the grid's last index. */
+static void order_cases(void)
+{
+	uint32_t readers[AUTOTUNE_LOAD_GRID_POINTS],
+		pieces[AUTOTUNE_LOAD_GRID_POINTS];
+	for (uint32_t index = 0; index < AUTOTUNE_LOAD_GRID_POINTS; index++)
+		autotune_load_arm_of(index, &readers[index], &pieces[index]);
+	bool once = true, apart = true, mirrored = true;
+	for (uint32_t index = 0; index < AUTOTUNE_LOAD_GRID_CELLS; index++) {
+		for (uint32_t other = 0; other < index; other++)
+			once = once && (readers[other] != readers[index] ||
+					pieces[other] != pieces[index]);
+		const uint32_t mirror = AUTOTUNE_LOAD_GRID_POINTS - 1u - index;
+		mirrored = mirrored && readers[mirror] == readers[index] &&
+			   pieces[mirror] == pieces[index];
+	}
+	for (uint32_t index = 1; index < AUTOTUNE_LOAD_GRID_POINTS; index++)
+		apart = apart && (index == AUTOTUNE_LOAD_GRID_CELLS ||
+				  (readers[index] != readers[index - 1u] &&
+				   pieces[index] != pieces[index - 1u]));
+	/* each value's positions in pass 1: their sum is its count times the middle position (34 / 2) */
+	bool balanced = true;
+	for (uint32_t index = 0; index < AUTOTUNE_LOAD_GRID_CELLS; index++) {
+		uint32_t reader_sum = 0, reader_count = 0, piece_sum = 0,
+			 piece_count = 0;
+		for (uint32_t other = 0; other < AUTOTUNE_LOAD_GRID_CELLS;
+		     other++) {
+			reader_sum += readers[other] == readers[index] ? other :
+									 0u;
+			reader_count += readers[other] == readers[index] ? 1u :
+									   0u;
+			piece_sum += pieces[other] == pieces[index] ? other :
+								      0u;
+			piece_count += pieces[other] == pieces[index] ? 1u : 0u;
+		}
+		balanced =
+			balanced &&
+			reader_sum + reader_sum ==
+				reader_count *
+					(AUTOTUNE_LOAD_GRID_CELLS - 1u) &&
+			piece_sum + piece_sum ==
+				piece_count * (AUTOTUNE_LOAD_GRID_CELLS - 1u);
+	}
+	expect(once, "pass 1 runs each arm once");
+	expect(apart,
+	       "inside a pass no two consecutive points share readers or piece");
+	expect(balanced,
+	       "every readers and every piece value sits at pass 1's middle position on average");
+	expect(mirrored,
+	       "pass 2 is pass 1 reversed: each arm's two points average the grid's middle");
+}
+
+/* The pass 1 index of the arm readers/piece, or the cells' count when none is. */
+static uint32_t arm_index(uint32_t readers, uint32_t piece_mib)
+{
+	for (uint32_t index = 0; index < AUTOTUNE_LOAD_GRID_CELLS; index++) {
+		uint32_t found_readers = 0, found_piece = 0;
+		autotune_load_arm_of(index, &found_readers, &found_piece);
+		if (found_readers == readers && found_piece == piece_mib)
+			return index;
+	}
+	return AUTOTUNE_LOAD_GRID_CELLS;
+}
+
+/* Each arm ranks by its two points' mean, not its best point; equal means go to the simpler arm. */
+static void rank_cases(void)
+{
+	double rates[AUTOTUNE_LOAD_GRID_POINTS];
+	for (uint32_t index = 0; index < AUTOTUNE_LOAD_GRID_POINTS; index++)
+		rates[index] = RANK_BASE_RATE;
+	const uint32_t steady = arm_index(RANK_STEADY_READERS,
+					  RANK_STEADY_PIECE),
+		       spiky = arm_index(RANK_SPIKY_READERS, RANK_SPIKY_PIECE),
+		       fallback_index = arm_index(0, RANK_DEFAULT_PIECE);
+	const uint32_t last = AUTOTUNE_LOAD_GRID_POINTS - 1u;
+	bool placed = steady < AUTOTUNE_LOAD_GRID_CELLS &&
+		      spiky < AUTOTUNE_LOAD_GRID_CELLS &&
+		      fallback_index < AUTOTUNE_LOAD_GRID_CELLS;
+	uint32_t fallback = AUTOTUNE_LOAD_GRID_CELLS;
+	if (placed) {
+		rates[steady] = rates[last - steady] = RANK_STEADY_RATE;
+		rates[spiky] = RANK_SPIKY_HIGH;
+		rates[last - spiky] = RANK_SPIKY_LOW;
+		rates[fallback_index] = rates[last - fallback_index] =
+			RANK_DEFAULT_RATE;
+	}
+	expect(placed && autotune_load_grid_rank(rates, &fallback) == steady &&
+		       fallback == fallback_index,
+	       "an arm ranks by its two points' mean: the steady arm beats one fast point beside a slow one, and the "
+	       "faster default is not the challenger");
+	if (placed)
+		rates[spiky] = rates[last - spiky] = RANK_STEADY_RATE;
+	expect(placed && autotune_load_grid_rank(rates, &fallback) == spiky,
+	       "equal means go to the arm with fewer readers (2 against 3)");
+}
+
+/* The cool bound: every drive strictly below it; no drive read is cool. */
+static void cool_cases(void)
+{
+	struct autotune_drives drives = { .count = COOL_FIXTURE_DRIVES };
+	drives.millicelsius[0] = AUTOTUNE_LOAD_COOL_MILLICELSIUS - 1;
+	drives.millicelsius[1] = COOL_FIXTURE_MILLICELSIUS;
+	const bool cool = autotune_load_drives_cool(&drives);
+	drives.millicelsius[1] = AUTOTUNE_LOAD_COOL_MILLICELSIUS;
+	const bool hot = !autotune_load_drives_cool(&drives);
+	drives.count = 0;
+	expect(cool && hot && autotune_load_drives_cool(&drives),
+	       "drives below the bound are cool, one at it is not, and none read is cool");
+	expect(autotune_load_cool_end(COOL_FIXTURE_BEGIN, UINT64_MAX) ==
+			       COOL_FIXTURE_BEGIN +
+				       (uint64_t)AUTOTUNE_LOAD_COOL_SECONDS_MOST *
+					       NANOSECONDS_PER_SECOND &&
+		       autotune_load_cool_end(COOL_FIXTURE_BEGIN,
+					      COOL_FIXTURE_BEGIN + 1u) ==
+			       COOL_FIXTURE_BEGIN + 1u &&
+		       autotune_load_cool_end(COOL_FIXTURE_BEGIN,
+					      COOL_FIXTURE_BEGIN - 1u) ==
+			       COOL_FIXTURE_BEGIN - 1u,
+	       "a cool wait ends at its bound, or at the lease's end when that comes first");
+	char text[SECTION_BYTES] = "";
+	FILE *const stream = fmemopen(text, sizeof(text) - 1u, "w");
+	const struct autotune_load_counters counters = { .user_nanoseconds = 1u,
+							 .vmstat_read = 1u,
+							 .vmstat = { 1u } };
+	if (stream != NULL) {
+		autotune_load_counters_json(stream, &counters);
+		(void)fclose(stream);
+	}
+	expect(strstr(text,
+		      "\"thp_fault_alloc\":1,\"thp_fault_fallback\":null") !=
+			       NULL &&
+		       strstr(text, ",\"user_nanoseconds\":1,") == text,
+	       "a counter read is written as its number, one the kernel lacks as null");
 }
 
 static void choice_cases(void)
@@ -299,7 +483,7 @@ static void option_cases(const char *folder)
 		return;
 	}
 #define FOREIGN \
-	"autotune: refused: the copy stage's or the lookup tuning's option, not the load stage's: "
+	"autotune: refused: the copy stage's or the Engram stage's option, not the load stage's: "
 	static const struct {
 		const char *option, *expected;
 	} refused[] = {
@@ -308,7 +492,8 @@ static void option_cases(const char *folder)
 		{ "--copy_workers=2", FOREIGN "--copy_workers=2" },
 		{ "--copy_hash_pairs=1", FOREIGN "--copy_hash_pairs=1" },
 		{ "--tokens=/nonexistent/tokens.u32", FOREIGN "--tokens=" },
-		{ "--prompt=1", FOREIGN "--prompt=1" },
+		{ "--prompt=1", "autotune: refused: " AUTOTUNE_PROMPT_RETIRED
+				": --prompt=1" },
 		{ "--window_gib=0",
 		  "autotune: refused: --window_gib takes 1 to 1024: --window_gib=0" },
 		{ "--frobnicate",
@@ -831,8 +1016,11 @@ static void stage_case(const char *folder, const char *second)
 	good = good && kept_length > 0 && (size_t)kept_length < sizeof(kept) &&
 	       file_write(profile, kept, (size_t)kept_length) &&
 	       setenv("HOME", home, 1) == 0;
+	const uint32_t old_state[] = { OLD_SCHEMA_STATE, STAGE_COPIES };
+	good = good && file_write(state, old_state, sizeof(old_state)) &&
+	       chmod(state, FILE_MODE) == 0;
 	expect(good,
-	       "the stage case's pack, replica, receipt and profile are in place");
+	       "the stage case's pack, replica, receipt, profile and an earlier schema's state are in place");
 	char program[] = "anemone", command[] = "autotune",
 	     stage[] = "--stage=load", window[] = "--window_gib=1",
 	     qualify[] = "--qualify";
@@ -846,6 +1034,14 @@ static void stage_case(const char *folder, const char *second)
 					      first_run, capture, text,
 					      sizeof(text)) :
 			    -1;
+	expect(strstr(text, " is schema 3, not 4: not resumed") != NULL,
+	       "a state of the earlier schema is named and not resumed");
+	const char *grid_warmed =
+		strstr(text, "storage: load warm-up before the grid: ");
+	expect(grid_warmed != NULL &&
+		       occurrences(text, "storage: load warm-up ") == 1u &&
+		       grid_warmed < strstr(text, "storage: load point 1/"),
+	       "unmeasured arenas are touched before the grid's first point");
 	expect(status == AUTOTUNE_RETRY_EXIT &&
 		       occurrences(text, "storage: load point ") ==
 			       POINTS_FIRST_RUN &&
@@ -856,8 +1052,77 @@ static void stage_case(const char *folder, const char *second)
 		       file_text(profile, written, sizeof(written)) &&
 		       strcmp(written, kept) == 0,
 	       "a run cut short measures its points, keeps its progress, exits for a retry and leaves the profile");
-	(void)snprintf(cut, sizeof(cut), "--points_per_run=%u",
-		       POINTS_SECOND_RUN);
+	/* checking builds: a stop signal during the grid's warm-up, then during the second point's cool wait (fault
+	   points); neither stopped point is measured, and the next run measures it */
+	uint32_t stopped_measured = 0;
+	char abba_point[sizeof("storage: load point /") +
+			sizeof(STRINGIFY_POINTS)];
+#if CHECKING_HOOKS_ENABLED
+	char stopped_point[sizeof("storage: load stopped before point /") +
+			   sizeof(STRINGIFY_POINTS)];
+	char *stopped_run[] = { program, command,	 source,
+				stage,	 profile_option, window };
+	const int stopped_words =
+		(int)(sizeof(stopped_run) / sizeof(stopped_run[0]));
+	status = good && fault_arm("load_warmup_stop", 1u) ?
+			 autotune_captured(stopped_words, stopped_run, capture,
+					   text, sizeof(text)) :
+			 -1;
+	(void)snprintf(stopped_point, sizeof(stopped_point),
+		       "storage: load stopped before point %u/",
+		       POINTS_FIRST_RUN + 1u);
+	expect(fault_disarm() == 1u && status == AUTOTUNE_RETRY_EXIT &&
+		       occurrences(text, "storage: load point ") == 0 &&
+		       occurrences(text, "storage: load warm-up ") == 0 &&
+		       strstr(text, stopped_point) != NULL,
+	       "a stop during the warm-up ends the run before its point is measured, the warm-up unrecorded");
+	status = good && fault_arm("load_cool_stop", STOPPED_COOL_CALL) ?
+			 autotune_captured(stopped_words, stopped_run, capture,
+					   text, sizeof(text)) :
+			 -1;
+	(void)snprintf(stopped_point, sizeof(stopped_point),
+		       "storage: load stopped before point %u/",
+		       POINTS_FIRST_RUN + STOPPED_COOL_CALL);
+	expect(fault_disarm() == STOPPED_COOL_CALL &&
+		       status == AUTOTUNE_RETRY_EXIT &&
+		       occurrences(text, "storage: load point ") == 1u &&
+		       strstr(text, stopped_point) != NULL,
+	       "a stop during a point's cool wait leaves that point unmeasured and the run exits for a retry");
+	stopped_measured = STOPPED_COOL_CALL - 1u;
+	/* the lease's end with no stop signal: the clock at the lease's end during the warm-up, then drives held hot
+	   through the first point's cool wait under a lease of LEASE_SECONDS; neither point is measured */
+	(void)snprintf(stopped_point, sizeof(stopped_point),
+		       "storage: load stopped before point %u/",
+		       POINTS_FIRST_RUN + stopped_measured + 1u);
+	status = good && fault_arm("load_warmup_lease_end", 1u) ?
+			 autotune_captured(stopped_words, stopped_run, capture,
+					   text, sizeof(text)) :
+			 -1;
+	expect(fault_disarm() == 1u && status == AUTOTUNE_RETRY_EXIT &&
+		       occurrences(text, "storage: load point ") == 0 &&
+		       occurrences(text, "storage: load warm-up ") == 0 &&
+		       strstr(text, stopped_point) != NULL,
+	       "the lease's end during the warm-up ends the run before its point is measured, the warm-up unrecorded");
+	char lease[sizeof("--seconds=") + sizeof(STRINGIFY_POINTS)];
+	(void)snprintf(lease, sizeof(lease), "--seconds=%u", LEASE_SECONDS);
+	char *leased_run[] = { program,	       command, source, stage,
+			       profile_option, window,	lease };
+	status = good && fault_arm("load_cool_hot", 1u) ?
+			 autotune_captured((int)(sizeof(leased_run) /
+						 sizeof(leased_run[0])),
+					   leased_run, capture, text,
+					   sizeof(text)) :
+			 -1;
+	const uint64_t waited = number_after(strstr(text, stopped_point),
+					     "after a cool wait of ");
+	expect(fault_disarm() == 1u && status == AUTOTUNE_RETRY_EXIT &&
+		       occurrences(text, "storage: load point ") == 0 &&
+		       waited <= LEASE_SECONDS + COOL_POLL_SECONDS,
+	       "a cool wait the drives never end stops at the lease's end, a poll after it at most, its point "
+	       "unmeasured");
+#endif
+	const uint32_t second_cut = POINTS_SECOND_RUN - stopped_measured;
+	(void)snprintf(cut, sizeof(cut), "--points_per_run=%u", second_cut);
 	char *second_run[] = { program,	       command, source, stage,
 			       profile_option, window,	cut };
 	status = good ? autotune_captured((int)(sizeof(second_run) /
@@ -866,18 +1131,25 @@ static void stage_case(const char *folder, const char *second)
 					  sizeof(text)) :
 			-1;
 	uint32_t resumed = occurrences(text, "storage: load point ");
-	char abba_point[sizeof("storage: load point /") +
-			sizeof(STRINGIFY_POINTS)];
+	(void)snprintf(abba_point, sizeof(abba_point),
+		       "storage: load point %u/",
+		       POINTS_FIRST_RUN + stopped_measured + 1u);
+	expect(strstr(text, "storage: load point ") == strstr(text, abba_point),
+	       "the next run measures first the point a stop left unmeasured");
 	(void)snprintf(abba_point, sizeof(abba_point),
 		       "storage: load point %u/", LOAD_FIRST_ABBA_POINT);
-	const char *warmed =
-		strstr(text, "storage: load warm-up before the A D D A: ");
+	const char *warmed = strstr(
+		text, "storage: load warm-up before the A D D A D A A D: ");
 	const char *abba_begins = strstr(text, abba_point);
-	expect(status == AUTOTUNE_RETRY_EXIT && resumed == POINTS_SECOND_RUN &&
-		       occurrences(text, "storage: load warm-up ") == 1u &&
+	grid_warmed = strstr(text, "storage: load warm-up before the grid: ");
+	expect(status == AUTOTUNE_RETRY_EXIT && resumed == second_cut &&
+		       occurrences(text, "storage: load warm-up ") ==
+			       WARMUPS_RESUMED_IN_GRID &&
+		       grid_warmed != NULL && grid_warmed < warmed &&
 		       warmed != NULL && abba_begins != NULL &&
 		       warmed < abba_begins,
-	       "one unmeasured warm-up arena is touched before the A D D A's first point");
+	       "a run resumed inside the grid warms up before its first grid point, and again before the "
+	       "confirmation's first point");
 	char *third_run[] = { program, command,	       source,
 			      stage,   profile_option, window };
 	status = good ? autotune_captured(
@@ -887,7 +1159,8 @@ static void stage_case(const char *folder, const char *second)
 	resumed += occurrences(text, "storage: load point ");
 	(void)snprintf(abba_point, sizeof(abba_point),
 		       "storage: load point %u/", LOAD_FIRST_ABBA_POINT + 1u);
-	warmed = strstr(text, "storage: load warm-up before the A D D A: ");
+	warmed = strstr(text,
+			"storage: load warm-up before the A D D A D A A D: ");
 	abba_begins = strstr(text, abba_point);
 	expect(occurrences(text, "storage: load warm-up ") == 1u &&
 		       warmed != NULL && abba_begins != NULL &&
@@ -898,21 +1171,30 @@ static void stage_case(const char *folder, const char *second)
 	const uint32_t abba = occurrences(written, "\"phase\":\"abba\"");
 	expect(status == EXIT_SUCCESS && profiled &&
 		       strstr(written, "\"warmup\":{\"bytes\":") != NULL &&
+		       strstr(written, "\"grid_warmup\":{\"bytes\":") != NULL &&
 		       strstr(written, "\"spread_over_bound\":") != NULL &&
-		       abba == AUTOTUNE_LOAD_ABBA_POINTS && grid > abba &&
-		       resumed + POINTS_FIRST_RUN == grid + abba &&
+		       abba == AUTOTUNE_LOAD_ABBA_POINTS &&
+		       grid == AUTOTUNE_LOAD_GRID_POINTS &&
+		       occurrences(written, "\"pass\":2,") ==
+			       AUTOTUNE_LOAD_GRID_CELLS &&
+		       occurrences(written, "\"vmstat\":{") == grid + abba &&
+		       occurrences(written, "\"cool_wait_nanoseconds\":") ==
+			       grid + abba &&
+		       resumed + POINTS_FIRST_RUN + stopped_measured ==
+			       grid + abba &&
 		       access(state, F_OK) != 0,
-	       "the next run resumes with the points left, writes every point and removes its progress");
+	       "the next run resumes with the points left, writes every point (its pass, CPU split, page counters and "
+	       "cool wait) and removes its progress");
 	/* SFF6: the warm-up's passes touch exactly the A D D A point's extents, whose whole size is not
 	 * 2 x --window_gib */
 	const uint64_t warmup_bytes =
 		number_after(written, "\"warmup\":{\"bytes\":");
-	bool same_bytes = warmup_bytes != 0 && warmup_bytes != UINT64_MAX &&
-			  warmup_bytes != ABBA_WINDOW_FACTOR *
-						  (uint64_t)STAGE_WINDOW_GIB *
-						  GIB &&
-			  number_after(written, "\"passes\":") ==
-				  LOAD_WARMUP_PASSES_EXPECTED;
+	bool same_bytes =
+		warmup_bytes != 0 && warmup_bytes != UINT64_MAX &&
+		warmup_bytes !=
+			ABBA_WINDOW_FACTOR * (uint64_t)STAGE_WINDOW_GIB * GIB &&
+		number_after(strstr(written, "\"warmup\":{"), "\"passes\":") ==
+			LOAD_WARMUP_PASSES_EXPECTED;
 	const char *abba_entry = strstr(written, "\"phase\":\"abba\"");
 	for (uint32_t point = 0; point < AUTOTUNE_LOAD_ABBA_POINTS; point++) {
 		same_bytes = same_bytes && abba_entry != NULL &&
@@ -924,6 +1206,9 @@ static void stage_case(const char *folder, const char *second)
 	}
 	expect(same_bytes,
 	       "the warm-up's passes touch the A D D A points' bytes (their whole extents), not twice the window");
+	expect(number_after(strstr(written, "\"grid_warmup\":{"),
+			    "\"passes\":") == LOAD_WARMUP_PASSES_EXPECTED,
+	       "the grid's warm-up is recorded beside the points with its passes, never ranked");
 	expect(strstr(written, ENGRAM_MEMBER ",\"load\":{") != NULL &&
 		       strstr(written,
 			      "\"enabled\":0,\"qualification\":\"candidate\"") !=
@@ -985,6 +1270,9 @@ int main(void)
 	/* every check's line reaches the log even when a sanitizer ends the process at exit (unflushed: batch ac3) */
 	(void)setvbuf(stdout, NULL, _IOLBF, 0);
 	verdict_cases();
+	order_cases();
+	rank_cases();
+	cool_cases();
 	choice_cases();
 	const char *const temporary = getenv("TMPDIR");
 	char folder[PATH_MAX];

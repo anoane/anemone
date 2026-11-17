@@ -761,14 +761,8 @@ EXL3_TRANSFORM_W_ENTRY(exl3_w_finish, transform_w_finish)
 	EXL3_DECODE_C_ENTRY(exl3_c_down_##width##_##form, bits_x2, true,     \
 			    EXL3_PRODUCT_SLICES, tiles, groups, predicated)
 #define EXL3_DECODE_C_FAMILY(tiles, groups, form, predicated)             \
-	EXL3_DECODE_C_WIDTH(k2, EXL3_BITS_X2_K2, tiles, groups, form,     \
-			    predicated)                                   \
-	EXL3_DECODE_C_WIDTH(k2_5, EXL3_BITS_X2_K2_5, tiles, groups, form, \
-			    predicated)                                   \
-	EXL3_DECODE_C_WIDTH(k3, EXL3_BITS_X2_K3, tiles, groups, form,     \
-			    predicated)                                   \
-	EXL3_DECODE_C_WIDTH(k4, EXL3_BITS_X2_K4, tiles, groups, form,     \
-			    predicated)
+	EXL3_WIDTHS(EXL3_EVERY_WIDTH, EXL3_DECODE_C_WIDTH, tiles, groups, \
+		    form, predicated)
 EXL3_DECODE_C_FAMILY(DECODE_C_T8_TILES, 1, t8_g1, false)
 EXL3_DECODE_C_FAMILY(DECODE_C_T4_TILES, DECODE_C_G4_GROUPS, t4_g4p, true)
 #undef EXL3_DECODE_C_FAMILY

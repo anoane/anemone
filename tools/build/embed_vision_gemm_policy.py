@@ -25,7 +25,9 @@ def main():
     if (set(data) != {"boundaries", "offsets"} or set(data["boundaries"]) != set(TABLES) or
             set(data["offsets"]) != {name + "_offsets" for name in OFFSET_TABLES}):
         raise ValueError("unexpected GEMM policy table names")
+    # REUSE-IgnoreStart: the tag below is the generated file's, not this program's
     lines = ["/* SPDX-License-Identifier: AGPL-3.0-or-later */"]
+    # REUSE-IgnoreEnd
     for name, (count, maximum) in TABLES.items():
         records = data["boundaries"][name]
         if (len(records) != count or any(not isinstance(row, list) or len(row) != 3 or

@@ -36,21 +36,19 @@ exl3_stored_byte_count(const struct matrix_shape_record *shape,
 	return STATUS_OK;
 }
 
+/* A case of the switch below for each row of EXL3_WIDTHS: its bits_x2 gives its width part */
+#define EXL3_WIDTH_NAME_CASE(width, bits_x2, ...) \
+	case bits_x2:                             \
+		return #width;
 const char *exl3_width_name(uint32_t bits_x2)
 {
 	switch (bits_x2) {
-	case EXL3_BITS_X2_K2:
-		return "k2";
-	case EXL3_BITS_X2_K2_5:
-		return "k2_5";
-	case EXL3_BITS_X2_K3:
-		return "k3";
-	case EXL3_BITS_X2_K4:
-		return "k4";
+		EXL3_WIDTHS(EXL3_EVERY_WIDTH, EXL3_WIDTH_NAME_CASE, )
 	default:
 		return NULL;
 	}
 }
+#undef EXL3_WIDTH_NAME_CASE
 
 const struct weight_format_operations exl3_weight_operations = {
 	.name = "exl3_mul1",

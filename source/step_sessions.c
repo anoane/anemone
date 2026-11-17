@@ -8,6 +8,7 @@
  * free again for the next piece. A save first syncs the session's mirrors (its first range may be a mirror), and a
  * load leaves them synced. A mirror sync moves the entries of the deferred hand-offs (step.h) of a range of positions
  * the same way: a piece down from the card they leave, once for every hand-off of that source, then up to each card.
+ * An arena read (step_arena_read) takes pieces of a card's arena down through the same block.
  */
 #include <inttypes.h>
 #include <stdlib.h>
@@ -498,4 +499,46 @@ uint64_t step_session_identity(const struct step_driver *driver)
 	return driver->companion_segments == NULL ?
 		       hash :
 		       (hash ^ driver->companion_identity) * IDENTITY_PRIME;
+}
+
+result_status step_arena_read(struct step_driver *driver, uint32_t card,
+			      uint64_t offset, uint64_t byte_count,
+			      void *bytes_out)
+{
+	if (driver != NULL && driver->failure != OK)
+		return driver->failure;
+	const uint64_t arena =
+		driver != NULL && card < driver->programs[0]->card_count ?
+			driver->programs[0]->cards[card].arena_byte_count :
+			0;
+	if (driver == NULL || bytes_out == NULL || arena == 0 ||
+	    driver->cards[card] == NULL || offset > arena ||
+	    byte_count > arena - offset || !step_pipeline_is_idle(driver)) {
+		LOG_ERROR(
+			"step: an arena read refused: no driver or bytes, no such card, a range beyond its arena, "
+			"or steps in flight");
+		return STATUS_INVALID_ARGUMENT;
+	}
+	result_status status = driver->session_block != NULL ?
+				       OK :
+				       driver->backend->staging_allocate(
+					       STEP_SESSION_STAGING_BYTES,
+					       (void **)&driver->session_block);
+	for (uint64_t done = 0, piece = 0; done < byte_count && status == OK;
+	     done += piece) {
+		piece = byte_count - done < STEP_SESSION_STAGING_BYTES ?
+				byte_count - done :
+				STEP_SESSION_STAGING_BYTES;
+		status = step_copy_begin(driver, card, offset + done,
+					 driver->session_block, piece, true);
+		status = THEN(card_wait(driver, card));
+		if (status == OK)
+			memcpy((unsigned char *)bytes_out + done,
+			       driver->session_block, piece);
+	}
+	driver->failure = status == STATUS_DEVICE_ERROR ||
+					  status == STATUS_TIMED_OUT ?
+				  status :
+				  driver->failure;
+	return status;
 }

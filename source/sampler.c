@@ -5,8 +5,11 @@
 #include "anemone/sampler.h"
 
 #include <inttypes.h>
+#include <string.h>
 
 #include "anemone/hooks.h"
+#include "anemone/model_seam.h"
+#include "anemone/sampler_shard_records.h"
 #include "prepare_common.h"
 
 #define COUNT_OF(table) ((uint32_t)(sizeof(table) / sizeof((table)[0])))
@@ -93,4 +96,79 @@ sampler_prepare_entry(const struct sampler_description *description,
     prepare_launch_fill(launch_out, kernels->sampler, 1, row_count,
 			SAMPLER_THREADS, 0, &record, SAMPLER_ARGUMENT_BYTES);
     return STATUS_OK;
+}
+
+result_status sampler_logits_parts(const struct execution_program *program,
+				   uint32_t vocabulary_size,
+				   struct sampler_logits_part *parts_out,
+				   uint32_t most, uint32_t *count_out)
+{
+	struct sampler_logits_part parts[BACKEND_MAXIMUM_CARDS];
+	uint32_t count = 0, covered = 0;
+	bool tiles = program != NULL && parts_out != NULL &&
+		     count_out != NULL && program->kind == PROGRAM_THIN &&
+		     program->card_count <= BACKEND_MAXIMUM_CARDS;
+	for (uint32_t card = 0; tiles && card < program->card_count; card++) {
+		const struct program_card_record *const own =
+			&program->cards[card];
+		bool found = false;
+		for (uint32_t index = 0;
+		     own->logits_offset != PROGRAM_NOWHERE &&
+		     index < own->launch_count && !found;
+		     index++) {
+			const struct kernel_launch *const launch =
+				&own->launches[index];
+			struct sampler_arguments whole;
+			struct sampler_shard_arguments cut;
+			memcpy(&whole, launch->argument, sizeof(whole));
+			memcpy(&cut, launch->argument, sizeof(cut));
+			if (launch->argument_byte_count ==
+				    SAMPLER_ARGUMENT_BYTES &&
+			    whole.step_offset == own->step_offset &&
+			    whole.logits_offset == own->logits_offset &&
+			    whole.result_offset == own->result_offset)
+				parts[count] = (struct sampler_logits_part){
+					own->logits_offset, card, 0,
+					whole.vocabulary_size, 0
+				};
+			else if (launch->argument_byte_count ==
+					 SAMPLER_SHARD_ARGUMENT_BYTES &&
+				 cut.step_offset == own->step_offset &&
+				 cut.logits_offset == own->logits_offset &&
+				 cut.result_offset == own->result_offset)
+				parts[count] = (struct sampler_logits_part){
+					own->logits_offset, card,
+					cut.first_token, cut.shard_size, 0
+				};
+			else
+				continue;
+			found = true;
+			covered += parts[count].token_count;
+			count++;
+		}
+	}
+	/* the parts tile the vocabulary: no two overlap and together they cover it */
+	for (uint32_t index = 0; tiles && index < count; index++) {
+		tiles = parts[index].token_count != 0 &&
+			parts[index].first_token <= vocabulary_size &&
+			parts[index].token_count <=
+				vocabulary_size - parts[index].first_token;
+		for (uint32_t other = 0; tiles && other < index; other++)
+			tiles = parts[other].first_token +
+						parts[other].token_count <=
+					parts[index].first_token ||
+				parts[index].first_token +
+						parts[index].token_count <=
+					parts[other].first_token;
+	}
+	if (!tiles || count == 0 || count > most ||
+	    covered != vocabulary_size) {
+		LOG_ERROR(
+			"sampler logits: refused: no thin program, no sampler of the head, parts that do not tile the "
+			"vocabulary or more than the room");
+		return STATUS_INVALID_ARGUMENT;
+	}
+	memcpy(parts_out, parts, count * sizeof(*parts));
+	*count_out = count;
+	return STATUS_OK;
 }

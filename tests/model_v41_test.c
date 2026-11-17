@@ -344,13 +344,22 @@ static void expect_card_regions(const struct model_plan_record *plan,
 				     V41_DATA_WALK_LAYERS * REGIONS_PER_LAYER +
 				     1u];
 	uint32_t count = 0, misplaced = 0;
+	expect(!plan->chunk_attention_arrays,
+	       "a PP plan holds a slab's core scratch and a span's queries, no chunk of either");
 	for (uint32_t array = 0; array < V41_DATA_ARRAY_COUNT; array++) {
+		/* a PP plan's core scratch is a slab's and its queries a span's (model_v41.h; a TP plan's a chunk's) */
+		const uint32_t kind =
+			array == V41_DATA_ARRAY_ATTENTION_SCORES ?
+				V41_SLAB :
+			array == V41_DATA_ARRAY_QUERIES ||
+					array == V41_DATA_ARRAY_INDEX_QUERIES ?
+				V41_SPAN :
+				array_sizes[array].rows;
 		const uint64_t array_rows =
-			array_sizes[array].rows == V41_DRAFT_ROWS ?
-				plan->limits.draft_positions :
-			array_sizes[array].rows == V41_SLAB ? slab_rows :
-			array_sizes[array].rows == V41_SPAN ? span_rows :
-							      rows;
+			kind == V41_DRAFT_ROWS ? plan->limits.draft_positions :
+			kind == V41_SLAB       ? slab_rows :
+			kind == V41_SPAN       ? span_rows :
+						 rows;
 		uint64_t bytes = array_sizes[array].fixed_bytes +
 				 array_rows * array_sizes[array].row_bytes;
 		bytes = array == V41_DATA_ARRAY_SESSIONS ?

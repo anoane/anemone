@@ -3083,6 +3083,9 @@ int main(void)
 	test_serving_open(CONTEXT, scripts, SCRIPTS, &engine) != STATUS_OK) {
 	    (void)printf(
 		    "FAILED: the tokenizer or the engine of the fixture does not open\n");
+	    test_serving_close(); /* what the fixture holds, opened or not (a machine without the kernels' builds) */
+	    tokenizer_close(tokenizer);
+	    free(tables);
 	    return 1;
     }
     struct running_server running = {.engine = engine, .tokenizer = tokenizer};

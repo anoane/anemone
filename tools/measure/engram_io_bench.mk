@@ -34,3 +34,10 @@ SHA256_RATE_OBJECTS := $(patsubst %.c,build/release/%.o,$(SHA256_RATE_SOURCES))
 sha256_rate: build/release/sha256_rate
 build/release/sha256_rate: $(SHA256_RATE_OBJECTS)
 	$(CC) $(COMMON_FLAGS) $(COMPILE_release) $(LINK_release) $^ -lpthread -o $@
+# The load arena probe (tools/measure/load_arena_probe.c, 17 Nov 2026): the load stage's host read into fresh or
+# touched arenas, with each point's CPU split and page counters; linked with the engine's objects, not part of anemone.
+LOAD_ARENA_PROBE_OBJECTS := build/release/tools/measure/load_arena_probe.o $(ENGINE_OBJECTS_release)
+.PHONY: load_arena_probe
+load_arena_probe: build/release/load_arena_probe
+build/release/load_arena_probe: $(LOAD_ARENA_PROBE_OBJECTS)
+	$(CC) $(COMMON_FLAGS) $(COMPILE_release) $(LINK_release) $^ $(LIBRARIES) -o $@

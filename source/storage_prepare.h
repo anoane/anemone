@@ -14,7 +14,6 @@ struct prepare_file {
 	FILE *stream;
 	char temporary[PATH_MAX], final[PATH_MAX];
 };
-MUST_CHECK result_status prepare_profile_slot(const char *path);
 MUST_CHECK result_status prepare_hash(const void *bytes, size_t count,
 				      char output[STORAGE_PROFILE_KEY_BYTES]);
 /* The digests of two strings of one length in one interleaved pass (sha256_of_two); each equals prepare_hash's. */

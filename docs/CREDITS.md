@@ -12,6 +12,28 @@ listed here, and to the people who published model weights, quantizations, bench
 - **GNmac [@GNmac](https://x.com/GNmac)**, for [DeepSeek CMP 170HX serving](https://github.com/GNmac-lab/deepseek-v41-flash-1017-cmp170hx), communication and deployment research.
 - **Sean Phan [@seanphan](https://x.com/seanphan)**, and the [PixelML](https://github.com/PixelML) community, for [PixelML/club-170hx](https://github.com/PixelML/club-170hx), shared inference experiments, SM80 work and practical findings.
 - **Turboderp** ([@turboderp_](https://x.com/turboderp_)) — [ExLlamaV3](https://github.com/turboderp-org/exllamav3).
+- **Petri Krohn [@PetriKrohn](https://github.com/PetriKrohn)**, for his CMP 170HX unlock research and its public record: the VBIOS, strap and memory analysis in [NVIDIA-patcher #73](https://github.com/dartraiden/NVIDIA-patcher/issues/73), the VBIOS cryptanalysis credited to him in the [GA100 VBIOS Comparison Table](https://gist.github.com/JRex286/84cd3921788d2ffbc1e9bf8b6f2c9396), the MRMCD 2026 talk [FACEB13D exploit: Liberating the A100 beast inside Nvidia's CMP 170HX e-waste](https://talks.mrmcd.net/2026/talk/ZDRJLV/), his [unlock timeline](https://github.com/dartraiden/NVIDIA-patcher/issues/73#issuecomment-5046459058) and [list of unlockers and tools](https://github.com/dartraiden/NVIDIA-patcher/issues/73#issuecomment-5186301278), and the facts [cmp.wiki credits](https://cmp.wiki/credits/) to him. By [his own account](https://github.com/dartraiden/NVIDIA-patcher/issues/73#issuecomment-4990010900) he was a member of the original team behind the proof of concept in Jon Pry's paper. With thanks to those who helped him:
+  - [Jon Pry (@jonpry)](https://github.com/jonpry), author of [A Canary in the Crypto Mine](https://doi.org/10.5281/zenodo.20916112);
+  - [Cab](https://gist.github.com/JRex286/84cd3921788d2ffbc1e9bf8b6f2c9396) and [Humvee55](https://gist.github.com/JRex286/84cd3921788d2ffbc1e9bf8b6f2c9396), co-credited in the GA100 VBIOS research;
+  - [BlackSun (@bsun0000)](https://github.com/bsun0000), co-credited with him on the GA100 VBIOS encryption keys, and author of the fuse and privilege-level analysis in [#73](https://github.com/dartraiden/NVIDIA-patcher/issues/73#issuecomment-4291975253);
+  - [duggasco](https://github.com/duggasco), author of the GA100 VBIOS and fuse reference gists;
+  - [Amogh Munikote (@amoghmunikote)](https://github.com/amoghmunikote/cmpunlocker), maintainer of cmpunlocker and its Discord;
+  - [meatsus](https://cmp.wiki/wiki/VBIOS_and_firmware), co-credited with him for the device-ID fuse finding;
+  - [orrorin and mrpandagod](https://cmp.wiki/wiki/RIR_fuse_burn), for the RIR fuse-burn plan he corrected and completed;
+  - [Rubbra_F](https://cmp.wiki/wiki/Unlock_history:_who_found_what,_and_when), for a reproducible compute unlock;
+  - the NVIDIA-patcher #73 contributors whose data and tests he built on: [@jetcat8848](https://github.com/dartraiden/NVIDIA-patcher/issues/73#issuecomment-4315524409), [@kostakoff](https://github.com/dartraiden/NVIDIA-patcher/issues/73#issuecomment-4008275628), [@InnovativeOSS117](https://github.com/dartraiden/NVIDIA-patcher/issues/73#issuecomment-4296935456), [@mg94301-2007](https://github.com/dartraiden/NVIDIA-patcher/issues/73#issuecomment-4151487399) and [@arabel1a](https://github.com/dartraiden/NVIDIA-patcher/issues/73#issuecomment-4709441483), and [@dartraiden](https://github.com/dartraiden), whose NVIDIA-patcher issue #73 hosted the work.
+
+  And to the wider CMP 170HX research around it:
+
+  - the Clean Room team, which released the first public driverless unlocker, kept at [d3dx9/cmpunlocker](https://github.com/d3dx9/cmpunlocker) by [@d3dx9](https://github.com/d3dx9) and posted with Luna (@lunaroseoc) ([cmp.wiki](https://cmp.wiki/wiki/Unlock_history:_who_found_what,_and_when));
+  - [@JRex286](https://gist.github.com/JRex286/84cd3921788d2ffbc1e9bf8b6f2c9396), who keeps the GA100 VBIOS and fuse reference gists;
+  - [@erhaede](https://github.com/erhaede), for early CFG1 strap-table work recorded in the GA100 VBIOS gist;
+  - [@Zorg33](https://github.com/Zorg33), for VBIOS and GSP-firmware ideas in [#73](https://github.com/dartraiden/NVIDIA-patcher/issues/73);
+  - [@eastmoe](https://github.com/eastmoe/CMPGPU-patch-script), for FMA splitting, a Tensor Core analysis and CMPGPU-patch-script;
+  - [@armand0e](https://github.com/amoghmunikote/cmpunlocker/pull/32), for the cmpunlocker WPR2 fix that Petri pointed users to;
+  - PJ (@zingy90210), for sharing the talk and the unlock material in the cmpunlocker Discord ([cmp.wiki](https://cmp.wiki/wiki/Reference_library));
+  - [niconiconi (@biergaizi)](https://niconiconi.neocities.org/tech-notes/nvidia-cmp-170hx-review/) and [Dr. Moritz Lehmann (@ProjectPhysX)](https://github.com/ProjectPhysX), for the 2023 FMA-throttle findings the work started from;
+  - [Kate (@kate-land)](https://blog.kate.land/posts/using-voltage-glitching-to-unlock-the-a100/), for independent voltage-glitching fuse research on the GA100.
 - Members of the private **CMP 170HX Owners** group chat on X.
 - The [**cmpunlocker Discord channel**](https://discord.gg/CdHSakKSFv).
 

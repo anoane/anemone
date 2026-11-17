@@ -37,6 +37,7 @@
 #include "anemone/storage_exl3.h"
 #include "anemone/exl3_tc_records.h"
 #include "model_folder.h"
+#include "model_registry.h"
 #include "serving_cursor.h"
 #include "startup_axes.h"
 #include "anemone/step.h"
@@ -52,10 +53,11 @@
 #include "model_v41_tp2_peer.h"
 /* last, as commands.h says */
 #include "commands.h"
-
+#include "golden_capture.h"
+/* REUSE-IgnoreStart: the tag below is the printed notice's, not this file's */
 #define PROGRAM_ATTRIBUTION_NOTICE                                                               \
-	"Anemone v0.0.3-alpha\nCopyright (C) 2026 Fabiano Anemone <fabiano.anemone@gmail.com>\n" \
-	"SPDX-License-Identifier: AGPL-3.0-or-later\n"
+	"Anemone v0.0.4-alpha\nCopyright (C) 2026 Fabiano Anemone <fabiano.anemone@gmail.com>\n" \
+	"SPDX-License-Identifier: AGPL-3.0-or-later\n" /* REUSE-IgnoreEnd */
 #define NANOSECONDS_PER_SECOND 1e9
 #define BYTES_PER_GIB 1073741824.0
 #define NANOSECONDS_PER_MICROSECOND 1000ull
@@ -208,6 +210,8 @@ enum command_kind {
 };
 
 const char *const *copy_paths; /* the copies of the pack, as typed */
+static const char *
+	pack_argument; /* the first pack argument as typed (its descriptor's place), or NULL */
 const char *front_end_paths
 	[FRONT_END_FILES]; /* by enum front_end_file, as typed; NULL: none */
 uint32_t copy_count;
@@ -215,11 +219,17 @@ uint32_t copy_count;
  * (model_folder.h) give the tables and the pack, each with its real path and its device and inode */
 enum weights_family weights_family;
 const char *model_dir;
+static const char *
+	exl3_map_name; /* --exl3_map=NAME: the folder's EXL3 map is NAME.exl3map; NULL: model.exl3map */
+static char exl3_map_file[MODEL_FOLDER_NAME_BYTES] = MODEL_FOLDER_DEFAULT_MAP
+	MODEL_FOLDER_MAP_SUFFIX; /* its file name in the folder */
 struct model_file_record model_files[MODEL_FILES];
 const struct model_file_record *model_pack; /* the folder's pack, or NULL */
 static const char *placement_text; /* as typed */
 bool is_generating; /* generate or serve */
 static bool is_serving; /* serve */
+static bool
+	is_capturing; /* capture: generate's path, golden_capture.h's front end */
 uint32_t card_order
 	[BACKEND_MAXIMUM_CARDS]; /* backend cards, in the order the stages fill them */
 uint32_t card_count; /* 0 until the cards are counted: all, as enumerated */
@@ -272,6 +282,11 @@ bool engram_step_io_default;
 uint32_t engram_io_threads = ENGRAM_STEP_IO_THREADS_DEFAULT;
 static uint32_t engram_spin_us = ENGRAM_STEP_SPIN_US_DEFAULT;
 uint32_t engram_io_pin = 1;
+/* Step I/O's parameters given as knobs (each wins over the profile's engram section), and the disk store's admitted
+ * copies in their order (engram_sources_prepare), which the section must name by their device keys. */
+static bool explicit_engram_threads, explicit_engram_spin, explicit_engram_pin;
+static char engram_copy_paths[STORAGE_MAXIMUM_COPIES][REPLICA_PATH_CAPACITY];
+static uint32_t engram_copy_count;
 static uint32_t engram_scan_threads = ENGRAM_DISK_SCAN_THREADS_DEFAULT;
 struct engram_steps *engram_steps;
 struct engram_disk *engram_disk;
@@ -284,7 +299,8 @@ static struct engram_hot *engram_hot;
 static struct storage_profile tuned_storage;
 static char storage_replica_info[STORAGE_PROFILE_METRICS_BYTES];
 static size_t storage_replica_info_bytes;
-static bool tuned_load_active, tuned_engram_active, storage_profile_is_valid;
+bool tuned_load_active;
+static bool tuned_engram_active, storage_profile_is_valid;
 /* Profile loading turned off explicitly (--storage_profile=off or the environment): no autotune hint. */
 static bool storage_profile_is_off;
 static const char *tuned_paths[STORAGE_MAXIMUM_COPIES];
@@ -332,6 +348,9 @@ static uint32_t
 	592u /* eight product blocks per CMP multiprocessor */
 static uint32_t
 	exl3_expert_rotation; /* with exl3_tc_moe: per-expert chunk rotation 1 or 2 (exl3_tc_records.h) */
+static uint32_t
+	exl3_unrated_map; /* 1: an EXL3 pack with no quality record is served: its descriptor's none, or no descriptor
+			   * and a pack the model does not list (exl3_descriptor.h) */
 static uint32_t
 	tp_head_mma; /* tp4_exl3 BF16 recipe: the head products on the tensor cores (kernel_head_mma) */
 static uint32_t
@@ -600,14 +619,15 @@ static int stop_pipe[PIPE_ENDS] = {
 struct storage_reader *reader;
 const struct storage_operations_record *storage_operations = &storage_direct;
 struct pack_record *pack;
-/* turbo load: the copies once the source's receipted replicas are added (replicas.h) */
+/* turbo load: the copies once the receipted replicas beside the given copies are added (replicas.h) */
 static char replica_paths[REPLICAS_MOST][REPLICA_PATH_CAPACITY];
 static const char *turbo_copy_paths[STORAGE_MAXIMUM_COPIES];
 static struct load_layout *layout;
 static struct device_card *cards[BACKEND_MAXIMUM_CARDS];
 struct card_description_record descriptions[BACKEND_MAXIMUM_CARDS];
 static struct load_result result;
-static const struct model_operations *model;
+static struct model_instance
+	instance; /* the run's model (model_registry.h): bound when its pack opens */
 struct model_plan_record *plan;
 struct v41_tp2_model *tensor_model;
 uint32_t tp_wire_bf16; /* TP-only explicit wire cast; PP retains its original numerical contract. */
@@ -639,7 +659,7 @@ stats_metadata_bound(const uint32_t *card_of_unit)
 		metadata[card].engine_index = card;
 		metadata[card].backend_index = card_order[card];
 		metadata[card].description = descriptions[card];
-		result_status status = model->arena_byte_count(
+		result_status status = instance.operations->arena_byte_count(
 			plan, card, &metadata[card].arena_bytes);
 		if (status != STATUS_OK) {
 			return status;
@@ -809,6 +829,77 @@ static bool take_text(const char *argument, const char *name,
 	return true;
 }
 
+/* A refused command line: one line naming the refused option and why (run_program prints the usage after it). */
+static bool parse_refused(const char *option, const char *why)
+{
+	(void)fprintf(stderr, "refused: %s: %s\n", option, why);
+	return false;
+}
+
+/* One refusal of a command line: whether it holds, the option it names and why. */
+struct parse_refusal {
+	bool refused;
+	const char *option, *why;
+};
+
+/* True when no refusal holds; else false, the first that holds named (each condition is evaluated: none has a side
+ * effect). */
+static bool none_refused(const struct parse_refusal *refusals, size_t count)
+{
+	for (size_t index = 0; index < count; index++)
+		if (refusals[index].refused)
+			return parse_refused(refusals[index].option,
+					     refusals[index].why);
+	return true;
+}
+
+/* A numeric option: its name with the "=", where its values go, their range, how many it takes and the commands that
+ * take it (TAKEN_BY_*). */
+struct number_option {
+	const char *name;
+	uint32_t *numbers;
+	uint32_t least, most, most_numbers, commands;
+};
+
+/* Whether the option's list may repeat a value: BATCH's two lists of counts, one a program. */
+static bool numbers_repeat(const struct number_option *option)
+{
+	return option->numbers == batch_verifiers ||
+	       option->numbers == batch_rows;
+}
+
+/* Why the option scan took no argument: a numeric option (option, given times before) the command does not take,
+ * given twice or not one of its values (a list: how many, each in its range, distinct unless it repeats); else
+ * (NULL) whether the catalogue knows the name (a value, a command or a repeat its parser refuses) or not. */
+static bool option_refused(const char *argument,
+			   const struct number_option *option, uint32_t command,
+			   uint32_t given)
+{
+	if (option == NULL)
+		return parse_refused(
+			argument,
+			knob_catalogued(argument) ?
+				"a value, a command or a repeat this option refuses (anemone help knobs NAME)" :
+				"no such option (anemone help knobs lists them)");
+	if ((option->commands & command) == 0)
+		return parse_refused(argument, "not an option of this command");
+	if (given != 0)
+		return parse_refused(argument, "given twice");
+	if (option->most_numbers > 1u)
+		(void)fprintf(
+			stderr,
+			"refused: %s: takes a list of %snumbers, at most %" PRIu32
+			" values, each %" PRIu32 " to %" PRIu32 "\n",
+			argument, numbers_repeat(option) ? "" : "distinct ",
+			option->most_numbers, option->least, option->most);
+	else
+		(void)fprintf(stderr,
+			      "refused: %s: takes a number %" PRIu32
+			      " to %" PRIu32 "\n",
+			      argument, option->least, option->most);
+	return false;
+}
+
 static bool take_session_slots_max(const char *argument)
 {
 	if (session_slots_max ||
@@ -841,11 +932,13 @@ static bool take_cmp_order(const char *argument, bool *was_given)
 	return true;
 }
 
-/* --weights=original|exl3 and --model_dir=FOLDER, as every startup option: exact case, no empty value, no repeat. */
+/* --weights=original|exl3, --model_dir=FOLDER and --exl3_map=NAME, as every startup option: exact case, no empty value,
+ * no repeat. */
 static bool take_model_source(const char *argument)
 {
 	static const char weights_option[] = "--weights=",
-			  folder_option[] = "--model_dir=";
+			  folder_option[] = "--model_dir=",
+			  map_option[] = "--exl3_map=";
 	if (strncmp(argument, weights_option, strlen(weights_option)) == 0 &&
 	    weights_family == WEIGHTS_UNSET) {
 		const char *const weights = argument + strlen(weights_option);
@@ -860,28 +953,47 @@ static bool take_model_source(const char *argument)
 		model_dir = argument + strlen(folder_option);
 		return true;
 	}
+	/* an empty name is model_folder_map_file's refusal */
+	if (strncmp(argument, map_option, strlen(map_option)) == 0 &&
+	    exl3_map_name == NULL) {
+		exl3_map_name = argument + strlen(map_option);
+		return model_folder_map_file(exl3_map_name, exl3_map_file) ==
+		       STATUS_OK;
+	}
 	return false;
 }
 
+/* The folder's pack: the EXL3 map for --weights=exl3 or GPU split TP4_EXL3, otherwise the original pack. */
+static enum model_file folder_pack_file(void)
+{
+	return weights_family == WEIGHTS_EXL3 ||
+			       (weights_family == WEIGHTS_UNSET &&
+				execution_placement == EXECUTION_TP4_EXL3) ?
+		       MODEL_FILE_EXL3 :
+		       MODEL_FILE_ORIGINAL;
+}
+
+/* A model file's name in the folder: the EXL3 map's is --exl3_map's */
+static const char *folder_file_name(enum model_file file)
+{
+	return file == MODEL_FILE_EXL3 ? exl3_map_file : model_file_names[file];
+}
+
 /* --model_dir, once the arguments are parsed (the parser opens no file): the tables, when the command reads them, and
- * the pack from the folder. The pack is the EXL3 map for --weights=exl3 or GPU split TP4_EXL3, otherwise the original
- * pack. */
+ * the pack from the folder (folder_pack_file, by its name there). */
 MUST_CHECK result_status model_folder_files(bool reads_tables)
 {
 	static const char *pack_paths[1];
-	const enum model_file pack_file =
-		weights_family == WEIGHTS_EXL3 ||
-				(weights_family == WEIGHTS_UNSET &&
-				 execution_placement == EXECUTION_TP4_EXL3) ?
-			MODEL_FILE_EXL3 :
-			MODEL_FILE_ORIGINAL;
+	const enum model_file pack_file = folder_pack_file();
 	result_status status =
 		reads_tables ?
-			model_folder_resolve(model_dir, MODEL_FILE_TABLES,
-					     &model_files[MODEL_FILE_TABLES]) :
+			model_folder_resolve(
+				model_dir, model_file_names[MODEL_FILE_TABLES],
+				&model_files[MODEL_FILE_TABLES]) :
 			STATUS_OK;
 	status = status == STATUS_OK ?
-			 model_folder_resolve(model_dir, pack_file,
+			 model_folder_resolve(model_dir,
+					      folder_file_name(pack_file),
 					      &model_files[pack_file]) :
 			 status;
 	if (status != STATUS_OK)
@@ -1075,11 +1187,6 @@ bool parse_arguments(int argument_count, char **arguments)
 	draft_policy.base_us = DEFAULT_CODE_DRAFT_BASE_US;
 	draft_policy.tail_us = 0;
 	draft_policy.row_us = DEFAULT_CODE_DRAFT_ROW_US;
-	struct number_option {
-		const char *name;
-		uint32_t *numbers;
-		uint32_t least, most, most_numbers, commands;
-	};
 	static const struct number_option options[] = {
 		{ "--card_order=", card_order, 0, BACKEND_MAXIMUM_CARDS - 1,
 		  BACKEND_MAXIMUM_CARDS, TAKEN_BY_ALL },
@@ -1159,6 +1266,8 @@ bool parse_arguments(int argument_count, char **arguments)
 		  TC_PRODUCT_BLOCKS_MOST, 1, TAKEN_BY_ALL },
 		{ "--exl3_expert_rotation=", &exl3_expert_rotation, 0,
 		  EXL3_TC_ROTATION_THREE_WAY, 1, TAKEN_BY_ALL },
+		{ "--exl3_unrated_map=", &exl3_unrated_map, 0, 1, 1,
+		  TAKEN_BY_ALL },
 		{ "--tp_head_mma=", &tp_head_mma, 0, 1, 1, TAKEN_BY_ALL },
 		{ "--tp_trunk_mma=", &tp_trunk_mma, 0, 1, 1, TAKEN_BY_ALL },
 		{ "--tp_trunk_mma_fused=", &tp_trunk_mma_fused, 0, 1, 1,
@@ -1453,12 +1562,15 @@ bool parse_arguments(int argument_count, char **arguments)
 	uint32_t calibration_given = 0, stats_format_given = 0;
 	uint32_t prompt_token_ids_given = 0;
 	is_serving = argument_count > 1 && strcmp(arguments[1], "serve") == 0;
-	is_generating = is_serving || (argument_count > 1 &&
-				       strcmp(arguments[1], "generate") == 0);
-	if (argument_count < ARGUMENTS_BEFORE_THE_OPTIONS ||
-	    (!is_generating && strcmp(arguments[1], "load") != 0)) {
-		return false;
-	}
+	is_capturing = argument_count > 1 &&
+		       strcmp(arguments[1], "capture") == 0;
+	is_generating =
+		is_serving || is_capturing ||
+		(argument_count > 1 && strcmp(arguments[1], "generate") == 0);
+	if (argument_count < ARGUMENTS_BEFORE_THE_OPTIONS)
+		return parse_refused("the command", "none given");
+	if (!is_generating && strcmp(arguments[1], "load") != 0)
+		return parse_refused(arguments[1], "not a command");
 	const uint32_t command = is_serving    ? TAKEN_BY_SERVE :
 				 is_generating ? TAKEN_BY_GENERATE :
 						 TAKEN_BY_LOAD;
@@ -1466,6 +1578,15 @@ bool parse_arguments(int argument_count, char **arguments)
 	       strncmp(arguments[argument_index], "--", strlen("--")) == 0;
 	     argument_index++) {
 		const char *argument = arguments[argument_index];
+		bool capture_valid = true;
+		if (is_capturing &&
+		    golden_capture_option_taken(argument, &capture_valid)) {
+			if (!capture_valid)
+				return parse_refused(
+					argument,
+					"a value out of its range, or given twice");
+			continue;
+		}
 		bool is_taken =
 			is_serving &&
 			take_text(argument,
@@ -1524,18 +1645,14 @@ bool parse_arguments(int argument_count, char **arguments)
 		}
 		for (uint32_t index = 0; index < option_count && !is_taken;
 		     index++) {
-			is_taken =
-				(options[index].commands & command) != 0 &&
-				take_option(argument, options[index].name,
-					    options[index].least,
-					    options[index].most,
-					    options[index].most_numbers,
-					    options[index].numbers ==
-							    batch_verifiers ||
-						    options[index].numbers ==
-							    batch_rows,
-					    options[index].numbers,
-					    &given[index]);
+			is_taken = (options[index].commands & command) != 0 &&
+				   take_option(argument, options[index].name,
+					       options[index].least,
+					       options[index].most,
+					       options[index].most_numbers,
+					       numbers_repeat(&options[index]),
+					       options[index].numbers,
+					       &given[index]);
 			is_seed_given =
 				is_seed_given ||
 				(is_taken && options[index].numbers == &seed);
@@ -1591,27 +1708,47 @@ bool parse_arguments(int argument_count, char **arguments)
 				     price++)
 					if (batch_step_us[price] == 0 &&
 					    given[index] != 1u)
-						return false; /* A single zero disables planning; lists contain only
-								 prices. */
+						return parse_refused(
+							argument,
+							"a single 0 turns the planning off; a list holds prices only");
 			}
 		}
 		if (!is_taken) {
-			return false;
+			uint32_t index = 0;
+			while (index < option_count &&
+			       strncmp(argument, options[index].name,
+				       strlen(options[index].name)) != 0)
+				index++;
+			/* a second max or auto is given twice, as a second number is */
+			const bool word_again =
+				(session_slots_max &&
+				 strcmp(argument, SESSION_SLOTS_MAX_OPTION) ==
+					 0) ||
+				(engram_ram_auto_was_given &&
+				 strcmp(argument, ENGRAM_RAM_AUTO_OPTION) == 0);
+			return option_refused(
+				argument,
+				index < option_count ? &options[index] : NULL,
+				command,
+				index < option_count ?
+					given[index] + (word_again ? 1u : 0u) :
+					0);
 		}
 	}
 	if (!weights_placement_matches(placement_was_given))
 		return false;
 	if (is_draft_given) {
-		if (speculative_was_given && speculative != draft_kind) {
-			return false;
-		}
+		if (speculative_was_given && speculative != draft_kind)
+			return parse_refused(
+				"--speculative",
+				"conflicts with the --draft given");
 		speculative = draft_kind;
 	}
 	if (speculative >= SPECULATIVE_DEVICE &&
 	    draft_positions > draft_block) {
-		if (depth_was_given) {
-			return false;
-		}
+		if (depth_was_given)
+			return parse_refused("--draft_positions",
+					     "above --draft_block");
 		draft_positions = draft_block;
 	}
 	card_count = given[0];
@@ -1622,7 +1759,8 @@ bool parse_arguments(int argument_count, char **arguments)
 			(options[index].numbers == &engram_ram_percent &&
 			 given[index] != 0);
 	if (engram_ram_percent_was_given && engram_ram_auto_was_given)
-		return false; /* auto or a percent, not both */
+		return parse_refused("--engram_ram_percent",
+				     "auto or a percent, not both");
 	engram_ram_source = engram_ram_percent_was_given ? ENGRAM_RAM_KNOB :
 							   ENGRAM_RAM_AUTO;
 	bool slots_given = false;
@@ -1631,7 +1769,8 @@ bool parse_arguments(int argument_count, char **arguments)
 			      (options[index].numbers == &session_slots &&
 			       given[index] != 0);
 	if (session_slots_max && slots_given)
-		return false; /* max or a count, not both */
+		return parse_refused("--session_slots",
+				     "max or a count, not both");
 	const bool slots_defaulted = is_serving && !slots_given &&
 				     !session_slots_max;
 	if (slots_defaulted) {
@@ -1681,13 +1820,43 @@ bool parse_arguments(int argument_count, char **arguments)
 			    stderr);
 		return false;
 	}
+	/* capture: the cases decide what generate's command line gives */
+	const struct parse_refusal capture_refusals[] = {
+		{ (golden_capture_options.given & CAPTURE_REQUIRED) !=
+			  CAPTURE_REQUIRED,
+		  "capture",
+		  "needs --capture_golden, --capture_cases and --capture_out" },
+		{ given_fractions[0] && temperature != 0.0f, "--temperature",
+		  "a capture draws greedily: the witnesses are T=0 draws" },
+		{ given_fractions[1] && top_p != 1.0f, "--top_p",
+		  "a capture draws greedily: the witnesses are T=0 draws" },
+		{ generated_token_limit != 0, "--generated_tokens",
+		  "each case's continuation decides" },
+		{ ignore_eos != 0, "--ignore_eos",
+		  "a forced continuation ends at its limit alone" },
+		{ prompt_token_ids_path != NULL, "--prompt_token_ids",
+		  "each case's prompt_ids.json decides" },
+		{ reasoning_effort != 0, "--reasoning_effort",
+		  "each case's prompt decides" },
+		{ batch_rows[0] != 0, "--batch_rows",
+		  "BATCH heads are out of capture's scope" },
+		{ original_head_offload != 0, "--original_head_offload",
+		  "the offloaded head is out of capture's scope" },
+		{ dump_draft_ring != NULL, "--dump_draft_ring",
+		  "a diagnostic, out of capture's scope" }
+	};
+	if (is_capturing && !none_refused(capture_refusals,
+					  sizeof(capture_refusals) /
+						  sizeof(capture_refusals[0])))
+		return false;
 	generated_token_limit = generated_token_limit != 0 ?
 					generated_token_limit :
 				is_serving ? UINT32_MAX :
 					     DEFAULT_GENERATED;
 	const uint32_t file_count =
-		is_serving || prompt_token_ids_path != NULL ? 1 :
-		is_generating				    ? FRONT_END_FILES :
+		is_serving || is_capturing || prompt_token_ids_path != NULL ?
+			1 :
+		is_generating ? FRONT_END_FILES :
 				0; /* serve's: the tables */
 	/* with --model_dir the folder gives the tables and the pack; only generate's messages stay positional */
 	const uint32_t typed_count = model_dir == NULL ? file_count :
@@ -1702,11 +1871,21 @@ bool parse_arguments(int argument_count, char **arguments)
 	copy_count = argument_index < argument_count ?
 			     (uint32_t)(argument_count - argument_index) :
 			     0;
+	pack_argument = copy_count != 0 ? copy_paths[0] : NULL;
 	if (model_dir != NULL && copy_count != 0) {
 		(void)fprintf(
 			stderr,
 			"--model_dir replaces the tables and pack arguments: %s is one too many\n",
 			copy_paths[0]);
+		return false;
+	}
+	if (exl3_map_name != NULL &&
+	    (model_dir == NULL || folder_pack_file() != MODEL_FILE_EXL3)) {
+		(void)fprintf(
+			stderr,
+			"--exl3_map=%s names the EXL3 map in --model_dir's folder: give it with --model_dir and "
+			"--weights=exl3 or --placement=tp4_exl3\n",
+			exl3_map_name);
 		return false;
 	}
 	if (weights_family != WEIGHTS_UNSET && copy_count != 0 &&
@@ -1727,7 +1906,9 @@ bool parse_arguments(int argument_count, char **arguments)
 		front_end_paths[MESSAGES_FILE] = prompt_token_ids_path;
 	if (ignore_eos != 0 &&
 	    (speculative != SPECULATIVE_OFF || batch_rows[0] != 0))
-		return false;
+		return parse_refused(
+			"--ignore_eos",
+			"non-speculative THIN only (no --speculative, no --batch_rows)");
 	/* --prefill_tail_rows: by default where the tail program applies; 0 the old path */
 	const bool tail_applies = execution_placement == EXECUTION_TP4_EXL3 &&
 				  chunks_in_flight == 1u &&
@@ -1767,7 +1948,10 @@ bool parse_arguments(int argument_count, char **arguments)
 	if (prefill_order == PREFILL_ORDER_SHORT_ROWS &&
 	    (!bounded_batch || prefix_reuse_exact != 0 || session_fork != 0 ||
 	     prefill_prefix_stable != 0))
-		return false;
+		return parse_refused(
+			"--prefill_order",
+			"concurrent prompt rows need the measured TP4_EXL3 BATCH serve recipe, without "
+			"--prefix_reuse_exact, --session_fork or --prefill_prefix_stable");
 	if (prefill_order == PREFILL_ORDER_AUTO)
 		prefill_order = selected_combination ? PREFILL_ORDER_SHORTEST :
 						       0u;
@@ -1845,115 +2029,173 @@ bool parse_arguments(int argument_count, char **arguments)
 		return false;
 	}
 	if ((engram_hot_set_path == NULL) != (engram_hot_sha256 == NULL))
-		return false; /* a hot set is taken only with its recorded SHA-256 */
-	if (user_queue_depth > queue_depth ||
-	    (strcmp(draft_usage, "compact") != 0 &&
-	     strcmp(draft_usage, "none") != 0 &&
-	     strcmp(draft_usage, "full") != 0) ||
-	    (live_stats_interval_ms != 0 &&
-	     live_stats_interval_ms < LIVE_STATS_LEAST_INTERVAL_MS) ||
-	    (strcmp(live_stats_format, "text") != 0 &&
-	     strcmp(live_stats_format, "json") != 0 &&
-	     strcmp(live_stats_format, "table") != 0) ||
-	    (session_slots != 1 && !is_serving) ||
-	    (wide_rows != 0 &&
-	     (wide_rows < MODEL_WIDE_LEAST_ROWS || prefill_cone == 0)) ||
-	    ((prefill_chunk_rows != 0 || prefill_decode_rows != 0) &&
-	     (chunks_in_flight != 1u || prefill_fast_plan != 0 ||
-	      prefill_chunk_rows % MODEL_FULL_CONE_LEAST_ROWS != 0 ||
-	      prefill_decode_rows % MODEL_FULL_CONE_LEAST_ROWS != 0 ||
-	      prefill_chunk_rows > wide_rows ||
-	      prefill_decode_rows > wide_rows)) ||
-	    (prefill_tail_rows != 0 &&
-	     ((prefill_tail_rows != TAIL_PROGRAM_ROWS &&
-	       prefill_tail_rows != TAIL_LONG_ROWS &&
-	       prefill_tail_rows != TAIL_WIDEST_ROWS) ||
-	      !tail_applies)) ||
-	    (prefill_front_tail != 0 && prefill_tail_rows == 0) ||
-	    (prefill_thin_tail != 0 && prefill_tail_rows == 0) ||
-	    (dense_staged != 0 &&
-	     (dense_staged < DENSE_STAGED_LEAST_OUTPUTS ||
-	      (dense_staged & (dense_staged - 1u)) != 0)) ||
-	    (original_dense_staged != 0 &&
-	     (original_dense_staged != DENSE_STAGED_OUTPUTS ||
-	      execution_placement != EXECUTION_TP4_PRO)) ||
-	    (tp_pipeline_overlap != 0 &&
-	     (execution_placement != EXECUTION_TP4_PRO ||
-	      pipeline_steps < OVERLAP_LEAST_PIPELINE_STEPS ||
-	      batch_rows[0] != 0 || numerics != NUMERICS_EXACT ||
-	      pro_emulation != 0 || cmp_order != CMP_ORDER_REFERENCE ||
-	      linear_order != LINEAR_ORDER_REFERENCE ||
-	      linear_profile != LINEAR_PROFILE_PRECISION || tp_wire_bf16 != 0 ||
-	      tp_code_wire != 0 || tp_attention_owner != 0)) ||
-	    (original_wide_experts != 0 &&
-	     (execution_placement != EXECUTION_TP4_PRO ||
-	      numerics != NUMERICS_EXACT || pro_emulation != 0 ||
-	      cmp_order != CMP_ORDER_REFERENCE ||
-	      linear_order != LINEAR_ORDER_REFERENCE ||
-	      linear_profile != LINEAR_PROFILE_PRECISION ||
-	      wide_rows < MODEL_WIDE_LEAST_ROWS || tp_wire_bf16 != 0 ||
-	      tp_code_wire != 0 || tp_attention_owner != 0 ||
-	      batch_rows[0] != 0 || exl3_wide_entry != 0 ||
-	      tp_split_overlap != 0 || tp_full_split_overlap != 0)) ||
-	    (original_batch != 0 &&
-	     (execution_placement != EXECUTION_TP4_PRO ||
-	      pipeline_steps != 1u ||
-	      batch_rows[0] != V41_DATA_ORIGINAL_BATCH_ROWS ||
-	      batch_rows[1] != 0 ||
-	      batch_verifiers[0] != V41_DATA_ORIGINAL_BATCH_SESSIONS ||
-	      batch_verifiers[1] != 0 ||
-	      session_slots != V41_DATA_ORIGINAL_BATCH_SESSIONS ||
-	      wide_rows < MODEL_WIDE_LEAST_ROWS ||
-	      speculative < SPECULATIVE_DEVICE ||
-	      draft_block != MODEL_DRAFT_BLOCK ||
-	      draft_positions != MODEL_DRAFT_BLOCK ||
-	      numerics != NUMERICS_EXACT || pro_emulation != 0 ||
-	      linear_profile != LINEAR_PROFILE_PRECISION ||
-	      linear_order != LINEAR_ORDER_REFERENCE ||
-	      cmp_order != CMP_ORDER_REFERENCE || tp_wire_bf16 != 0 ||
-	      tp_code_wire != 0 || tp_attention_owner != 0 ||
-	      tp_head_shards != 0 || tp_draft_shards != 0 ||
-	      tp_draft_layers != 0 || tp_head_stream != 0 || tp_head_mma != 0 ||
-	      tp_trunk_mma != 0 || tp_router_mma != 0 || batch_wide_head != 0 ||
-	      batch_draft_rows != 0 || batch_context_slabs != 1u ||
-	      batch_core_once != 0 || batch_draft_wide != 0 ||
-	      draft_bf16_rows != 0 || draft_bf16_operands != 0 ||
-	      original_wide_experts != 0 || original_dense_staged != 0 ||
-	      exl3_wide_entry != 0 || tp_split_overlap != 0 ||
-	      tp_full_split_overlap != 0 || tp_pipeline_overlap != 0)) ||
-	    (original_chunk_core != 0 &&
-	     wide_rows % LINEAR_MAXIMUM_ROWS != 0) ||
-	    (original_chunk_core != 0 &&
-	     (execution_placement != EXECUTION_TP4_PRO ||
-	      numerics != NUMERICS_EXACT || pro_emulation != 0 ||
-	      linear_profile != LINEAR_PROFILE_PRECISION ||
-	      linear_order != LINEAR_ORDER_REFERENCE ||
-	      cmp_order != CMP_ORDER_REFERENCE ||
-	      wide_rows < MODEL_WIDE_LEAST_ROWS ||
-	      wide_rows > LINEAR_WIDE_MOST_ROWS || tp_wire_bf16 != 0 ||
-	      tp_code_wire != 0 || tp_attention_owner != 0 ||
-	      batch_rows[0] != 0 || original_wide_experts != 0 ||
-	      original_batch != 0 || tp_split_overlap != 0 ||
-	      tp_full_split_overlap != 0)) ||
-	    lookup_ngram_min > lookup_ngram_max ||
-	    (speculative != SPECULATIVE_OFF && step_rows == 1) ||
-	    (speculative >= SPECULATIVE_DEVICE && session_slots > 1u &&
-	     pipeline_steps == 1u && batch_rows[0] == 0) ||
-	    (batch_rows[0] != 0 &&
-	     ((!original_batch && execution_placement != EXECUTION_TP4_EXL3) ||
-	      pipeline_steps != 1u)) ||
-	    /* without the batched draft rows each verifier's walk is its own segments: the step driver runs one BATCH
-	     * program beside the chunked ones, not several (model_v41_exl3_program_test) */
-	    (batch_rows[1] != 0 && speculative >= SPECULATIVE_DEVICE &&
-	     batch_draft_rows == 0) ||
-	    batch_row_sets % LINEAR_MAXIMUM_ROWS != 0 ||
-	    tp_core_heads % CORE_HEADS_STEP != 0 ||
-	    ((batch_draft_rows != 0 || batch_wide_head != 0 ||
-	      batch_context_slabs != 0 || batch_step_us[0] != 0 ||
-	      batch_verifiers[0] != 0) &&
-	     batch_rows[0] == 0)) {
+		return parse_refused(
+			"--engram_hot_set",
+			"taken only with its recorded --engram_hot_sha256, and that only with it");
+	const struct parse_refusal refusals[] = {
+		{ user_queue_depth > queue_depth, "--user_queue_depth",
+		  "above --queue_depth" },
+		{ strcmp(draft_usage, "compact") != 0 &&
+			  strcmp(draft_usage, "none") != 0 &&
+			  strcmp(draft_usage, "full") != 0,
+		  "--draft_usage", "takes none, compact or full" },
+		{ live_stats_interval_ms != 0 &&
+			  live_stats_interval_ms < LIVE_STATS_LEAST_INTERVAL_MS,
+		  "--live_stats", "0, or at least the least interval" },
+		{ strcmp(live_stats_format, "text") != 0 &&
+			  strcmp(live_stats_format, "json") != 0 &&
+			  strcmp(live_stats_format, "table") != 0,
+		  "--live_stats_format", "takes text, json or table" },
+		{ session_slots != 1 && !is_serving, "--session_slots",
+		  "serve's alone" },
+		{ wide_rows != 0 && (wide_rows < MODEL_WIDE_LEAST_ROWS ||
+				     prefill_cone == 0),
+		  "--wide_rows",
+		  "0, or at least the least wide rows with --prefill_cone=1" },
+		{ (prefill_chunk_rows != 0 || prefill_decode_rows != 0) &&
+			  (chunks_in_flight != 1u || prefill_fast_plan != 0 ||
+			   prefill_chunk_rows % MODEL_FULL_CONE_LEAST_ROWS !=
+				   0 ||
+			   prefill_decode_rows % MODEL_FULL_CONE_LEAST_ROWS !=
+				   0 ||
+			   prefill_chunk_rows > wide_rows ||
+			   prefill_decode_rows > wide_rows),
+		  "--prefill_chunk_rows and --prefill_decode_rows",
+		  "whole full-cone granules up to --wide_rows, with --chunks_in_flight=1 and --prefill_fast_plan=0" },
+		{ prefill_tail_rows != 0 &&
+			  ((prefill_tail_rows != TAIL_PROGRAM_ROWS &&
+			    prefill_tail_rows != TAIL_LONG_ROWS &&
+			    prefill_tail_rows != TAIL_WIDEST_ROWS) ||
+			   !tail_applies),
+		  "--prefill_tail_rows",
+		  "0, 128, 320 or 448, on the TP4_EXL3 tail recipe alone (one chunk in flight, the exact plan, full "
+		  "steps, --wide_rows of 1024 or more, --exl3_tc_moe=1 and --tp_trunk_mma=1)" },
+		{ prefill_front_tail != 0 && prefill_tail_rows == 0,
+		  "--prefill_front_tail", "needs --prefill_tail_rows" },
+		{ prefill_thin_tail != 0 && prefill_tail_rows == 0,
+		  "--prefill_thin_tail", "needs --prefill_tail_rows" },
+		{ dense_staged != 0 &&
+			  (dense_staged < DENSE_STAGED_LEAST_OUTPUTS ||
+			   (dense_staged & (dense_staged - 1u)) != 0),
+		  "--dense_staged",
+		  "0, or a power of two of at least the least staged outputs" },
+		{ original_dense_staged != 0 &&
+			  (original_dense_staged != DENSE_STAGED_OUTPUTS ||
+			   execution_placement != EXECUTION_TP4_PRO),
+		  "--original_dense_staged",
+		  "the staged outputs' count, on TP4_PRO alone" },
+		{ tp_pipeline_overlap != 0 &&
+			  (execution_placement != EXECUTION_TP4_PRO ||
+			   pipeline_steps < OVERLAP_LEAST_PIPELINE_STEPS ||
+			   batch_rows[0] != 0 || numerics != NUMERICS_EXACT ||
+			   pro_emulation != 0 ||
+			   cmp_order != CMP_ORDER_REFERENCE ||
+			   linear_order != LINEAR_ORDER_REFERENCE ||
+			   linear_profile != LINEAR_PROFILE_PRECISION ||
+			   tp_wire_bf16 != 0 || tp_code_wire != 0 ||
+			   tp_attention_owner != 0),
+		  "--tp_pipeline_overlap",
+		  "TP4_PRO's exact reference recipe at two pipeline steps or more, without BATCH or another wire" },
+		{ original_wide_experts != 0 &&
+			  (execution_placement != EXECUTION_TP4_PRO ||
+			   numerics != NUMERICS_EXACT || pro_emulation != 0 ||
+			   cmp_order != CMP_ORDER_REFERENCE ||
+			   linear_order != LINEAR_ORDER_REFERENCE ||
+			   linear_profile != LINEAR_PROFILE_PRECISION ||
+			   wide_rows < MODEL_WIDE_LEAST_ROWS ||
+			   tp_wire_bf16 != 0 || tp_code_wire != 0 ||
+			   tp_attention_owner != 0 || batch_rows[0] != 0 ||
+			   exl3_wide_entry != 0 || tp_split_overlap != 0 ||
+			   tp_full_split_overlap != 0),
+		  "--original_wide_experts",
+		  "TP4_PRO's exact reference recipe with wide rows, without BATCH, another wire or the split "
+		  "overlaps" },
+		{ original_batch != 0 &&
+			  (execution_placement != EXECUTION_TP4_PRO ||
+			   pipeline_steps != 1u ||
+			   batch_rows[0] != V41_DATA_ORIGINAL_BATCH_ROWS ||
+			   batch_rows[1] != 0 ||
+			   batch_verifiers[0] !=
+				   V41_DATA_ORIGINAL_BATCH_SESSIONS ||
+			   batch_verifiers[1] != 0 ||
+			   session_slots != V41_DATA_ORIGINAL_BATCH_SESSIONS ||
+			   wide_rows < MODEL_WIDE_LEAST_ROWS ||
+			   speculative < SPECULATIVE_DEVICE ||
+			   draft_block != MODEL_DRAFT_BLOCK ||
+			   draft_positions != MODEL_DRAFT_BLOCK ||
+			   numerics != NUMERICS_EXACT || pro_emulation != 0 ||
+			   linear_profile != LINEAR_PROFILE_PRECISION ||
+			   linear_order != LINEAR_ORDER_REFERENCE ||
+			   cmp_order != CMP_ORDER_REFERENCE ||
+			   tp_wire_bf16 != 0 || tp_code_wire != 0 ||
+			   tp_attention_owner != 0 || tp_head_shards != 0 ||
+			   tp_draft_shards != 0 || tp_draft_layers != 0 ||
+			   tp_head_stream != 0 || tp_head_mma != 0 ||
+			   tp_trunk_mma != 0 || tp_router_mma != 0 ||
+			   batch_wide_head != 0 || batch_draft_rows != 0 ||
+			   batch_context_slabs != 1u || batch_core_once != 0 ||
+			   batch_draft_wide != 0 || draft_bf16_rows != 0 ||
+			   draft_bf16_operands != 0 ||
+			   original_wide_experts != 0 ||
+			   original_dense_staged != 0 || exl3_wide_entry != 0 ||
+			   tp_split_overlap != 0 ||
+			   tp_full_split_overlap != 0 ||
+			   tp_pipeline_overlap != 0),
+		  "--original_batch",
+		  "TP4_PRO's exact BATCH recipe alone: --pipeline_steps=1, one BATCH program of its rows and sessions, "
+		  "the device draft at the draft block, and none of the TP, draft and BATCH form knobs" },
+		{ original_chunk_core != 0 &&
+			  wide_rows % LINEAR_MAXIMUM_ROWS != 0,
+		  "--original_chunk_core",
+		  "needs --wide_rows a multiple of the linear's rows" },
+		{ original_chunk_core != 0 &&
+			  (execution_placement != EXECUTION_TP4_PRO ||
+			   numerics != NUMERICS_EXACT || pro_emulation != 0 ||
+			   linear_profile != LINEAR_PROFILE_PRECISION ||
+			   linear_order != LINEAR_ORDER_REFERENCE ||
+			   cmp_order != CMP_ORDER_REFERENCE ||
+			   wide_rows < MODEL_WIDE_LEAST_ROWS ||
+			   wide_rows > LINEAR_WIDE_MOST_ROWS ||
+			   tp_wire_bf16 != 0 || tp_code_wire != 0 ||
+			   tp_attention_owner != 0 || batch_rows[0] != 0 ||
+			   original_wide_experts != 0 || original_batch != 0 ||
+			   tp_split_overlap != 0 || tp_full_split_overlap != 0),
+		  "--original_chunk_core",
+		  "TP4_PRO's exact reference recipe with wide rows in the linear's range, without BATCH, another wire, "
+		  "--original_wide_experts or the split overlaps" },
+		{ lookup_ngram_min > lookup_ngram_max, "--lookup_ngram_min",
+		  "above --lookup_ngram_max" },
+		{ speculative != SPECULATIVE_OFF && step_rows == 1, "--rows",
+		  "speculation needs more than one row" },
+		{ speculative >= SPECULATIVE_DEVICE && session_slots > 1u &&
+			  pipeline_steps == 1u && batch_rows[0] == 0,
+		  "--pipeline_steps",
+		  "several sessions with the device draft need two pipeline steps or more, or BATCH" },
+		{ batch_rows[0] != 0 &&
+			  ((!original_batch &&
+			    execution_placement != EXECUTION_TP4_EXL3) ||
+			   pipeline_steps != 1u),
+		  "--batch_rows",
+		  "BATCH runs on TP4_EXL3 (or with --original_batch=1) at --pipeline_steps=1" },
+		/* without the batched draft rows each verifier's walk is its own segments: the step driver runs one
+		 * BATCH program beside the chunked ones, not several (model_v41_exl3_program_test) */
+		{ batch_rows[1] != 0 && speculative >= SPECULATIVE_DEVICE &&
+			  batch_draft_rows == 0,
+		  "--batch_rows",
+		  "several BATCH programs with the device draft need --batch_draft_rows=1" },
+		{ batch_row_sets % LINEAR_MAXIMUM_ROWS != 0, "--batch_row_sets",
+		  "a multiple of the linear's rows" },
+		{ tp_core_heads % CORE_HEADS_STEP != 0, "--tp_core_heads",
+		  "a multiple of the attention core's tile of heads" },
+		{ (batch_draft_rows != 0 || batch_wide_head != 0 ||
+		   batch_context_slabs != 0 || batch_step_us[0] != 0 ||
+		   batch_verifiers[0] != 0) &&
+			  batch_rows[0] == 0,
+		  "--batch_draft_rows, --batch_wide_head, --batch_context_slabs, --batch_step_us and --batch_verifiers",
+		  "BATCH's own: give --batch_rows" }
+	};
+	if (!none_refused(refusals, sizeof(refusals) / sizeof(refusals[0])))
 		return false;
-	}
 	const struct startup_policy_request policy_request = {
 		.numerics = numerics,
 		.placement = execution_placement,
@@ -1962,10 +2204,13 @@ bool parse_arguments(int argument_count, char **arguments)
 		.cmp_order_was_given = cmp_order_was_given
 	};
 	struct startup_policy policy;
-	if (startup_policy_prepare(&policy_request, &policy) != STATUS_OK ||
-	    (execution_placement != EXECUTION_PP5 && layout_text != NULL)) {
-		return false;
-	}
+	if (startup_policy_prepare(&policy_request, &policy) != STATUS_OK)
+		return parse_refused(
+			"--numerics",
+			"exact needs the reference CMP order and runs on PP5, TP4_PRO and TP4_EXL3 alone (the TP2 and "
+			"TP5 splits take relaxed or fast)");
+	if (execution_placement != EXECUTION_PP5 && layout_text != NULL)
+		return parse_refused("--layout", "PP5's alone");
 	numerics = policy.numerics;
 	cmp_order = policy.cmp_order;
 	if (original_head_offload != 0 &&
@@ -2001,35 +2246,54 @@ bool parse_arguments(int argument_count, char **arguments)
 			stderr);
 		return false;
 	}
-	if ((exl3_expert_parts != EXL3_EXPERT_REFERENCE_PARTS &&
-	     exl3_expert_parts != EXL3_EXPERT_OPTIONAL_PARTS) ||
-	    (exl3_expert_parts == EXL3_EXPERT_OPTIONAL_PARTS &&
-	     (execution_placement != EXECUTION_TP4_EXL3 ||
-	      numerics == NUMERICS_EXACT || cmp_order != CMP_ORDER_REFERENCE ||
-	      tp_wire_bf16 != 0)) ||
-	    (execution_placement == EXECUTION_TP4_EXL3 &&
-	     (tp_code_wire != 0 || tp_attention_owner != 0)) ||
-	    ((tp_head_shards != 0 || tp_head_stream != 0) &&
-	     execution_placement != EXECUTION_TP4_EXL3) ||
-	    (tp_draft_shards != 0 && tp_head_shards == 0) ||
-	    (tp_decode_round_once != 0 &&
-	     (execution_placement != EXECUTION_TP4_EXL3 || tp_wire_bf16 == 0 ||
-	      tp_wide_exchange < V41_DATA_TP_EXCHANGE_OWNER_SUMS ||
-	      wide_rows <= LINEAR_MAXIMUM_ROWS)) ||
-	    (exl3_expert_rotation != 0 &&
-	     (execution_placement != EXECUTION_TP4_EXL3 || tp_wire_bf16 == 0 ||
-	      exl3_tc_moe == 0 ||
-	      exl3_expert_parts != EXL3_EXPERT_REFERENCE_PARTS)) ||
-	    (tp_draft_layers != 0 &&
-	     (tp_draft_shards == 0 || tp_wire_bf16 == 0 ||
-	      execution_placement != EXECUTION_TP4_EXL3 ||
-	      (batch_rows[0] != 0 &&
-	       (batch_draft_rows == 0 || batch_wide_head == 0)))))
+	const struct parse_refusal tensor_refusals[] = {
+		{ exl3_expert_parts != EXL3_EXPERT_REFERENCE_PARTS &&
+			  exl3_expert_parts != EXL3_EXPERT_OPTIONAL_PARTS,
+		  "--exl3_expert_parts", "4 (the reference partition) or 8" },
+		{ exl3_expert_parts == EXL3_EXPERT_OPTIONAL_PARTS &&
+			  (execution_placement != EXECUTION_TP4_EXL3 ||
+			   numerics == NUMERICS_EXACT ||
+			   cmp_order != CMP_ORDER_REFERENCE ||
+			   tp_wire_bf16 != 0),
+		  "--exl3_expert_parts",
+		  "8 parts need TP4_EXL3 with relaxed or fast numerics, the reference CMP order and the FP32 wire" },
+		{ execution_placement == EXECUTION_TP4_EXL3 &&
+			  (tp_code_wire != 0 || tp_attention_owner != 0),
+		  "--tp_code_wire and --tp_attention_owner",
+		  "not on TP4_EXL3" },
+		{ (tp_head_shards != 0 || tp_head_stream != 0) &&
+			  execution_placement != EXECUTION_TP4_EXL3,
+		  "--tp_head_shards and --tp_head_stream", "TP4_EXL3's alone" },
+		{ tp_draft_shards != 0 && tp_head_shards == 0,
+		  "--tp_draft_shards", "needs --tp_head_shards=1" },
+		{ tp_decode_round_once != 0 &&
+			  (execution_placement != EXECUTION_TP4_EXL3 ||
+			   tp_wire_bf16 == 0 ||
+			   tp_wide_exchange < V41_DATA_TP_EXCHANGE_OWNER_SUMS ||
+			   wide_rows <= LINEAR_MAXIMUM_ROWS),
+		  "--tp_decode_round_once",
+		  "needs TP4_EXL3 with the BF16 wire, an owner-sum --tp_wide_exchange and wide rows above the "
+		  "linear's" },
+		{ exl3_expert_rotation != 0 &&
+			  (execution_placement != EXECUTION_TP4_EXL3 ||
+			   tp_wire_bf16 == 0 || exl3_tc_moe == 0 ||
+			   exl3_expert_parts != EXL3_EXPERT_REFERENCE_PARTS),
+		  "--exl3_expert_rotation",
+		  "needs TP4_EXL3 with the BF16 wire, --exl3_tc_moe=1 and the reference expert parts" },
+		{ tp_draft_layers != 0 &&
+			  (tp_draft_shards == 0 || tp_wire_bf16 == 0 ||
+			   execution_placement != EXECUTION_TP4_EXL3 ||
+			   (batch_rows[0] != 0 &&
+			    (batch_draft_rows == 0 || batch_wide_head == 0))),
+		  "--tp_draft_layers",
+		  "needs TP4_EXL3 with the BF16 wire and --tp_draft_shards=1 (BATCH: also --batch_draft_rows=1 and "
+		  "--batch_wide_head=1)" }
+	};
+	if (!none_refused(tensor_refusals,
+			  sizeof(tensor_refusals) / sizeof(tensor_refusals[0])))
 		return false;
-	if (session_fork != 0 && cache_scope != SERVER_CACHE_SESSION) {
-		LOG_ERROR("serve: session forks require cache_scope=0");
-		return false;
-	}
+	if (session_fork != 0 && cache_scope != SERVER_CACHE_SESSION)
+		return parse_refused("--session_fork", "needs --cache_scope=0");
 	if (prefill_prefix_stable != 0 &&
 	    (execution_placement != EXECUTION_TP4_EXL3 || tp_wire_bf16 == 0 ||
 	     tp_ring_column_owners == 0 ||
@@ -2045,15 +2309,19 @@ bool parse_arguments(int argument_count, char **arguments)
 	     (wide_rows != PREFIX_STABLE_SMALL_ROWS &&
 	      wide_rows != PREFIX_STABLE_LARGE_ROWS) ||
 	     (session_slots > 1u && prefill_first == 0 && prefill_order == 0)))
-		return false;
+		return parse_refused(
+			"--prefill_prefix_stable",
+			"the TP4_EXL3 BF16 column-owner THIN recipe alone: the CE-ring exchange, unweighted "
+			"gathers, thin bits, full steps, the cone at skip 1, one chunk in flight, the exact "
+			"plan, no prefill caps or session directory, a margin of a stable granule, --wide_rows "
+			"of 1024 or 2048, and reserved prefill for several slots");
 	if ((prefix_reuse_exact != 0 || session_fork != 0) &&
-	    !prefix_cold_plan_is_qualified()) {
-		if (session_fork != 0)
-			LOG_ERROR(
-				"serve: session forks require TP4 EXL3 column owners, invariant THIN forms, "
-				"chunks_in_flight=1, the exact plan, caps=0 and reserved multi-slot prefill");
-		return false;
-	}
+	    !prefix_cold_plan_is_qualified())
+		return parse_refused(
+			session_fork != 0 ? "--session_fork" :
+					    "--prefix_reuse_exact",
+			"needs TP4_EXL3 column owners, the invariant THIN forms, --chunks_in_flight=1, the exact plan, "
+			"prefill caps 0 and, for several slots, reserved prefill (--prefill_first or --prefill_order)");
 	/* The measured CLI defaults belong to the EXL3 family. Other placements retain each omitted
 	 * field's previous default; explicit choices remain independent. */
 	if (execution_placement != EXECUTION_TP4_EXL3) {
@@ -2109,15 +2377,32 @@ bool parse_arguments(int argument_count, char **arguments)
 	if (model_dir != NULL && is_generating && !is_serving &&
 	    front_end_paths[MESSAGES_FILE] == NULL &&
 	    prompt_token_ids_path == NULL)
+		return parse_refused(
+			"--model_dir",
+			"generate still takes MESSAGES, or --prompt_token_ids");
+	/* --model_dir gives one copy once the folder is resolved; the calibration file is read last, as before */
+	const struct parse_refusal file_refusals[] = {
+		{ copy_count == 0 && model_dir == NULL, "the pack",
+		  "none given (or --model_dir)" },
+		{ prompt_token_ids_path != NULL && copy_count != 1u &&
+			  model_dir == NULL,
+		  "--prompt_token_ids", "takes one pack" },
+		{ copy_count > STORAGE_MAXIMUM_COPIES, "the packs",
+		  "more copies than a load reads" },
+		{ speculative == SPECULATIVE_HYBRID &&
+			  hybrid_lookup_min > lookup_ngram_max,
+		  "--hybrid_lookup_min", "above --lookup_ngram_max" }
+	};
+	if (!none_refused(file_refusals,
+			  sizeof(file_refusals) / sizeof(file_refusals[0])))
 		return false;
-	/* --model_dir gives one copy once the folder is resolved */
-	return (copy_count >= 1 || model_dir != NULL) &&
-	       (prompt_token_ids_path == NULL || copy_count == 1u ||
-		model_dir != NULL) &&
-	       copy_count <= STORAGE_MAXIMUM_COPIES &&
-	       (speculative != SPECULATIVE_HYBRID ||
-		hybrid_lookup_min <= lookup_ngram_max) &&
-	       draft_calibration_read() && draft_policy_valid(&draft_policy);
+	if (!draft_calibration_read())
+		return parse_refused(
+			"--draft_calibration",
+			"the file does not read as the calibration's probabilities");
+	return draft_policy_valid(&draft_policy) ||
+	       parse_refused("--draft_policy",
+			     "outside the draft policy's ranges");
 }
 
 /* The whole of a file, not empty, in memory of malloc (aligned for any type) that the caller frees; else NULL. */
@@ -2128,7 +2413,8 @@ model_pack_opened(const struct storage_operations_record *storage,
 		  const struct pack_header *header)
 {
 	struct storage_description opened = { 0 };
-	const char *const name = model_file_names[model_pack - model_files];
+	const char *const name =
+		folder_file_name((enum model_file)(model_pack - model_files));
 	if (storage->reader_describe(opened_reader, &opened) != STATUS_OK ||
 	    !model_file_is(model_pack, opened.first_device,
 			   opened.first_inode)) {
@@ -2156,9 +2442,7 @@ const struct storage_operations_record *pack_storage(void)
 							     &storage_direct;
 }
 
-/* --weights against the pack: an EXL3 map's pack holds EXL3 matrices, an original pack none. */
-MUST_CHECK static result_status
-pack_family_status(const struct pack_record *opened_pack)
+static bool pack_holds_exl3(const struct pack_record *opened_pack)
 {
 	const struct pack_header *const header = pack_header_of(opened_pack);
 	const struct pack_tensor *const tensors = pack_tensors_of(opened_pack);
@@ -2167,6 +2451,15 @@ pack_family_status(const struct pack_record *opened_pack)
 	     tensor++)
 		holds_exl3 = tensors[tensor].weight_format ==
 			     WEIGHT_FORMAT_EXL3;
+	return holds_exl3;
+}
+
+/* --weights against the pack: an EXL3 map's pack holds EXL3 matrices, an original pack none. */
+MUST_CHECK static result_status
+pack_family_status(const struct pack_record *opened_pack)
+{
+	const struct pack_header *const header = pack_header_of(opened_pack);
+	const bool holds_exl3 = pack_holds_exl3(opened_pack);
 	if (holds_exl3 == (weights_family == WEIGHTS_EXL3))
 		return STATUS_OK;
 	(void)fprintf(stderr, "--weights=%s, but the pack %s holds %s\n",
@@ -2174,6 +2467,26 @@ pack_family_status(const struct pack_record *opened_pack)
 		      header->model_name,
 		      holds_exl3 ? "EXL3 matrices" : "no EXL3 matrix");
 	return STATUS_UNSUPPORTED;
+}
+
+/* --exl3_tc_moe=1 takes effect: TP4_EXL3 with the BF16 wire (the exact recipe ignores it), in the plan and in the
+ * descriptor's check alike */
+static bool tc_moe_selected(void)
+{
+	return execution_placement == EXECUTION_TP4_EXL3 && tp_wire_bf16 != 0 &&
+	       exl3_tc_moe != 0;
+}
+
+/* A pack of EXL3 matrices against its map's descriptor and its model (model_registry.h), beside the folder's map or
+ * the first pack argument, or without one against the model's established packs: the tables when the command read
+ * them, the quality opt-in, and with the tensor-core MoE the model against its kernels. */
+MUST_CHECK static result_status map_descriptor_check(const char *tables,
+						     uint64_t table_byte_count)
+{
+	return model_instance_map_check(&instance, pack, tables,
+					table_byte_count, exl3_unrated_map != 0,
+					tc_moe_selected() ? TP4_RANKS : 0u,
+					exl3_expert_rotation);
 }
 
 /* A whole file; with expected (a --model_dir file), only the resolved file itself. */
@@ -2347,12 +2660,10 @@ MUST_CHECK result_status tensor_plan_prepare(const struct model_limits *limits,
 		.head_stream = tp_head_stream != 0,
 		.exl3_fast_products = exl3_fast_products != 0,
 		.exl3_wide_entry = exl3_wide_entry != 0,
-		.exl3_tc_moe = exl3 && tp_wire_bf16 != 0 && exl3_tc_moe != 0,
+		.exl3_tc_moe = tc_moe_selected(),
 		.exl3_tc_product_blocks = exl3_tc_product_blocks,
-		.exl3_expert_rotation = exl3 && tp_wire_bf16 != 0 &&
-							exl3_tc_moe != 0 ?
-						exl3_expert_rotation :
-						0u,
+		.exl3_expert_rotation =
+			tc_moe_selected() ? exl3_expert_rotation : 0u,
 		.head_mma = exl3 && tp_wire_bf16 != 0 && tp_head_mma != 0,
 		.trunk_mma = exl3 && tp_wire_bf16 != 0 && tp_trunk_mma != 0,
 		.trunk_mma_fused = tp_trunk_mma_fused != 0,
@@ -2787,21 +3098,23 @@ MUST_CHECK static result_status tensor_cards_load(const void *tables,
 	return status;
 }
 
-/* Turbo load: the single source's replicas found (found_paths, replicas_add's search) that open together with the
- * copies already kept become copies 1.. of a new reader (replicas_reader_open: one line names each replica left out
- * and why); when none opens, the source alone stays (one line says so). */
+/* Turbo load: the replicas found beside the given copies (found_paths, replicas_add's search) that open together
+ * with the copies already kept follow the given copies in a new reader (replicas_reader_open: one line names each
+ * replica left out and why); when none opens, the given copies alone stay (one line says so). */
 MUST_CHECK result_status replicas_found_add(
 	const char (*found_paths)[REPLICA_PATH_CAPACITY], uint32_t found)
 {
+	const uint32_t given = copy_count;
 	struct storage_reader *wider = NULL;
-	const uint32_t kept = replicas_reader_open(storage_operations,
-						   copy_paths[0], found_paths,
-						   found, turbo_copy_paths,
-						   &wider, stdout);
+	const uint32_t kept = replicas_reader_open(
+		storage_operations, copy_paths, given, found_paths, found,
+		turbo_copy_paths, &wider, stdout);
 	if (found != 0 && kept == 0) {
 		(void)printf("turbo load: %" PRIu32
-			     " replicas do not open: the source alone\n",
-			     found);
+			     " replicas do not open: %s\n",
+			     found,
+			     given == 1u ? "the source alone" :
+					   "the given copies alone");
 		return STATUS_OK;
 	}
 	struct storage_description opened = { 0 };
@@ -2820,22 +3133,60 @@ MUST_CHECK result_status replicas_found_add(
 		storage_operations->reader_close(reader);
 		reader = wider;
 		copy_paths = turbo_copy_paths;
-		copy_count = kept + 1u;
+		copy_count = given + kept;
 	}
-	for (uint32_t index = 0; index < kept; index++)
-		(void)printf("turbo load: copy %" PRIu32 " %s\n", index + 1u,
-			     turbo_copy_paths[index + 1u]);
+	for (uint32_t index = given; index < given + kept; index++)
+		(void)printf("turbo load: copy %" PRIu32 " %s\n", index,
+			     turbo_copy_paths[index]);
 	return STATUS_OK;
 }
 
-/* Turbo load's search: the single source's receipted replicas (replicas.h), then replicas_found_add. */
-MUST_CHECK static result_status replicas_add(void)
+bool turbo_load_searches(void)
 {
-	const uint32_t found = replicas_find_policy(
-		copy_paths[0], pack_header_of(pack), replica_paths,
-		REPLICAS_MOST, replica_external != 0);
+	return !tuned_load_active && turbo_load != 0 &&
+	       copy_count < STORAGE_MAXIMUM_COPIES;
+}
+
+uint32_t (*turbo_load_search)(const char *const *copies, uint32_t copy_count,
+			      const struct pack_header *header,
+			      char (*paths)[REPLICA_PATH_CAPACITY],
+			      uint32_t capacity,
+			      bool external) = replicas_find_policy;
+
+/* Turbo load's search: the receipted replicas of the given copies' source on drives that hold none of them
+ * (replicas.h), then replicas_found_add. */
+MUST_CHECK static result_status replicas_add(const struct pack_header *header)
+{
+	const uint32_t found = turbo_load_search(
+		copy_paths, copy_count, header, replica_paths,
+		STORAGE_MAXIMUM_COPIES - copy_count, replica_external != 0);
 	return replicas_found_add(
 		(const char (*)[REPLICA_PATH_CAPACITY])replica_paths, found);
+}
+
+/* A load given more than one copy names every copy it reads and where each came from: the command line, or turbo
+ * load's search beside it (with --turbo_load=0 none comes from the search). */
+static void copies_print(uint32_t given)
+{
+	(void)printf("turbo load: the load reads %" PRIu32 " copies:",
+		     copy_count);
+	for (uint32_t copy = 0; copy < copy_count; copy++)
+		(void)printf(" %" PRIu32 " %s (%s)%s", copy, copy_paths[copy],
+			     copy < given ? "given" : "search",
+			     copy + 1u == copy_count ? "\n" : ",");
+}
+
+bool turbo_load_copies(const struct pack_header *header)
+{
+	const uint32_t given = copy_count;
+	if (turbo_load_searches() &&
+	    step_failed("find the replicas", replicas_add(header)))
+		return false;
+	/* a tuned load's copies are the profile's, named by its storage load: line (a profile applies to one given
+	   copy alone) */
+	if (given > 1u && !tuned_load_active)
+		copies_print(given);
+	return true;
 }
 
 /* Profile preparation runs once before model loading; it never tunes or changes the machine. */
@@ -2852,6 +3203,18 @@ static void storage_profile_apply(int argument_count, char **arguments)
 				      strncmp(arguments[index],
 					      "--load_piece_mib=",
 					      strlen("--load_piece_mib=")) == 0;
+		explicit_engram_threads =
+			explicit_engram_threads ||
+			strncmp(arguments[index], "--engram_io_threads=",
+				strlen("--engram_io_threads=")) == 0;
+		explicit_engram_spin =
+			explicit_engram_spin ||
+			strncmp(arguments[index], "--engram_spin_us=",
+				strlen("--engram_spin_us=")) == 0;
+		explicit_engram_pin = explicit_engram_pin ||
+				      strncmp(arguments[index],
+					      "--engram_io_pin=",
+					      strlen("--engram_io_pin=")) == 0;
 	}
 	char default_path[REPLICA_PATH_CAPACITY];
 	const char *path = storage_profile_path != NULL ?
@@ -3135,6 +3498,57 @@ MUST_CHECK static result_status engram_ram_fit(void)
 	return STATUS_OK;
 }
 
+/* Where a step I/O parameter came from: its knob, the profile's engram section (equal to the default, or not), or the
+ * default. */
+static const char *engram_source_tag(bool from_profile, bool explicit_knob,
+				     bool equals_default)
+{
+	return from_profile ?
+		       (equals_default ? "profile = default" : "profile") :
+	       explicit_knob ? "knob" :
+			       "default";
+}
+
+/* Step I/O's threads a copy, spin and pin: each from its knob when given, else from the profile's engram section when
+ * it is enabled and names this pack, exactly the disk store's copies (by their device keys, in order) and this
+ * flight's shape, else the default (storage_engram_section_apply). The tables are on disk here: step I/O starts only
+ * then. reason gets why the section is not applied, empty when it is. Never the RAM share: that is the RAM fit's. */
+static void engram_section_apply(char reason[STORAGE_PROFILE_REASON_BYTES],
+				 struct storage_engram_choice *choice)
+{
+	/* the admitted copies' device keys, read only with a profile (a copy without one matches none) */
+	char keys[STORAGE_MAXIMUM_COPIES][STORAGE_PROFILE_KEY_BYTES] = { { 0 } };
+	for (uint32_t copy = 0;
+	     storage_profile_resolved[0] != '\0' && copy < engram_copy_count;
+	     copy++) {
+		struct local_device_description device;
+		if (storage_device_key_for(engram_copy_paths[copy],
+					   replica_external != 0, keys[copy],
+					   &device) != STATUS_OK)
+			keys[copy][0] = '\0';
+	}
+	const struct storage_engram_serving serving = {
+		.profile = storage_profile_resolved,
+		.header = pack_header_of(pack),
+		.copy_keys = (const char (*)[STORAGE_PROFILE_KEY_BYTES])keys,
+		.copy_count = engram_copy_count,
+		.steps = 1u + STEP_PIPELINE_MOST,
+		.slots = ENGRAM_STEP_SLOTS,
+		.ram_percent = engram_ram_percent,
+		.explicit_threads = explicit_engram_threads,
+		.explicit_spin = explicit_engram_spin,
+		.explicit_pin = explicit_engram_pin
+	};
+	*choice = (struct storage_engram_choice){ .threads_per_copy =
+							  engram_io_threads,
+						  .spin_us = engram_spin_us,
+						  .pin = engram_io_pin };
+	storage_engram_section_apply(&serving, choice, reason);
+	engram_io_threads = choice->threads_per_copy;
+	engram_spin_us = choice->spin_us;
+	engram_io_pin = choice->pin;
+}
+
 /* Step I/O over the disk store: one record for a driver without a pipeline and one per pipeline slot, each sized for
  * the largest step any program takes. A read's deadline fits its re-reads on every other copy into half the cards'
  * wait limit (1.25 s for three copies): a pipeline that sees no progress for that limit fails the step, so a stalled
@@ -3143,6 +3557,9 @@ MUST_CHECK result_status engram_steps_start(void)
 {
 	if (engram_disk == NULL)
 		return STATUS_INVALID_ARGUMENT;
+	char reason[STORAGE_PROFILE_REASON_BYTES];
+	struct storage_engram_choice choice;
+	engram_section_apply(reason, &choice);
 	struct engram_steps_options options = {
 		.threads_per_copy = engram_io_threads,
 		.steps = 1u + STEP_PIPELINE_MOST,
@@ -3173,10 +3590,24 @@ MUST_CHECK result_status engram_steps_start(void)
 	if (status == STATUS_OK) {
 		(void)fprintf(
 			stderr,
-			"engram step io: %u copies, %u threads a copy, spin %u us, %u steps of %u slots, cpus",
+			"engram step io: %u copies, %u threads a copy (%s), spin %u us (%s), pin %u (%s), %u steps "
+			"of %u slots, cpus",
 			engram_disk_copy_count(engram_disk),
-			options.threads_per_copy, engram_spin_us, options.steps,
-			options.slots_per_step);
+			options.threads_per_copy,
+			engram_source_tag(
+				choice.threads_from_profile,
+				explicit_engram_threads,
+				engram_io_threads ==
+					ENGRAM_STEP_IO_THREADS_DEFAULT),
+			engram_spin_us,
+			engram_source_tag(
+				choice.spin_from_profile, explicit_engram_spin,
+				engram_spin_us == ENGRAM_STEP_SPIN_US_DEFAULT),
+			engram_io_pin,
+			engram_source_tag(choice.pin_from_profile,
+					  explicit_engram_pin,
+					  engram_io_pin == 1u),
+			options.steps, options.slots_per_step);
 		for (uint32_t copy = 0;
 		     copy < engram_disk_copy_count(engram_disk); copy++)
 			for (uint32_t thread = 0;
@@ -3194,11 +3625,14 @@ MUST_CHECK result_status engram_steps_start(void)
 				", %u rings read without registered buffers (the locked-memory limit)",
 				plain);
 		(void)fprintf(
-			stderr, " (%s)\n",
+			stderr, " (%s)%s%s\n",
 			engram_step_io_default ?
 				"the default for disk Engram on PP5 and TP4_PRO; "
 				"--engram_step_io=0: per-row gathers" :
-				"--engram_step_io=1");
+				"--engram_step_io=1",
+			reason[0] != '\0' ? "; engram section not applied: " :
+					    "; engram section applied",
+			reason);
 	}
 	return status;
 }
@@ -3325,6 +3759,11 @@ MUST_CHECK static result_status engram_sources_prepare(void)
 	    (accepted == 0 || (tuned_engram_active && accepted != count)))
 		status = STATUS_UNSUPPORTED;
 	count = accepted;
+	for (uint32_t copy = 0; copy < count; copy++)
+		(void)snprintf(engram_copy_paths[copy],
+			       sizeof(engram_copy_paths[copy]), "%s",
+			       paths[copy]);
+	engram_copy_count = count;
 	if (count == 1u)
 		turbo_nvme_engrams = 0;
 	if (status == STATUS_OK)
@@ -3404,7 +3843,7 @@ engine_failed_to_start(const struct engine_description_record *description)
 	bool failed = step_failed("open the n-gram tables", status) ||
 		      (tensor_model == NULL &&
 		       step_failed("initialise the state",
-				   model->arena_initialise(
+				   instance.operations->arena_initialise(
 					   plan, &backend_cuda_value, cards,
 					   CARD_WAIT_LIMIT_NANOSECONDS)));
 	failed = failed ||
@@ -3486,7 +3925,7 @@ engine_failed_to_start(const struct engine_description_record *description)
 					program_rows[program_count],
 					&programs[program_count],
 					&tensor_companions[program_count]) :
-				model->program_prepare(
+				instance.operations->program_prepare(
 					plan, &backend_cuda_value, cards,
 					descriptions, PROGRAM_THIN,
 					program_rows[program_count],
@@ -3598,7 +4037,7 @@ engine_failed_to_start(const struct engine_description_record *description)
 						rows, &programs[program_count],
 						&tensor_companions
 							[program_count]) :
-					model->program_prepare(
+					instance.operations->program_prepare(
 						plan, &backend_cuda_value,
 						cards, descriptions,
 						chunk_kinds[kind], rows,
@@ -4047,6 +4486,39 @@ MUST_CHECK static bool prompt_failed_to_generate(const uint32_t *token_ids,
 	return status != STATUS_OK && step_failed("run a step", status);
 }
 
+/* capture: the cases of golden_capture_options through the engine, on the driver's first thin program's parts. */
+MUST_CHECK static bool capture_failed(int argument_count, char **arguments)
+{
+	const struct execution_program *thin = NULL;
+	for (uint32_t index = 0; index < program_count && thin == NULL; index++)
+		thin = programs[index]->kind == PROGRAM_THIN ? programs[index] :
+							       NULL;
+	const char *const map = copy_count != 0	   ? copy_paths[0] :
+				model_pack != NULL ? model_pack->path :
+						     "";
+	const char *const slash = strrchr(map, '/');
+	const struct golden_capture_run run = {
+		.engine = engine,
+		.driver = driver,
+		.program = thin,
+		.argument_count = argument_count,
+		.arguments = arguments,
+		.version = PROGRAM_ATTRIBUTION_NOTICE,
+		.placement = placement_text != NULL ? placement_text :
+						      "default",
+		.weights = storage_operations == &storage_exl3 ? "exl3" :
+								 "original",
+		.map = slash != NULL ? slash + 1 : map,
+		.pack_header = pack_header_of(pack),
+		.pack_header_bytes = sizeof(struct pack_header),
+		/* the map map_descriptor_check read the descriptor of: the instance's */
+		.map_path = storage_operations != &storage_exl3 ?
+				    NULL :
+				    instance.map_path
+	};
+	return step_failed("capture", golden_capture_run(&run));
+}
+
 /* serve's signals: one byte into the pipe the server polls. */
 static void stop_requested(int signal_number)
 {
@@ -4438,6 +4910,13 @@ int run_program(int argument_count, char **arguments,
 	if (!parse_arguments(argument_count, arguments)) {
 		/* The axis lines first, so a refused knob is traced to the axis value that inserted it. */
 		axis_log(axis_arguments, stderr);
+		if (is_capturing)
+			(void)fputs(
+				"usage: anemone capture [generate's options and axis flags] --capture_golden=ROOT"
+				" --capture_cases=KEYS --capture_out=OUT [--capture_rows=1..8 (default"
+				" speculative_depth + 1)] [--capture_positions=N (default all)] [--capture_free=0|1]"
+				" TABLES PACK | --model_dir=FOLDER\n",
+				stderr);
 		/* Separate usage strings stay within ISO C99's 4095-byte literal limit. */
 		(void)fputs(
 			"usage: anemone load|generate|serve [--card_order=1,0,2]"
@@ -4494,8 +4973,13 @@ int run_program(int argument_count, char **arguments,
 		(void)fputs(
 			" [--weights=original|exl3 (default: what --placement and the pack imply; alone, exl3 selects"
 			" tp4_exl3; a conflicting --placement or pack refuses)]"
-			" [--model_dir=FOLDER (tokenizer.bin and original.anemone or model.exl3map from FOLDER,"
-			" in place of the tables and pack arguments; links are followed to regular files)]",
+			" [--model_dir=FOLDER (tokenizer.bin and original.anemone or NAME.exl3map (--exl3_map)"
+			" from FOLDER, in place of the tables and pack arguments; links are followed to regular files)]"
+			" [--exl3_map=NAME (with --model_dir and the EXL3 map: NAME.exl3map in FOLDER, default model;"
+			" one folder holds several maps of one model)]"
+			" [--exl3_unrated_map=0|1 (default 0; 1: an EXL3 map whose descriptor records no quality"
+			" (quality none), or with no descriptor and a pack the model does not list as established, is"
+			" served with no quality claim; refused otherwise)]",
 			stderr);
 		(void)fputs(
 			" [--tp_queries_piece=0|1 (default 1; tp4_exl3: a wide program's queries over each piece with"
@@ -4626,8 +5110,9 @@ int run_program(int argument_count, char **arguments,
 			" [--engram_hot_set=FILE --engram_hot_sha256=HEX (a static hot set of table blocks, from"
 			" `engram_io_bench hot_build`, held in RAM and served like the RAM prefix; default none)]"
 			" [--engram_hot_mib=1..65536 (default 512: the most RAM the hot set may hold)]"
-			" [--turbo_load=0|1 (default 1: the source's receipted replicas on other drives, from"
-			" `anemone replicate`, are read beside it; 0: the source alone)]"
+			" [--turbo_load=0|1 (default 1: the source's receipted replicas, from `anemone replicate`,"
+			" on drives that hold none of the given copies are read beside them; 0: exactly the given"
+			" copies)]"
 			" [--load_tuned_weights=0|1 (default 0: with a storage profile the readers steal pieces;"
 			" 1: its weights pick each piece's copy)]"
 			" [--map_reads=0..4 (default 4: 3 with replicas, else 1; 3: an EXL3 map's aligned pieces"
@@ -4899,7 +5384,7 @@ int run_program(int argument_count, char **arguments,
 				     status != STATUS_OK ?
 					     status :
 					     server_open(&options, &server));
-	} else if (is_generating) {
+	} else if (is_generating && !is_capturing) {
 		const struct chat_template_options options = {
 			.reasoning_effort =
 				reasoning_effort != 0 ?
@@ -4982,8 +5467,19 @@ int run_program(int argument_count, char **arguments,
 	if (!failed && weights_family != WEIGHTS_UNSET)
 		failed = step_failed("check the weight family",
 				     pack_family_status(pack));
-	if (!failed && !tuned_load_active && turbo_load != 0 && copy_count == 1)
-		failed = step_failed("find the replicas", replicas_add());
+	if (!failed)
+		model_instance_bind(pack,
+				    model_pack != NULL ? model_pack->path :
+							 pack_argument,
+				    &instance);
+	if (!failed && pack_holds_exl3(pack))
+		failed = step_failed(
+			"check the map's descriptor",
+			map_descriptor_check(
+				front_end_files[TABLES_FILE],
+				front_end_byte_counts[TABLES_FILE]));
+	if (!failed)
+		failed = !turbo_load_copies(pack_header_of(pack));
 
 	for (uint32_t copy = 0;
 	     !failed && !tuned_load_active && copy < copy_count; copy++) {
@@ -5039,13 +5535,15 @@ int run_program(int argument_count, char **arguments,
 	if (map_reads == MAP_READS_AUTO && copy_count == 1)
 		storage_exl3_read_mode(EXL3_READS_DROPPED);
 	if (!failed && is_generating) {
-		model = model_operations_of(pack_header_of(pack)->model_name);
-		failed = step_failed(
-				 "describe the model",
-				 model == NULL ?
-					 STATUS_UNSUPPORTED :
-					 model->describe(pack,
-							 &model_description)) ||
+		instance.operations = instance.model != NULL ?
+					      instance.model->operations :
+					      NULL;
+		failed = step_failed("describe the model",
+				     instance.operations == NULL ?
+					     STATUS_UNSUPPORTED :
+					     instance.operations->describe(
+						     pack,
+						     &model_description)) ||
 			 step_failed("match the tokenizer",
 				     tokenizer_vocabulary_size(tokenizer) ==
 						     model_description
@@ -5134,7 +5632,7 @@ int run_program(int argument_count, char **arguments,
 		 * placement below; on the TP splits the TP plan refuses a count it does not hold */
 		uint32_t fitting = session_slots_max ? 0u : session_slots;
 		const struct session_fit_cards fit_cards = {
-			.model = model,
+			.model = instance.operations,
 			.pack = pack,
 			.layout_text = layout_text,
 			.budget_bytes_of_card = budget_bytes_of_card,
@@ -5235,9 +5733,12 @@ int run_program(int argument_count, char **arguments,
 				     status == STATUS_OK;
 				     card++) {
 					uint64_t state_bytes = 0;
-					status = model->state_byte_count(
-						pack, &placement, &limits, card,
-						&state_bytes);
+					status = instance.operations
+							 ->state_byte_count(
+								 pack,
+								 &placement,
+								 &limits, card,
+								 &state_bytes);
 					weight_budget_bytes_of_card[card] =
 						budget_bytes_of_card[card] >
 								state_bytes ?
@@ -5251,7 +5752,7 @@ int run_program(int argument_count, char **arguments,
 				0; /* the routed experts left in host memory: refused before the load */
 			status = !is_generating || status != STATUS_OK ?
 					 status :
-					 model->state_byte_count(
+					 instance.operations->state_byte_count(
 						 pack, &placement, &limits,
 						 PLACEMENT_IN_HOST_MEMORY,
 						 &pinned_bytes);
@@ -5282,8 +5783,9 @@ int run_program(int argument_count, char **arguments,
 						 "plan DSpark (layers 37-39, head and draft need one card: "
 						 "--layout / --card_order)" :
 						 "plan the state",
-					 model->plan_create(pack, layout,
-							    &limits, &plan)));
+					 instance.operations->plan_create(
+						 pack, layout, &limits,
+						 &plan)));
 		}
 	}
 	/* the arenas grown as the fit grew them (plan_grown), each step named */
@@ -5326,8 +5828,8 @@ int run_program(int argument_count, char **arguments,
 		     card < card_count && status == STATUS_OK; card++) {
 			uint64_t arena_bytes = layout->card_byte_count[card];
 			status = is_generating ?
-					 model->arena_byte_count(plan, card,
-								 &arena_bytes) :
+					 instance.operations->arena_byte_count(
+						 plan, card, &arena_bytes) :
 					 STATUS_OK;
 			status = status == STATUS_OK &&
 						 arena_bytes >
@@ -5555,9 +6057,11 @@ int run_program(int argument_count, char **arguments,
 		failed = is_generating &&
 			 (engine_failed_to_start(&engine_description) ||
 			  stats_metadata_bound(card_of_unit) != STATUS_OK ||
-			  (is_serving ? requests_failed(tokenizer) :
-					prompt_failed_to_generate(
-						token_ids, token_count)));
+			  (is_serving	? requests_failed(tokenizer) :
+			   is_capturing ? capture_failed(argument_count,
+							 arguments) :
+					  prompt_failed_to_generate(
+						  token_ids, token_count)));
 		failed = failed || (is_generating && !is_serving &&
 				    dump_draft_ring != NULL &&
 				    draft_ring_dump_failed(dump_draft_ring));
@@ -5573,10 +6077,10 @@ int run_program(int argument_count, char **arguments,
 		engine); /* the engine, then what it stepped, then the cards */
 	step_driver_destroy(driver);
 	v41_original_head_banks_destroy(head_program_banks);
-	for (uint32_t index = 0; model != NULL && index < program_count;
-	     index++) {
-		model->program_destroy(programs[index]);
-		model->program_destroy(image_programs[index]);
+	for (uint32_t index = 0;
+	     instance.operations != NULL && index < program_count; index++) {
+		instance.operations->program_destroy(programs[index]);
+		instance.operations->program_destroy(image_programs[index]);
 	}
 	engram_close(engram);
 	if (engram_steps != NULL)
@@ -5603,8 +6107,8 @@ int run_program(int argument_count, char **arguments,
 					     &head_retained_cards)) ||
 			 failed;
 	}
-	if (model != NULL && tensor_model == NULL) {
-		model->plan_destroy(plan);
+	if (instance.operations != NULL && tensor_model == NULL) {
+		instance.operations->plan_destroy(plan);
 	}
 	const uint32_t retained_cards = tensor_model != NULL ?
 						tensor_cards_drain() :

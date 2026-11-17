@@ -394,12 +394,9 @@ __device__ static void exl3_decode_c_product(struct exl3_expert_record record,
 		false, slices, tiles, groups)                                  \
 	EXL3_DECODE_C_ENTRY(exl3_c_down_##width##order##_t##tiles##_g##groups, \
 			    bits_x2, true, slices, tiles, groups)
-#define EXL3_DECODE_C_WIDTHS(order, slices, tiles, groups)                     \
-	EXL3_DECODE_C_WIDTH(k2, EXL3_BITS_X2_K2, order, slices, tiles, groups) \
-	EXL3_DECODE_C_WIDTH(k2_5, EXL3_BITS_X2_K2_5, order, slices, tiles,     \
-			    groups)                                            \
-	EXL3_DECODE_C_WIDTH(k3, EXL3_BITS_X2_K3, order, slices, tiles, groups) \
-	EXL3_DECODE_C_WIDTH(k4, EXL3_BITS_X2_K4, order, slices, tiles, groups)
+#define EXL3_DECODE_C_WIDTHS(order, slices, tiles, groups)                \
+	EXL3_WIDTHS(EXL3_EVERY_WIDTH, EXL3_DECODE_C_WIDTH, order, slices, \
+		    tiles, groups)
 #define EXL3_DECODE_C_FAMILY_STAMP(tiles, groups) \
 	EXL3_DECODE_C_WIDTHS(, EXL3_PRODUCT_SLICES, tiles, groups)
 #define EXL3_DECODE_C_RELAXED_STAMP(tiles, groups) \

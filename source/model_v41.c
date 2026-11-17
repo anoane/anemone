@@ -495,8 +495,9 @@ static uint64_t take(uint64_t *next, uint64_t byte_count)
 /* The bytes of an array (model_v41.h) on a card of those holders: its kind of rows, but those sized apart. A chunk of
  * one slab runs no wide select and needs no views: their arrays take none. */
 static uint64_t array_bytes_of(const struct model_limits *limits,
-			       uint32_t array, uint64_t index_entries,
-			       uint64_t engram_tables, uint32_t holders, bool reads_candidates)
+			       bool chunk_attention_arrays, uint32_t array,
+			       uint64_t index_entries, uint64_t engram_tables,
+			       uint32_t holders, bool reads_candidates)
 {
     const struct array_rule *const rule = &array_rules[array];
     const uint64_t rows = limits->row_capacity,
@@ -504,11 +505,14 @@ static uint64_t array_bytes_of(const struct model_limits *limits,
     const uint64_t slabs = (rows + slab_rows - 1u) / slab_rows,
 		   thin_jobs = slab_rows * MODEL_EXPERTS_PER_ROW;
     const uint64_t wide_jobs = (uint64_t)ROUTER_WIDE_JOBS(limits->row_capacity);
+    const enum v41_rows kind = v41_array_rows(chunk_attention_arrays,
+					      (enum v41_array)array,
+					      (enum v41_rows)rule->rows);
     const uint64_t kind_rows =
-	    rule->rows == V41_DRAFT_ROWS ? limits->draft_positions :
-	    rule->rows == V41_SLAB	 ? slab_rows :
-	    rule->rows == V41_SPAN	 ? v41_span_rows(limits->row_capacity) :
-					   rows;
+	    kind == V41_DRAFT_ROWS ? limits->draft_positions :
+	    kind == V41_SLAB	   ? slab_rows :
+	    kind == V41_SPAN	   ? v41_span_rows(limits->row_capacity) :
+				     rows;
     const uint64_t rowed = sum(rule->fixed_bytes, kind_rows * rule->row_bytes);
     const bool is_wide = slabs > 1u;
     switch (array) {
@@ -600,10 +604,10 @@ static bool card_lay_out_attention(struct model_plan_record *plan,
 					0);
     }
     for (uint32_t array = 0; array < V41_DATA_ARRAY_COUNT; array++) {
-	    const uint64_t bytes = array_bytes_of(&plan->limits, array,
-						  index_entries, engram_tables,
-						  card->holders,
-						  (card->layers & V41_DATA_CANDIDATE_READERS) != 0);
+	    const uint64_t bytes = array_bytes_of(
+		    &plan->limits, plan->chunk_attention_arrays, array,
+		    index_entries, engram_tables, card->holders,
+		    (card->layers & V41_DATA_CANDIDATE_READERS) != 0);
 	    card->array_offset[array] =
 		    take(&next,
 			 (card->holders & BIT(array_rules[array].holder)) != 0 ?
@@ -1274,6 +1278,7 @@ result_status v41_tp2_layer_choices_create(
 		result->attention_replicated = replicated_attention;
 		result->experts_partitioned = partitioned_experts;
 		model->limits = *limits;
+		model->chunk_attention_arrays = true; /* a TP plan's */
 		model->card_count = card_index + 1u;
 		model->layer_card[0] = card_index;
 		model->cards[card_index].layers = 1;
@@ -2873,6 +2878,8 @@ v41_tp2_stage_plan_create(const struct pack_record *pack,
     struct model_plan_record *const model = stage->model;
     if (status == STATUS_OK) {
 	    model->limits = description->limits;
+	    /* a TP stage's: chunk_core and queries_piece read a chunk */
+	    model->chunk_attention_arrays = true;
 	    model->card_count = description->card + 1u;
 	    model->embedding_card = description->include_embedding ?
 					    description->card :

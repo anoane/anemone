@@ -6,24 +6,28 @@ after hardware changes. Engine-native preparation copies replicas, tunes load
 and Engram I/O separately and saves a profile that later starts automatically
 reload. See [storage preparation](user/STORAGE_PROFILE.md) for real token-ID inputs, bounded/resumable
 leases and required native qualification before activating a candidate. Startup
-never runs this work implicitly.
+never runs this work implicitly. The Engram stage replays real prompts as token
+ids (`--tokens`): make them from the prompts of the public golden dataset
+([anoane/anemone-ds41f1017-golden](https://huggingface.co/datasets/anoane/anemone-ds41f1017-golden)),
+one messages file a prompt, with `tools/measure/engram_trace tokenize`; without
+`--tokens`, `anemone autotune PACK` skips that stage and names it.
 
 See [the release notes](../RELEASE_NOTES.md) for each release's changes and limits, and their [measured scope](../RELEASE_NOTES.md#measured-scope) (the v0.0.2-alpha section's: the comparison tables keep their 6 November measurements) for the verified benchmark scope and explicit deferred work; [the matrix](results/COMPARISON_MATRIX.md) preserves dated results and individual dispositions.
 
-For **v0.0.3-alpha** setup and the three release serve recipes, use
+For **v0.0.4-alpha** setup and the three release serve recipes, use
 [SERVER_PROFILES.md](SERVER_PROFILES.md). It maps the serve options of the dated
 6 November version source `6b9e276fe4da6750be46c874e5fb5c0ee2a46871` to that
 parser's defaults and resolved profile values, adds `--metrics`, and marks `C` the
 rows that give the current parser's values; later options (Engram, storage,
 Messages and others) are documented below and in [the knob catalogue](../tools/cli/KNOBS.md).
-Its command arrays passed the v0.0.3-alpha parser at source
-`f57d81375a8830db16925e42740aae1fe0773e90`. The detailed definitions and dated
+Its command arrays passed the v0.0.4-alpha parser at source
+`6ecf1bb3e8b5e2abc57d8de3a90d9d6b064f8584`. The detailed definitions and dated
 example receipts below retain their original numerical-engine epoch; current
 GPU execution results are in [the comparison matrix](results/COMPARISON_MATRIX.md).
 
-**6 November 2026 post-merge refresh.** This manual describes `engine_batch` main **69d4d967880fb39c9ed3f82bf646f95149374d04**, distributed as **bin/tcb82/anemone**. Stable-prefix prefill, session forks, all four axes and order3 are now main options. Copy32, snapshot v5, TP5 and M25 remain branch work, as do explicitly pending O selectors. [Section 15](#15-compact-serve-flag-reference) is the compact reference for every accepted serve flag.
+**6 November 2026 post-merge refresh.** This manual describes `engine_batch` main **69d4d967880fb39c9ed3f82bf646f95149374d04**, distributed as **the 6 November 2026 build**. Stable-prefix prefill, session forks, all four axes and order3 are now main options. Copy32, snapshot v5, TP5 and M25 remain branch work, as do explicitly pending O selectors. [Section 15](#15-compact-serve-flag-reference) is the compact reference for every accepted serve flag.
 
-The implementation is authoritative. Validation receipts remain in the documentation packet; source filenames below are plain references where a location-bound hyperlink would fail after moving this file from the source root to docs/. In particular, an option being recognized is different from its selected placement, model, CUDA program and memory plan being admitted. Every executable Anemone example below has a receipt in evidence/examples.json. The clean release rebuild is byte-identical to bin/tcb82. Positive checks use its unchanged axis resolver, parser and early startup policy with one early return before model files, sockets or the CUDA backend; negative checks also run the actual shipped tcb82 binary. The additional parsed data files are the public numeric calibration fixture and the public eight-ID prompt fixture; credential files were not read. They establish syntax, option interactions checked there and resolved defaults; they do not establish GPU residency, numerical equivalence, HTTP client compatibility or throughput. Refused examples retain the binary's own refusal. No inference or GPU job was run for this manual.
+The implementation is authoritative. Validation receipts remain in the documentation packet; source filenames below are plain references where a location-bound hyperlink would fail after moving this file from the source root to docs/. In particular, an option being recognized is different from its selected placement, model, CUDA program and memory plan being admitted. Every executable Anemone example below has a receipt in evidence/examples.json. The clean release rebuild is byte-identical to the 6 November 2026 build. Positive checks use its unchanged axis resolver, parser and early startup policy with one early return before model files, sockets or the CUDA backend; negative checks also run the actual shipped 6 November 2026 binary. The additional parsed data files are the public numeric calibration fixture and the public eight-ID prompt fixture; credential files were not read. They establish syntax, option interactions checked there and resolved defaults; they do not establish GPU residency, numerical equivalence, HTTP client compatibility or throughput. Refused examples retain the binary's own refusal. No inference or GPU job was run for this manual.
 
 `anemone` in the examples means this snapshot's binary. Run from a directory containing `messages.json`, `tokenizer.bin`, and either `model.exl3map` or `original.anemone`, or substitute your absolute paths. These are explicit path placeholders, not downloads or files created by the example. `tokenizer.bin` is Anemone's prepared tokenizer tables, not an arbitrary Hugging Face tokenizer JSON. `model.exl3map` is a valid prepared EXL3 map with its referenced files present; `original.anemone` is the original-weight pack. The local parser checks use these literal path arguments without loading them.
 
@@ -86,6 +90,7 @@ The implementation is authoritative. Validation receipts remain in the documenta
   - [9.6 Original weights: TP4_PRO single and PP5 multiple](#96-original-weights-tp4_pro-single-and-pp5-multiple)
   - [9.7 The exactness=exact tier: original-weight reference profile](#97-the-exactnessexact-tier-original-weight-reference-profile)
 - [10. Precision words and how to compare results](#10-precision-words-and-how-to-compare-results)
+  - [10.1 Teacher-forced logits: `anemone capture`](#101-teacher-forced-logits-anemone-capture)
 - [11. Monitoring, logs and receipts](#11-monitoring-logs-and-receipts)
 - [12. Troubleshooting](#12-troubleshooting)
   - [12.1 Out of memory at 1M](#121-out-of-memory-at-1m)
@@ -110,7 +115,7 @@ The implementation is authoritative. Validation receipts remain in the documenta
   - [Logging, profiling and diagnostic dumps](#logging-profiling-and-diagnostic-dumps)
   - [Original weights and PRO arithmetic](#original-weights-and-pro-arithmetic)
   - [Axes and branch feature boundaries](#axes-and-branch-feature-boundaries)
-  - [Additional main options in tcb82](#additional-main-options-in-tcb82)
+  - [Additional main options in the 6 November 2026 build](#additional-main-options-in-the-6-november-2026-build)
 
 ## 1. What Anemone is
 
@@ -187,8 +192,8 @@ Two options name the model instead of the positional files; omitting both keeps 
   are keyed on the split and the family: with `--weights=exl3` and no `--placement`, an axis flag selects TP4_EXL3's
   row, and a `--weights` value the split does not run refuses, naming both. `load` runs no TP placement: with
   `--weights=exl3` it keeps its own placement (an explicit `--placement=pp5` included) and only takes the EXL3 map.
-- `--model_dir=FOLDER` reads the model from one folder under fixed names: `tokenizer.bin`, and `original.anemone` or,
-  with `--weights=exl3` or `--placement=tp4_exl3`, `model.exl3map`. It replaces the tables and pack arguments; generate
+- `--model_dir=FOLDER` reads the model from one folder: `tokenizer.bin`, and `original.anemone` or, with
+  `--weights=exl3` or `--placement=tp4_exl3`, the EXL3 map `NAME.exl3map` (`--exl3_map`, default `model`). It replaces the tables and pack arguments; generate
   keeps its messages file as the one positional argument (without it the parse refuses). Each name may be a link (a
   pack linked in from another disk): it is resolved once to its real path, must be a regular file, and every opened
   descriptor that serves the load (the pack reader, the turbo-load reader, the EXL3 map's direct reads, the tables)
@@ -198,15 +203,31 @@ Two options name the model instead of the positional files; omitting both keeps 
   profile take the pack's identity; turbo replicas match a receipt by the pack's real path, size and header digest, so
   a link re-pointed to another copy needs its own replicas. The folder path is at most 1023 bytes. An
   `.exl3map` keeps its own absolute source paths.
+- `--exl3_map=NAME` picks the folder's EXL3 map `NAME.exl3map` (default `model`, so `model.exl3map`), so one folder
+  holds several maps of one model with one `tokenizer.bin` and one `original.anemone`. It is resolved as the folder's
+  other files are. It needs `--model_dir` and a folder pack that is the EXL3 map (`--weights=exl3` or
+  `--placement=tp4_exl3`), and refuses otherwise, naming it; a name with `/`, or one whose file name would exceed 255
+  bytes, refuses as such.
+- An EXL3 map's descriptor, `<map>.descriptor.json` beside the map's real file (written by
+  `tools/convert/make_virtual_pack.py`), is read at startup in the step `check the map's descriptor`, before anything
+  loads, and checked against the open pack (its size, header digest and every routed matrix's width), the model and
+  the tables; a disagreement refuses, naming the field ([MODEL_DATA.md](user/MODEL_DATA.md)). Its quality decides the
+  serve: `established` and `recorded` serve by default; `none` (no NLL/PPL capture or qualification covers the map) is
+  refused, naming the map, unless `--exl3_unrated_map=1` is given, which serves it with no quality claim. Startup prints
+  `exl3 descriptor: <path> sha256 <digest>: ...` with the quality. With no descriptor, what the open pack carries
+  decides, whatever path or reader opened it (a copy of the map, a flat replica, the storage profile's copies): a pack
+  the model lists as established by its header digest and size (TP4_EXL3's 2.9 bpw map) is served by default, any
+  other only with `--exl3_unrated_map=1`, and refused otherwise, naming its digest.
 
 ```sh
 anemone serve --weights=exl3 --model_dir=/mnt/fastdisk/anemone-model-data-v1/data --context_tokens=65536 --concurrency=single
+anemone serve --weights=exl3 --model_dir=/mnt/fastdisk/anemone-model-data-v1/data --exl3_map=turboderp268 --exl3_unrated_map=1
 anemone generate --model_dir=/mnt/fastdisk/anemone-model-data-v1/data messages.json
 ```
 
 ## 4. Building from source
 
-Build on the Linux inference host. The repository Makefile explicitly says to build on the server, not the development laptop. This snapshot targets Zen 4 (`-march=znver4`), links the CUDA driver library, and builds CUDA images for `sm_80` and `sm_120a`, including native-PRO variants. The dated 6 November snapshot environment used GCC 15.2 and CUDA 13.4, and [BUILD.md](../BUILD.md) records the v0.0.3-alpha toolchain; use a compatible toolkit/driver and toolchain rather than treating a successful laptop compile as qualification. `Makefile`, COMPARISON_MATRIX.md, A7.
+Build on the Linux inference host. The repository Makefile explicitly says to build on the server, not the development laptop. This snapshot targets Zen 4 (`-march=znver4`), links the CUDA driver library, and builds CUDA images for `sm_80` and `sm_120a`, including native-PRO variants. The dated 6 November snapshot environment used GCC 15.2 and CUDA 13.4, and [BUILD.md](../BUILD.md) records the v0.0.4-alpha toolchain; use a compatible toolkit/driver and toolchain rather than treating a successful laptop compile as qualification. `Makefile`, COMPARISON_MATRIX.md, A7.
 
 Export or copy the pinned source into an isolated Linux directory, excluding any existing build tree and `.git`. From that engine directory:
 
@@ -249,7 +270,7 @@ The THIN recipe uses fixed five-proposal DSpark, a single serving slot, 2,048-ro
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --draft_policy=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --session_slots=1 --prefix_reuse=0 --context_tokens=65536 tokenizer.bin model.exl3map
 ```
 
-Check: `quick_tp4_exl3_serve` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `quick_tp4_exl3_serve` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 
@@ -257,7 +278,7 @@ Check: `quick_tp4_exl3_serve` — accepted by the tcb82 resolver/parser; stopped
 anemone generate --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --draft_policy=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --context_tokens=65536 messages.json tokenizer.bin model.exl3map
 ```
 
-Check: `quick_tp4_exl3_generate` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `quick_tp4_exl3_generate` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 ### 5.2 TP4_PRO: original weights, one request
@@ -269,7 +290,7 @@ This is the original-weight serial two-flight recipe with one serving slot. Two 
 anemone serve --placement=tp4_pro --numerics=exact --cmp_order=reference --linear_profile=0 --linear_order=1 --pro_emulation=0 --card_order=0,1,3,4,2 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_policy=0 --card_memory_kept_free_mib=0 --pipeline_steps=2 --official_hc_rows=0 --tp_pipeline_overlap=0 --original_chunk_core=0 --original_dense_staged=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --session_slots=1 --prefix_reuse=0 --prefill_order=0 --original_batch=0 --exl3_wide_entry=0 --tp_split_overlap=0 --tp_full_split_overlap=0 --context_tokens=65536 tokenizer.bin original.anemone
 ```
 
-Check: `quick_tp4_pro_serve` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `quick_tp4_pro_serve` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 
@@ -277,7 +298,7 @@ Check: `quick_tp4_pro_serve` — accepted by the tcb82 resolver/parser; stopped 
 anemone generate --placement=tp4_pro --numerics=exact --cmp_order=reference --linear_profile=0 --linear_order=1 --pro_emulation=0 --card_order=0,1,3,4,2 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_policy=0 --card_memory_kept_free_mib=0 --pipeline_steps=2 --official_hc_rows=0 --tp_pipeline_overlap=0 --original_chunk_core=0 --original_dense_staged=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_wide_entry=0 --tp_split_overlap=0 --tp_full_split_overlap=0 --context_tokens=65536 messages.json tokenizer.bin original.anemone
 ```
 
-Check: `quick_tp4_pro_generate` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `quick_tp4_pro_generate` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 ### 5.3 PP5: original weights, multiple requests
@@ -289,7 +310,7 @@ The serve example uses eight slots and omits pipeline depth, so the qualifying f
 anemone serve --placement=pp5 --numerics=exact --cmp_order=reference --linear_profile=0 --linear_order=1 --pro_emulation=0 --card_order=0,1,3,4,2 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_policy=0 --card_memory_kept_free_mib=0 '--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4' --official_hc_rows=0 --tp_pipeline_overlap=0 --original_chunk_core=0 --original_dense_staged=0 --original_wide_experts=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --session_slots=8 --prefix_reuse=0 --prefill_order=0 --original_batch=0 --context_tokens=65536 tokenizer.bin original.anemone
 ```
 
-Check: `quick_pp5_serve` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `quick_pp5_serve` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 
@@ -297,7 +318,7 @@ Check: `quick_pp5_serve` — accepted by the tcb82 resolver/parser; stopped befo
 anemone generate --placement=pp5 --numerics=exact --cmp_order=reference --linear_profile=0 --linear_order=1 --pro_emulation=0 --card_order=0,1,3,4,2 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_policy=0 --card_memory_kept_free_mib=0 --pipeline_steps=2 '--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4' --official_hc_rows=0 --tp_pipeline_overlap=0 --original_chunk_core=0 --original_dense_staged=0 --original_wide_experts=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --context_tokens=65536 messages.json tokenizer.bin original.anemone
 ```
 
-Check: `quick_pp5_generate` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `quick_pp5_generate` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 ### 5.4 TP5: deliberate main refusals
@@ -309,7 +330,7 @@ Check: `quick_pp5_generate` — accepted by the tcb82 resolver/parser; stopped b
 anemone serve --placement=tp5 --speculative=2 --rows=8 tokenizer.bin original.anemone
 ```
 
-Check: `quick_tp5_serve` — expected tcb82 refusal: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
+Check: `quick_tp5_serve` — expected refusal of the 6 November 2026 build: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
 
 
 
@@ -317,7 +338,7 @@ Check: `quick_tp5_serve` — expected tcb82 refusal: usage: anemone load|generat
 anemone generate --placement=tp5 --speculative=2 --rows=8 messages.json tokenizer.bin original.anemone
 ```
 
-Check: `quick_tp5_generate` — expected tcb82 refusal: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
+Check: `quick_tp5_generate` — expected refusal of the 6 November 2026 build: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
 
 
 Do not “fix” a TP5 refusal by silently substituting TP4_PRO: that changes placement and arithmetic. Use a specifically qualified Track O branch binary and its own receipt if running that research route.
@@ -352,7 +373,7 @@ Before these HTTP examples, serve with `--model_alias=anemone`, or replace/omit 
 curl -N -sS -H "Authorization: Bearer $ANEMONE_API_KEY" -H 'Content-Type: application/json' -H 'x-session-affinity: manual-session-001' -H 'x-client-request-id: request-001' http://127.0.0.1:8321/v1/chat/completions --data-binary '{"model":"anemone","messages":[{"role":"user","content":"Write a Python function that adds two integers."}],"stream":true,"stream_options":{"include_usage":true},"max_tokens":256,"temperature":0,"store":false,"session_id":"manual-session-001"}'
 ```
 
-Check: `http_chat_stream` — native tcb82 HTTP body reader accepted the body; curl was not sent. Receipt: examples.json.
+Check: `http_chat_stream` — the 6 November 2026 build's native HTTP body reader accepted the body; curl was not sent. Receipt: examples.json.
 
 
 Chat accepts system, developer, user, assistant and tool roles. Developer renders as system. Content can be text, null or supported text/image parts. PNG/JPEG base64 image data URLs have additional validation; successful text-placement admission does not establish vision qualification for an axis tuple. Prior assistant `reasoning_content`, tool calls and tool result IDs must be retained when the application needs the same rendered history.
@@ -390,7 +411,7 @@ Send complete plaintext history on every request and **`store:false`**. `input` 
 curl -N -sS -H "Authorization: Bearer $ANEMONE_API_KEY" -H 'Content-Type: application/json' -H 'x-session-affinity: manual-session-001' -H 'x-client-request-id: request-001' http://127.0.0.1:8321/v1/responses --data-binary '{"model":"anemone","input":[{"role":"user","content":[{"type":"input_text","text":"Write a Python function that adds two integers."}]}],"stream":true,"store":false,"max_output_tokens":256,"metadata":{"session_id":"manual-session-001"}}'
 ```
 
-Check: `http_responses_stream` — native tcb82 HTTP body reader accepted the body; curl was not sent. Receipt: examples.json.
+Check: `http_responses_stream` — the 6 November 2026 build's native HTTP body reader accepted the body; curl was not sent. Receipt: examples.json.
 
 
 Responses streaming uses item, text and function events, with terminal completed, incomplete or failed events. It does not use Chat's `[DONE]` protocol as its completion contract. Request identity is computed from the original Responses body and recognized headers before internal Chat conversion. Preserve full prior function calls and outputs when resubmitting history. `source/server_responses_request.c`.
@@ -404,7 +425,7 @@ Function tools are rendered into the prompt. The engine emits a function call; t
 curl -N -sS -H "Authorization: Bearer $ANEMONE_API_KEY" -H 'Content-Type: application/json' -H 'x-session-affinity: manual-session-001' -H 'x-client-request-id: request-001' http://127.0.0.1:8321/v1/chat/completions --data-binary '{"model":"anemone","messages":[{"role":"user","content":"Get the weather in Rome."}],"tools":[{"type":"function","function":{"name":"get_weather","description":"Look up weather for a city.","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]},"strict":false}}],"tool_choice":"auto","parallel_tool_calls":true,"max_tokens":256,"temperature":0,"store":false}'
 ```
 
-Check: `http_tools` — native tcb82 HTTP body reader accepted the body; curl was not sent. Receipt: examples.json.
+Check: `http_tools` — the 6 November 2026 build's native HTTP body reader accepted the body; curl was not sent. Receipt: examples.json.
 
 
 A Responses follow-up can carry the full user turn, function call and result:
@@ -414,7 +435,7 @@ A Responses follow-up can carry the full user turn, function call and result:
 curl -N -sS -H "Authorization: Bearer $ANEMONE_API_KEY" -H 'Content-Type: application/json' -H 'x-session-affinity: manual-session-001' -H 'x-client-request-id: request-001' http://127.0.0.1:8321/v1/responses --data-binary '{"model":"anemone","input":[{"role":"user","content":"Get the weather in Rome."},{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Rome\"}"},{"type":"function_call_output","call_id":"call_1","output":"{\"temperature_c\":18}"}],"store":false,"max_output_tokens":256}'
 ```
 
-Check: `http_tool_results` — native tcb82 HTTP body reader accepted the body; curl was not sent. Receipt: examples.json.
+Check: `http_tool_results` — the 6 November 2026 build's native HTTP body reader accepted the body; curl was not sent. Receipt: examples.json.
 
 
 An application must match the model-generated `call_id` rather than always using the illustrative `call_1`. Validate tool arguments before executing them. Partial or malformed DSML blocks can remain text; only properly recognized calls receive tool-call semantics. Streaming calls are delivered as complete call deltas once the native reader has an entire invoke, not as a guarantee of one character per event.
@@ -448,7 +469,7 @@ Namespace equality is only the first reuse gate. The engine also checks the rend
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --draft_policy=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --batch_core_once=2 --session_slots=1 --prefill_prefix_stable=1 --prefix_reuse=1 --prefix_reuse_exact=2 tokenizer.bin model.exl3map
 ```
 
-Check: `stable_prefix` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `stable_prefix` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 `--session_fork=0` remains the default. Opting into1 permits an independent child-slot copy only after matching the authenticated hard owner and a qualified stable1 donor. Startup also requires scope0 and immutable producer cold-plan capability; that capability is derived by the engine and is not a user flag. With stable0, a parser-accepted fork flag does not authorize cross-session copies: the runtime falls back cold. No-axis defaults and same-session prefix policy are not promoted to a new exactness claim by enabling forks.
@@ -458,7 +479,7 @@ Check: `stable_prefix` — accepted by the tcb82 resolver/parser; stopped before
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --draft_policy=0 --batch_core_once=3 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --session_slots=8 --prefill_first=1 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_order=2 --key_file=/secure/anemone.keys --session_fork=1 --prefill_prefix_stable=1 --prefill_decode_rows=0 --prefill_chunk_rows=0 --cache_scope=0 --prefix_reuse=1 --prefix_reuse_exact=0 tokenizer.bin model.exl3map
 ```
 
-Check: `fork` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `fork` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 A donor must be idle, not read-leased, from a different complete namespace, and carry valid ordinary state, live generations, prefix reach and stable provenance. Anonymous namespaces cannot establish authenticated hard ownership. Failed/cancelled copies must drain and clear unpublished destination history; backend failure poisons the engine. Checkpoint-only donor state and branch v5 imports are not admitted by this policy.
@@ -630,7 +651,16 @@ Select the `anemone` provider/model in Codex and keep the server alias consisten
 - TP4_PRO (from `original_tp_serial2`): the same knobs without the layout, plus `--draft_policy=0 --pipeline_steps=2 --original_wide_experts=0`.
 - TP4_EXL3 (from `thin_fixed`): THIN without `--draft_policy`, `--batch_core_once` and `--tp_draft_layers` (owned by category, the CLI and focus): relaxed numerics, the BF16 wire, rows 8, wide rows 2048, the cone, pipeline depth 2, step graphs, DSpark 5/5, the TC-MoE, MMA, ordered and shard knobs, zero acceptances, the 12700/2200/2700 draft costs.
 
-**No axis flag is balanced everywhere.** A generate or serve without axis flags runs its split's all-balanced row: the base. The owner's rule, 1M context per session (`--context_tokens=1048576`) and on serve `--session_slots=max`, is the raw defaults, and no axis set pins either. `--session_slots=max` (serve only) parses as 8 for every parse-time default and admission check; a max that resolves to one session then takes the defaults of `--session_slots=1` (each serve's pipeline depth with the device draft, TP4_EXL3's draft depth policy), so one session runs what an explicit count of one runs, however it was reached (TP4_EXL3 at 1M: the measured one-slot recipe, fixed draft depth); at the planning step the engine's own host fit takes the most sessions, by bisection over 1..1024 (SERVING_SLOTS_MOST, a bound on the index arithmetic, not a cap), whose placement fits the cards' budgets (PP5: the placement passes, no routed expert in host memory, the plan and every arena within its card's budget; the TP splits: the TP plan, each trial made and released, then made once at the count found). Max and 1M context are also the raw defaults (owner, 9 Nov: "allow as many as 1M context can fit"; "if a user wants only 256K, then you can multiply sessions by 4x"): at 1M a plain default serve of each split on the reference machine (the placement, the tables, the pack or map and its verified copies, no other option; no other engine on the cards) fits PP5 5 sessions, TP4_PRO 1 and TP4_EXL3 1 with the 2.9 bpw map (2 with the opt-in 2.68 bpw map), each start printing `session slots: max -> N of 1048576 tokens each`. The earlier 9 Nov fit at production free memory, not remeasured since, gave 512K / 256K / 128K PP5 10 / 19 / 35 sessions, TP4_PRO 3 / 7 / 12, TP4_EXL3 2 / 4 / 7. An explicit `--session_slots=N` the cards do not hold is refused before any load, with the most that fit at that context and the longest context at which N fit; nothing is shrunk. Only memory makes a count not fit: a refusal of the placement or the plan (a layout, a DSpark card rule) is reported by its own step at one session, and a context that is not a multiple of 16 tokens is refused at parse. A BATCH serve's fit tries only its 8 sessions, and its refusal gives the longest context of 8 (no max advice). A serve with BATCH knobs needs exactly `--session_slots=8` (the BATCH programs' sessions). A knob that serves one session (`--official_reference`; `--prefill_prefix_stable`, `--prefix_reuse_exact` or `--session_fork` without `--prefill_first` or `--prefill_order`) given without `--session_slots` takes one session and says so (`serve: <knob> serves one session...: --session_slots defaults to 1`); with an explicit count above 1, or max, it is refused, named. A PP5 serve of several sessions with any device draft (`--draft=dspark` or `--draft=hybrid`) and no explicit depth takes five flights. **Speed above saturation: the aggregate is shared.** PP5 saturates at about C4-C5 (one drawing session a flight; C4 to C8 aggregates prose 415 to 416, code 506 to 511, structured 806 to 812 tok/s) and TP4_EXL3 at about C8; above that the aggregate stays at the saturated rate and each session gets aggregate / C (PP5 prose about 26 tok/s a session at C16, 13 at C32), with TTFT growing with the decoders that share the cards. Sessions take their turns round robin, so none starves. Startup prints `session slots: max -> N of C tokens each; cards (free/budget MiB): ...` (with N = 1, only where one session would not fit under the one-session defaults or they refuse a given knob, such as `--tp_pipeline_overlap` without `--pipeline_steps`, also `(multi-session defaults kept: <reason>)`), and refuses when not even one session fits: the context is never shrunk. Every serve start also prints `N session(s) fit at C tokens of context on this split; a shorter --context_tokens gives more` (with an explicit count, `; serving S (--session_slots)` before the advice). TP4_EXL3 concurrency=multiple's BATCH set needs exactly 8 sessions, so a serve without exactly `--session_slots=8` runs the row's concurrency=balanced row (thin steps at max) and that line begins `concurrency=multiple:` and ends `; BATCH needs exactly 8`; `--context_tokens=65536 --session_slots=8` runs BATCH as measured. An explicit `--session_slots=N` or `--context_tokens` wins; with an explicit context, max is the most sessions at that context. **`--axes=off`** runs the raw engine defaults with nothing inserted (the pre-stage-3 no-axis behaviour, used by gates and references that pin their own argv); it refuses together with any axis flag. tp5, tp2_pp2_pro and tp2_single_single_pro have no table: without axis flags they keep their raw defaults, and any axis flag refuses there. An axis cannot silently replace your checkpoint.
+**No axis flag is balanced everywhere.** A generate or serve without axis flags runs its split's all-balanced row: the base. The owner's rule, 1M context per session (`--context_tokens=1048576`) and on serve `--session_slots=max`, is the raw defaults, and no axis set pins either. `--session_slots=max` (serve only) parses as 8 for every parse-time default and admission check; a max that resolves to one session then takes the defaults of `--session_slots=1` (each serve's pipeline depth with the device draft, TP4_EXL3's draft depth policy), so one session runs what an explicit count of one runs, however it was reached (TP4_EXL3 at 1M: the measured one-slot recipe, fixed draft depth); at the planning step the engine's own host fit takes the most sessions, by bisection over 1..1024 (SERVING_SLOTS_MOST, a bound on the index arithmetic, not a cap), whose placement fits the cards' budgets (PP5: the placement passes, no routed expert in host memory, the plan and every arena within its card's budget; the TP splits: the TP plan, each trial made and released, then made once at the count found). Max and 1M context are also the raw defaults (owner, 9 Nov: "allow as many as 1M context can fit"; "if a user wants only 256K, then you can multiply sessions by 4x"): at 1M, measured 16 Nov 2026 on v0.0.3-alpha, a plain default serve of each split on the reference machine (the placement, the tables, the pack or map and its verified copies, no other option; no other engine on the cards) fits PP5 5 sessions, TP4_PRO 1 and TP4_EXL3 1 with the 2.9 bpw map (2 with the opt-in 2.68 bpw map), each start printing `session slots: max -> N of 1048576 tokens each`. Measured 16 Nov 2026 on v0.0.3-alpha (each serve's own `session slots: max -> N` line on the reference machine, nothing else on the cards; PP5's cards, free/budget MiB in its card order: 64438/64182 64597/64341 64597/64341 64597/64341 96621/96365), the sessions that fit are in the table below. PP5 grows less than the context shrinks: its first card binds, and there a session also takes 80 MiB of image embeddings and 32 MiB of window rings whatever its context. An explicit `--session_slots=N` the cards do not hold is refused before any load, with the most that fit at that context and the longest context at which N fit; nothing is shrunk. Only memory makes a count not fit: a refusal of the placement or the plan (a layout, a DSpark card rule) is reported by its own step at one session, and a context that is not a multiple of 16 tokens is refused at parse. A BATCH serve's fit tries only its 8 sessions, and its refusal gives the longest context of 8 (no max advice). A serve with BATCH knobs needs exactly `--session_slots=8` (the BATCH programs' sessions). A knob that serves one session (`--official_reference`; `--prefill_prefix_stable`, `--prefix_reuse_exact` or `--session_fork` without `--prefill_first` or `--prefill_order`) given without `--session_slots` takes one session and says so (`serve: <knob> serves one session...: --session_slots defaults to 1`); with an explicit count above 1, or max, it is refused, named. A PP5 serve of several sessions with any device draft (`--draft=dspark` or `--draft=hybrid`) and no explicit depth takes five flights. **Speed above saturation: the aggregate is shared.** PP5 saturates at about C4-C5 (one drawing session a flight; C4 to C8 aggregates prose 415 to 416, code 506 to 511, structured 806 to 812 tok/s) and TP4_EXL3 at about C8; above that the aggregate stays at the saturated rate and each session gets aggregate / C (PP5 prose about 26 tok/s a session at C16, 13 at C32), with TTFT growing with the decoders that share the cards. Sessions take their turns round robin, so none starves. Startup prints `session slots: max -> N of C tokens each; cards (free/budget MiB): ...` (with N = 1, only where one session would not fit under the one-session defaults or they refuse a given knob, such as `--tp_pipeline_overlap` without `--pipeline_steps`, also `(multi-session defaults kept: <reason>)`), and refuses when not even one session fits: the context is never shrunk. Every serve start also prints `N session(s) fit at C tokens of context on this split; a shorter --context_tokens gives more` (with an explicit count, `; serving S (--session_slots)` before the advice). TP4_EXL3 concurrency=multiple's BATCH set needs exactly 8 sessions, so a serve without exactly `--session_slots=8` runs the row's concurrency=balanced row (thin steps at max) and that line begins `concurrency=multiple:` and ends `; BATCH needs exactly 8`; `--context_tokens=65536 --session_slots=8` runs BATCH as measured. An explicit `--session_slots=N` or `--context_tokens` wins; with an explicit context, max is the most sessions at that context. **`--axes=off`** runs the raw engine defaults with nothing inserted (the pre-stage-3 no-axis behaviour, used by gates and references that pin their own argv); it refuses together with any axis flag. tp5, tp2_pp2_pro and tp2_single_single_pro have no table: without axis flags they keep their raw defaults, and any axis flag refuses there. An axis cannot silently replace your checkpoint.
+
+| Sessions that fit (16 Nov 2026, v0.0.3-alpha) | 1,048,576 | 524,288 | 262,144 | 131,072 |
+|---|---|---|---|---|
+| PP5 (production's argv; the plain default serve gives the same) | 5 | 10 | 16 | 22 |
+| PP5 on v0.0.4-alpha (17 Nov 2026; the plain default serve) | 6 | 10 | 17 | 24 |
+| TP4_PRO | 1 | 3 | 7 | 12 |
+| TP4_EXL3, 2.9 bpw map | 1 | 2 | 4 | 7 |
+
+On v0.0.4-alpha a PP plan sizes its attention-core scratch by a slab and its queries by a span, which leaves 226.25 MiB more for sessions on every PP card (TP plans are unchanged). The engine's placement test at the free memory above gives PP5 6 / 10 / 17 / 24 sessions at 1M / 512K / 256K / 128K; at 256K the 17th session leaves the first card about 7.7 MiB of its budget, so a little less free memory on that card at startup gives 16.
 
 A recipe may yield one of its knobs to the axis that owns it: the recipe's measured value runs wherever that axis's set of the row gives none. The PP5 multiple recipe yields its draft knobs this way, so its fixed policy 0 stays on every multiple row without focus=decode. Every TP4_PRO row that is not held runs the base (pipeline depth 2, as many serving slots as fit on serve), with the card order it pins (`--card_order=0,1,3,4,2`): the TP model needs the SM_120 PRO at stage 4, and the engine's default order 0,1,2,3,4 puts it at ordinal 2 on the reference workstation (TP4_EXL3 keeps its automatic CMP-only selector). Every TP4_EXL3 row that is not held runs THIN (single, balanced) or BATCH (multiple; on serve only at exactly `--session_slots=8`, otherwise THIN), and focus=decode adds layer drafting on each of them. A declared cross-axis bound is applied at composition, and startup prints it after its key on the `axes from` line: a cap clamps a knob that another source sets above its bound (`--rows` caps the verified draft depth at rows - 1), and a floor raises one below what another source needs (on TP4_EXL3 BATCH, sharded draft rows need draft layers, so `--tp_draft_layers` is raised to 1: "--tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from concurrency=multiple)"). AXES.md lists every row with an applied bound. Bounds act on the final values, explicit ones included, and change only inserted knobs: an explicit `--tp_draft_shards=1` keeps the raise and `--tp_draft_shards=0` removes it, and an explicit `--rows` caps an inserted depth at its own value less 1; the note then says "from the user". An explicit bounded knob is never altered and is validated as usual. Known difference from tcb88 (accepted at the stage 3 review, D4): `generate` on TP4_EXL3 with category=balanced and concurrency=multiple takes no `--batch_step_us` price (tcb88 inserted 19500), while serve's measured BATCH plan gets the CLI's own menu, and no generate speed is claimed. Category=code runs fixed policy 0 without a menu in both commands (per-split x3); tcb88 did the same on code/multiple/decode, while on code/multiple ttft and prefill it ran batch_adaptive's menu.
 
@@ -646,7 +676,7 @@ Stage 3 changes 208 rows against the stage-2 tables. Each names its basis in the
 
 With **no axes selected, the split's all-balanced row runs** (section 7.1: the base); `--axes=off` keeps the raw CLI defaults with nothing inserted. An unset axis takes its balanced value, so a partial selection resolves to the row with balanced on every unset axis. Under exact, an unset concurrency takes the reference recipe's single session. The startup line `axes gpu_split=<split> tuple=<category>/<exactness>/<concurrency>/<focus>` names the resolved row, and one `axes from <axis>=<value>: <knobs>` line names the axis behind every inserted knob.
 
-Explicit low-level knobs win over axis-inserted settings in either argument order. This rule does not waive ordinary numeric, duplicate-option, startup, program or memory gates. Repeating an explicit low-level option is still an error; explicit precedence is not permission to supply two raw values. An explicit override also changes the measured recipe, so the source tuple's performance or identity evidence no longer automatically applies.
+Explicit low-level knobs win over axis-inserted settings in either argument order. An explicit BATCH (`--batch_rows`) runs one pipeline step, so a split base's inserted `--pipeline_steps` of another depth yields to it, and startup's `axes from` line says so; an explicit `--pipeline_steps` still wins, and BATCH still refuses any depth but 1. This rule does not waive ordinary numeric, duplicate-option, startup, program or memory gates. Repeating an explicit low-level option is still an error; explicit precedence is not permission to supply two raw values. An explicit override also changes the measured recipe, so the source tuple's performance or identity evidence no longer automatically applies.
 
 This complete EXL3 code/balanced/single/decode tuple is accepted on main. It inserts the THIN single set, fixed draft prices (category code) and layer drafting (focus decode); this differs from the explicitly pinned quick start:
 
@@ -655,17 +685,17 @@ This complete EXL3 code/balanced/single/decode tuple is accepted on main. It ins
 anemone serve --placement=tp4_exl3 --speculative=2 --rows=8 --context_tokens=65536 --category=code --exactness=balanced --concurrency=single --focus=decode tokenizer.bin model.exl3map
 ```
 
-Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `axes_c1` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
-A category-only partial takes balanced on the unset axes. On TP4_EXL3, code/balanced/balanced/balanced inserts `--draft_policy=0` and the split's baseline (`--speculative=2 --rows=8`); the tcb82 receipt below predates the per-split tables:
+A category-only partial takes balanced on the unset axes. On TP4_EXL3, code/balanced/balanced/balanced inserts `--draft_policy=0` and the split's baseline (`--speculative=2 --rows=8`); the 6 November 2026 receipt below predates the per-split tables:
 
 
 ```sh
 anemone serve --placement=tp4_exl3 --speculative=2 --rows=8 --context_tokens=65536 --category=code tokenizer.bin model.exl3map
 ```
 
-Check: `axis_partial` — expected tcb82 refusal: axes category=code exactness=unset concurrency=unset focus=unset weight_family=exl3 axes refused: selected values need different settings for the unset axes; supply those axes. No axis defaults have b Receipt: examples.json.
+Check: `axis_partial` — expected refusal of the 6 November 2026 build: axes category=code exactness=unset concurrency=unset focus=unset weight_family=exl3 axes refused: selected values need different settings for the unset axes; supply those axes. No axis defaults have b Receipt: examples.json.
 
 
 
@@ -673,7 +703,7 @@ Check: `axis_partial` — expected tcb82 refusal: axes category=code exactness=u
 anemone serve --placement=tp4_exl3 --speculative=2 --rows=8 --context_tokens=65536 --category=prose --exactness=balanced --concurrency=single tokenizer.bin model.exl3map
 ```
 
-Check: `axis_partial_same_plan` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `axis_partial_same_plan` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 These two examples put an explicit depth override on opposite sides of the axes. Both resolve to depth3; explicit aliases also retain the documented override key.
@@ -683,7 +713,7 @@ These two examples put an explicit depth override on opposite sides of the axes.
 anemone serve --draft_positions=3 --placement=tp4_exl3 --category=code --exactness=balanced --concurrency=single --focus=decode tokenizer.bin model.exl3map
 ```
 
-Check: `axis_override_before` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `axis_override_before` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 
@@ -691,7 +721,7 @@ Check: `axis_override_before` — accepted by the tcb82 resolver/parser; stopped
 anemone serve --placement=tp4_exl3 --category=code --exactness=balanced --concurrency=single --focus=decode --draft_positions=3 tokenizer.bin model.exl3map
 ```
 
-Check: `axis_override_after` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `axis_override_after` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 ### 7.3 Pinned tuple map and limits
@@ -702,7 +732,7 @@ Each non-empty knob set, per GPU split (the generated [AXES.md](../tools/cli/AXE
 | --- | --- | --- | --- | --- |
 | PP5 exactness=exact | `original_reference_serial_m1` — the reference recipe is the whole configuration: one session, capacity 512, serial M1; no speculation or batching; concurrency single or unset | PP5 | 1 | 1 |
 | PP5 category=code | `--draft_block=7 --draft_positions=7`: depth 7, code C1/C2/C4/C8 +11.55/+1.43/+5.97/+6.88 % with focus=decode's arm 1 (r4m), +2.21/-1.74/+0.86/-1.62 % alone (r3m, C2 and C8 inside the spread) | PP5 | default | default |
-| PP5 concurrency=multiple | `original_pp_depth8` without `--prefix_reuse` (a measurement-protocol pin) and `--session_slots` (as many as fit, 5 at 1M, unmeasured until U6); it yields its draft block, depth, fixed policy 0 and session acceptance to category=code and focus=decode, so its measured values run wherever those sets give none | PP5 | 8 (generate 2) | default |
+| PP5 concurrency=multiple | `original_pp_depth8` without `--prefix_reuse` (a measurement-protocol pin) and `--session_slots` (as many as fit, 6 at 1M on v0.0.4-alpha, unmeasured until U6); it yields its draft block, depth, fixed policy 0 and session acceptance to category=code and focus=decode, so its measured values run wherever those sets give none | PP5 | 8 (generate 2) | default |
 | PP5 focus=decode | `--draft_policy=1 --draft_session_acceptance=6`: arm 1, code +4.69/+8.87/+1.74/+2.44 %, prose +3.83/+3.32/+1.72/+1.74 % at C1/C2/C4/C8, structured within spread (r1m) | PP5 | default | default |
 | TP4_PRO category=code | `--draft_block=7 --draft_positions=7`: depth 7, code C1 +4.80 % with TTFT flat (r3s); clamped to 5 under focus=decode's 6 rows | TP4_PRO | default | default |
 | PP5 base (no axis flag, and every row's knobs that no set gives) | the shared knobs of PP5's measured routes, read from original_pp_depth8, less the axis-owned knobs, the protocol pins and the raw-default pins (section 7.1) | PP5 | default | default |
@@ -734,7 +764,7 @@ The shipped binary now exposes generated help and prefix-filtered knob lookup:
 anemone help axes
 ```
 
-Check: `help_axes` — tcb82 help printed; no model/backend opened. Receipt: examples.json.
+Check: `help_axes` — the 6 November 2026 build's help printed; no model/backend opened. Receipt: examples.json.
 
 
 
@@ -742,7 +772,7 @@ Check: `help_axes` — tcb82 help printed; no model/backend opened. Receipt: exa
 anemone help knobs prefill_
 ```
 
-Check: `help_knobs_prefill` — tcb82 help printed; no model/backend opened. Receipt: examples.json.
+Check: `help_knobs_prefill` — the 6 November 2026 build's help printed; no model/backend opened. Receipt: examples.json.
 
 
 Original-weight exactness=exact admits the one-session PP THIN serial M1 recipe at capacity 512; on TP4_EXL3 it runs the one-session exact-shaping set (not official-exact). Additional lossy fast routes remain held; fast reuses selectable non-lossy balanced plans unchanged. A feature being merged does not establish its complete model, state or quality qualification. The code/multiple/balanced and other full mixed-envelope holds remain explicit in the current registry. The tuple table below marks every held rule, including mixed rules whose component recipes separately passed. No automatic axis recipe selects order3, stable1 or session_fork1.
@@ -792,7 +822,7 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** R24 (15 Nov 2026, real PP5 serve loads from the source and three replicas, A D D A): 4 readers loaded in 16.442 and 16.399 s against 16.854 and 17.207 s with 2 (+3.58 %, spread 2.07 %), every extent digest-checked; 2 is the earlier default. Source: `source/commands.c` and shipped knob catalog.
+**Measured effect.** Real PP5 serve loads (15 Nov 2026, from the source and three replicas, A D D A): 4 readers loaded in 16.442 and 16.399 s against 16.854 and 17.207 s with 2 (+3.58 %, spread 2.07 %), every extent digest-checked; 2 is the earlier default. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-tp_load_threads"></a>
@@ -820,7 +850,7 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Type/range:** unsigned32 decimal scalar; parser 0..1; semantic values: 0..1. **Default:** 1. **Commands:** load, generate, serve. **Placement:** all placements/recipes.
 
-**Mechanics.** Discover and read receipted replicas on other drives.
+**Mechanics.** Discover and read receipted replicas beside the given copies, on drives holding none of them; 0: exactly the given copies.
 
 **Use and interactions.** Prepared model/driver validation remains authoritative; ignored outside the named implementation path. Admission: G0.
 
@@ -828,7 +858,7 @@ Use this to tune the named read/worker path while checking startup time and iden
 
 **Precision class:** same bits. **Four-axis mapping:** Category: orthogonal to content. Exactness: preserve the selected recipe subject to the stated cache/layout/diagnostic gates. Concurrency: resource/namespace policy, not an automatic single/multiple choice. Focus: operational startup, capacity, cache or observation as described. The shipped resolver does not insert this control; it remains explicit/inherited, with no automatic axis mapping.
 
-**Measured effect.** rh03 serve ready32.48s with replica versus47.93s single-copy and192.18s serial; receipts equal. Joint loader epoch, not an isolated storage benchmark (RND_H.md). Source: `source/commands.c` and shipped knob catalog.
+**Measured effect.** rh03 serve ready32.48s with replica versus47.93s single-copy and192.18s serial; receipts equal. Joint loader epoch, not an isolated storage benchmark (RND_H.md). Measured on 15 Nov 2026 with one binary: PP5 from `TABLES PACK COPY`, whose two copies turned the search off, loaded in 29.63 s against 16.94 s from `TABLES PACK` with the search's four copies. Since 17 Nov 2026 the search runs beside given copies too: a replica on a drive that holds a given copy is refused (`duplicate_physical_device`), a given copy on no described drive (an anonymous `st_dev`: btrfs, ZFS; or a medium that names no drive: overlay, a loop or virtual block device, FUSE, a network filesystem) ends the search with one line naming it (`unknown_physical_topology`: no replica is admitted beside it), a copy on tmpfs or ramfs shares no drive and the search runs beside it, a load given more than one copy prints one `turbo load: the load reads N copies:` line naming each copy and whether it was given or found (a storage profile's tuned load names its copies on its `storage load:` line instead), and `--turbo_load=0` keeps exactly the given copies. Source: `source/commands.c` and shipped knob catalog.
 
 
 <a id="knob-map_reads"></a>
@@ -1669,7 +1699,7 @@ Frozen cold HTTP bodies, three repetitions and zero cached tokens give actual le
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --draft_policy=0 --batch_core_once=3 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --session_slots=8 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_first=0 --prefill_order=0 --prefill_prompt_chunks=1 tokenizer.bin model.exl3map
 ```
 
-Check: `recipe_prompt_chunks` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `recipe_prompt_chunks` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 ### 8.5. Draft and speculative policy
 
@@ -2074,7 +2104,7 @@ The main branch has a checked alias edge case: both spellings together are accep
 anemone serve --placement=tp4_exl3 --speculative=2 --rows=8 --draft_positions=4 --speculative_depth=5 tokenizer.bin model.exl3map
 ```
 
-Check: `alias_depth_last5` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `alias_depth_last5` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 <a id="knob-lookup_ngram_max"></a>
 
@@ -2147,14 +2177,14 @@ Lookup-only uses the host n-gram proposer; DSpark uses the device draft; hybrid 
 anemone serve --placement=pp5 --rows=8 --draft=lookup tokenizer.bin original.anemone
 ```
 
-Check: `draft_lookup` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `draft_lookup` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 ```sh
 anemone serve --placement=tp4_exl3 --rows=8 --draft=hybrid --context_tokens=65536 tokenizer.bin model.exl3map
 ```
 
-Check: `draft_hybrid` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `draft_hybrid` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 ### 8.6. Attention, index and Engram
 
@@ -4039,6 +4069,8 @@ The four axes are main selectors with explicit holds; they are not branch-only. 
 Only the old-name column is retained for migration lookup. Headings, assignments, receipt labels, anchors and index targets use the new names. `ANEMONE_API_KEY` remains a client-only placeholder; public API names, binary/file names, CLI flags and format magic were not renamed. The transport/socket names belong to the standalone measurement worker rather than normal serve configuration.
 
 
+`CUDA_DEVICE_ORDER` belongs to the CUDA driver, and the engine leaves it as it is: the engine numbers the cards by PCI address (domain, bus, device) itself, so `--card_order` and `--layout` name the same cards whatever the variable says. Earlier releases numbered them as the driver does, fastest first by default, which made the RTX PRO 6000 card 0 and refused a PP5 start with `not even one session ... fits`. The engine renumbers the visible cards by PCI address and ignores the order of a `CUDA_VISIBLE_DEVICES` list too: `--card_order` orders the cards, and when the engine's numbering differs from the driver's, startup prints one line, `cards: numbered by PCI address, not in the driver's order: cards 0 to N-1 are its ordinals ...`. Which cards a `CUDA_VISIBLE_DEVICES` list of ordinals selects is still read in the driver's numbering, fastest first unless `CUDA_DEVICE_ORDER=PCI_BUS_ID`: give such a list with that setting, or name the cards by UUID.
+
 The production source has exactly four literal `getenv` names. They are diagnostic interfaces; there is no environment-based alternative spelling for every CLI knob. The scan receipt is getenv_locations.txt. Presence tests count even an empty value or string0 as enabled. No engine default reads a user key from an environment variable; `ANEMONE_API_KEY` in this manual belongs to HTTP clients.
 
 <a id="knob-diag_state_digests"></a>
@@ -4123,7 +4155,7 @@ Use the TP4_EXL3 quick start for the canonical one-slot fixed-five recipe. Its c
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=2048 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --draft_policy=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --session_slots=1 --prefix_reuse=0 tokenizer.bin model.exl3map
 ```
 
-Check: `recipe_c1_code` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `recipe_c1_code` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 Changing only fixed policy 0 to cost policy 1 in the controlled S06 comparison retained eight token IDs but changed six selected F32 logits, maximum about `7.63e-5`. Matching decoded text alone therefore does not establish target-bit invariance. The current head flags were held equal in that pair; the observation does not isolate head sharding as the cause. The omitted-policy tcb78 default is described separately in the draft entries.
@@ -4137,7 +4169,7 @@ This reproducible baseline prepares eight BATCH forms and eight slots, uses one 
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --draft_policy=0 --batch_core_once=3 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --session_slots=8 --prefill_first=1 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_order=2 tokenizer.bin model.exl3map
 ```
 
-Check: `recipe_c8_mixed` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `recipe_c8_mixed` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 The following command exercises the actual tcb80 omitted-policy default on the canonical eight-slot BATCH geometry. It omits policy, learning, prior, core and menu overrides. The parser resolves rate2, learn1,14300/0/690us, core3 and the eight measured prices. Its receipt stores all resolved arrays; this is the command to compare when checking the newly shipped default.
@@ -4147,7 +4179,7 @@ The following command exercises the actual tcb80 omitted-policy default on the c
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --session_slots=8 --prefill_first=1 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_order=2 tokenizer.bin model.exl3map
 ```
 
-Check: `recipe_tcb80_default` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `recipe_tcb80_default` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 S04's older core2 BATCH recipe measured structured aggregate C1/C2/C4/C8 **335.3 / 451.5 / 612.8 / 784.6 tok/s**, code **265.3 / 295.8 / 376.4 / 468.1**, prose **163.6 / 217.5 / 290.6 / 381.8**; 141 comparisons matched. The core3 command above is a later strategy, so those numbers remain historical context. N's scoped code fixed0/menu0/core3 source29 medians were **265.799 / 296.778 / 377.579 / 470.281 tok/s**; the default-policy main integration has its own evidence. A joint recipe change is never an isolated speed claim for core3. Track S batch_fixed, RND_N.md.
@@ -4161,7 +4193,7 @@ S04's older core2 BATCH recipe measured structured aggregate C1/C2/C4/C8 **335.3
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=2 --step_graphs=1 --speculative=2 --draft_block=5 --draft_positions=5 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --card_memory_kept_free_mib=0 --draft_policy=0 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=0 --draft_learned_acceptance=0 --draft_session_acceptance=0 --batch_plan_ties=0 --draft_base_us=12700 --draft_tail_us=2200 --draft_row_us=2700 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --session_slots=1 --prefix_reuse=0 --context_tokens=1048576 --wide_rows=2048 tokenizer.bin model.exl3map
 ```
 
-Check: `recipe_1m_thin` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `recipe_1m_thin` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 For BATCH at 1M, retain 1,024-row wide programs, tail128 and no fine ladder; the exact parser defaults already choose that family of tail settings. The recipe deliberately uses **one active slot** because the historical one-slot fit is not an eight-slot fit:
@@ -4171,7 +4203,7 @@ For BATCH at 1M, retain 1,024-row wide programs, tail128 and no fine ladder; the
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --draft_policy=0 --batch_core_once=3 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --prefill_first=1 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_order=2 --context_tokens=1048576 --session_slots=1 tokenizer.bin model.exl3map
 ```
 
-Check: `recipe_1m_batch` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `recipe_1m_batch` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 Earlier tcb74-equivalent one-slot boots left only **15 MiB THIN / 53 MiB BATCH** on the tight cards. Those are fragile, source-scoped allocation observations, not available-memory promises for this build, a different graph set, stable-prefix branch or a client workload. Do not extrapolate the 65,536-context rates to 1M. Two 1M slots, eight 1M slots and a larger program ladder require their own allocation and runtime evidence. COMPARISON_MATRIX.md P2, RND_PIPELINE.md.
@@ -4185,7 +4217,7 @@ This BATCH variant keeps 1,024-row chunks but permits four decoder rounds per in
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --draft_policy=0 --batch_core_once=3 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --session_slots=8 --prefill_first=1 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_waiters=0 --prefill_order=2 --prefill_decode_rounds=4 tokenizer.bin model.exl3map
 ```
 
-Check: `recipe_fraser` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `recipe_fraser` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 The engine's own scheduling help reports the following four-CMP BATCH/order2/prefix-off workload: one 30K prompt plus four short streams, temperature zero, maximum 64 generated tokens; one short stream ends at EOS50. Completion is measured after first token; pause is the largest SSE content gap. Fraser replies are 2,048 tokens. These are measured pilots, not service-level bounds.
@@ -4210,7 +4242,7 @@ Order3 extends shortest-first scheduling to let eligible short no-chunk residual
 anemone serve --placement=tp4_exl3 --numerics=relaxed --cmp_order=reference --tp_wire_bf16=1 --rows=8 --wide_rows=1024 --full_steps=1 --prefill_cone=1 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --exl3_tc_moe=1 --tp_head_mma=1 --tp_trunk_mma=1 --tp_ordered_wide=1 --tp_head_shards=1 --tp_head_stream=1 --tp_draft_shards=1 --tp_draft_layers=1 --speculative=2 --draft_block=5 --draft_positions=5 --draft_learned_acceptance=1 --draft_base_us=13000 --draft_tail_us=0 --draft_row_us=1200 --tp_split_least_rows=512 --card_memory_kept_free_mib=0 --batch_rows=8,8,12,12,16,24,32,48 --batch_verifiers=1,2,2,4,4,4,8,8 --batch_wide_head=1 --batch_draft_rows=1 --draft_policy=0 --batch_core_once=3 --draft_session_acceptance=0 --batch_plan_ties=0 --exl3_tc_product_blocks=0 --tp_decode_round_once=0 --official_hc_rows=0 --session_slots=8 --prefill_first=1 --prefix_reuse=0 --prefill_decode_rows=1024 --prefill_decode_rounds=1 --prefill_decode_waiters=0 --prefill_order=3 tokenizer.bin model.exl3map
 ```
 
-Check: `order3` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `order3` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 
 Startup requires the bounded BATCH1024/BF16/column-owner/THIN-bit/exact-plan geometry. Combining3 with `prefix_reuse_exact=1|2`, `prefill_prefix_stable=1` or `session_fork=1` is refused even if another cache control is0. These joins lack the required cold-plan qualification. The refusal checks are in examples.json; defaults were not weakened to admit them. The shipped knob entry retains Track N's paired workload results with their own source epoch; this documentation refresh ran no GPU timing.
@@ -4231,7 +4263,7 @@ A normal messages prompt is rendered and processed one token at a time:
 anemone generate --exactness=exact --generated_tokens=256 messages.json tokenizer.bin original.anemone
 ```
 
-Check: `reference_generate` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `reference_generate` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 Every ordinary valid temperature, top_p and seed is accepted without changing model arithmetic. For production sampling, set **T=1 / top_p=1** explicitly:
 
@@ -4239,9 +4271,9 @@ Every ordinary valid temperature, top_p and seed is accepted without changing mo
 anemone serve --exactness=exact --temperature=1 --top_p=1 tokenizer.bin original.anemone
 ```
 
-Check: `reference_serve` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `reference_serve` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
-The tcb82 parser retains the ordinary omitted-temperature default of 0; selecting the exact axis alone does not insert temperature=1. The explicit production command above avoids relying on a different sampler default. CLI temperature is finite and nonnegative; HTTP retains its ordinary 0–2 bound.
+The 6 November 2026 parser retains the ordinary omitted-temperature default of 0; selecting the exact axis alone does not insert temperature=1. The explicit production command above avoids relying on a different sampler default. CLI temperature is finite and nonnegative; HTTP retains its ordinary 0–2 bound.
 
 **Exact model logits are distinct from stochastic token identity.** The ordinary sampler consumes the official-exact F32 logit words; the profile adds no alternate rounding or sampler reduction. Drawn IDs match the pinned source on the admitted **T=0** fixtures. At T>0, Anemone's token/position hash, exponential race and existing top_p cutoff differ from the source's Torch exponential draws after softmax. The RNG and sampler order do not match, so stochastic token identity is not claimed. A valid T=1 run is not evidence of source-identical stochastic output.
 
@@ -4251,7 +4283,7 @@ The complete raw generate setting is available for inspecting the composite prof
 anemone generate --placement=pp5 --numerics=exact --cmp_order=reference --linear_profile=0 --linear_order=1 --pro_emulation=0 --official_hc_rows=1 --official_reference=1 --card_order=0,1,3,4,2 --rows=1 --context_tokens=512 --wide_rows=0 --full_steps=0 --chunks_in_flight=1 --pipeline_steps=1 --step_graphs=1 --speculative=0 --tp_pipeline_overlap=0 --original_chunk_core=0 --original_dense_staged=0 --original_wide_experts=0 --card_memory_kept_free_mib=0 '--layout=vision: card 0; embedding: card 0; layers 0..7: card 0; layers 8..14: card 1; layers 15..21: card 2; layers 22..28: card 3; layers 29..39: card 4; head: card 4; draft head: card 4' --temperature=1 --top_p=1 --generated_tokens=256 messages.json tokenizer.bin original.anemone
 ```
 
-Check: `reference_generate_explicit` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `reference_generate_explicit` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 For the exact eight-ID source fixture, use the public prompt-token ingestion route instead of a messages filename. Tokenization and assistant-prefix insertion are bypassed; the file supplies prompt IDs only, never generated tokens or activations:
 
@@ -4259,7 +4291,7 @@ For the exact eight-ID source fixture, use the public prompt-token ingestion rou
 anemone generate --exactness=exact --temperature=0 --top_p=1 --seed=0 --generated_tokens=256 --ignore_eos=1 --prompt_token_ids=serial_m1_ids.json tokenizer.bin original.anemone
 ```
 
-Check: `reference_source_ids` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+Check: `reference_source_ids` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 The public `serial_m1_ids.json` file contains:
 
@@ -4275,7 +4307,7 @@ The server profile also selects `--session_slots=1 --prefix_reuse=0 --prefix_reu
 anemone serve --placement=tp4_exl3 --exactness=exact tokenizer.bin model.exl3map
 ```
 
-Check: `reference_exl3_refusal` — expected tcb82 refusal: axes category=unset exactness=exact concurrency=unset focus=unset weight_family=exl3 axes refused: reference arithmetic (EXL3: not official-exact) axes: invalid selection; see anemone help axes Receipt: examples.json.
+Check: `reference_exl3_refusal` — expected refusal of the 6 November 2026 build: axes category=unset exactness=exact concurrency=unset focus=unset weight_family=exl3 axes refused: reference arithmetic (EXL3: not official-exact) axes: invalid selection; see anemone help axes Receipt: examples.json.
 
 Qualified scope and cost are inherited from Track R's `USAGE_REFERENCE_v4.md`, `COSTS.md`, `REPORT_v4.md` and final merge receipts. XR62 passes both autonomous 256-draw public-axis CLI/source-ID and selected-F32 comparisons, the 263-full-head prelude and all 40 block/carry endpoints at positions 0–7 (40,555,520 represented F32 values, zero differing bits). XR63 preserves the canonical default hashes at both widths. XR66 supersedes the earlier temperature refusal: all 16 T=0 HTTP IDs/text/native counts/finish reasons match the CLI; T=1 returns HTTP 200, completes 16 tokens and finishes with length. These are the recorded source/operator/state/fixture scopes; this docs refresh reran parser checks only.
 
@@ -4299,6 +4331,57 @@ Always name what was compared: token IDs, selected F32 logits, full-vocabulary l
 
 The pinned S numerical smoke compared eight teacher-forced EXL3 rows with the original cached-one-row fixture: mean/max KL **0.22399302 / 1.10730062 nats**, raw logit RMS/max **0.965879499 / 6.40786219**, top1 **7/8**. This combines weight/arithmetic/placement/head effects and is not held-out corpus PPL, T=0 generation agreement or an isolated head/draft measurement. Do not recast it as a universal quality bound. S thin_fixed numerical receipt, COMPARISON_MATRIX.md precision definitions.
 
+### 10.1 Teacher-forced logits: `anemone capture`
+
+`anemone capture` measures the head of any split, map and step shape against the golden dataset
+([anoane/anemone-ds41f1017-golden](https://huggingface.co/datasets/anoane/anemone-ds41f1017-golden); a local copy,
+read only). It is `generate`'s whole path (parse, axes as generate's, load, plan, programs, driver, engine, one session)
+whose front end submits each golden case as one forced continuation: the case's prompt as usual, then the golden tokens
+committed in place of the draws. At each landing it reads the full F32 head rows the sampler read, from the cards that
+hold them, checks each row and streams it to disk in the scorer's candidate layout.
+
+```sh
+anemone capture --placement=tp4_exl3 --capture_rows=6 \
+  --capture_golden=GOLDEN_ROOT --capture_cases=tools/golden/selections/release54.txt --capture_out=OUT TABLES MAP
+"$PYTHON" tools/golden/golden_capture_score.py GOLDEN_ROOT OUT --output OUT/QUALITY_RECORD.json
+"$PYTHON" tools/golden/golden_capture_score.py GOLDEN_ROOT OUT --compact --output OUT/QUALITY_RECORD_COMPACT.json
+```
+
+- **Options** (`anemone help knobs`): `--capture_golden=ROOT`, `--capture_cases=KEYS` (one `set/id` a line, in run order;
+  `tools/golden/golden_cases.py ROOT` lists all), `--capture_out=OUT`, `--capture_rows=R` (1, or 2 to
+  speculative_depth + 1; default speculative_depth + 1), `--capture_positions=N` (the first N positions, pilots;
+  truncated, not scored) and `--capture_free=1` (an ordinary T=0 command of each prompt as well: its tokens and logit
+  bits). Every other option and axis flag is generate's, and is what is measured. Refused with capture, named:
+  `--temperature` other than 0, `--top_p` other than 1, `--generated_tokens`, `--ignore_eos`, `--prompt_token_ids`,
+  `--reasoning_effort` (each case decides), `--batch_rows`, `--original_head_offload`, `--dump_draft_ring` and any
+  `DIAG_` variable (out of scope).
+- **The step shape is part of what is measured.** On TP4_EXL3 a 2-8-row step's head takes the MMA form and a one-row
+  step the dense stream, so R = 6 (the verify steps most decode runs) and R = 1 give different bits from position 1 on.
+  TP4_EXL3's quality number is R = 6, with R = 1 recorded beside it. On the exact PP5 route (`--exactness=exact`,
+  context 512, no speculation) R is 1 and the capture gives the golden's own `logits.f32` byte for byte.
+- **Each row is a witness:** its position and input token, every logit finite, the draw its lowest-ID argmax and the
+  draw's logit bits the row's; at the case's last landing the driver's committed history must be the prompt and the
+  golden tokens but the last (`conditioning_ids.json`). A failure fails the case and the run, one line on stderr
+  naming the case, the position and the witness.
+- **Output:** `OUT/cases/<set>/<id>/` holds `metadata.json` (`teacher_forced`, the three alignment hashes, and a
+  `capture` object: the executable's, argv's and pack header's SHA-256, the EXL3 map's descriptor's SHA-256
+  (`descriptor_sha256`, null without one), version, placement, weights, map, rows, context, truncated, logits digest,
+  witnessed positions), `prompt_ids.json`, `token_ids.json`, `conditioning_ids.json`, `logits.f32`
+  (`[positions][129280]` F32), `native_drawn_ids.json` and `witness.json` (per position: its row's position and input
+  token, the step's rows, the row's place in it, the draw and its logit's bits); `OUT/CAPTURE_MANIFEST.json` the plan
+  digest (the executable, the argv, the keys file, `ROOT/MANIFEST.json`), those digests, the cases, the positions kept
+  and their rows' bytes, the argv's words and the `capture` object, and `OUT/cases.jsonl` one line a finished case. A
+  digest that cannot be made (the executable, the keys file, the pack header, a `ROOT/MANIFEST.json` or a map's
+  descriptor that is there) refuses the capture before anything is written, named. A row is 517,120 bytes: the 54 cases
+  take 4.07 GB, all 435 34.3 GB; the capture refuses to start below the remaining rows plus 1 GiB of free space.
+- **Resume:** run the same command again. A finished case is skipped, a `.partial` folder is captured again, and an
+  OUT of another plan, a key listed twice and a set or case folder that is a link (nothing is removed through one) are
+  refused. The scorer refuses a capture that has not finished every planned case, a case listed twice and a golden
+  whose `MANIFEST.json` is not the one captured.
+- **Scope:** one session, cold prompts (no prefix reuse, fork or snapshot), T=0 heads; not BATCH heads, not the
+  offloaded head, not a speed measurement. The record's NLL, perplexity and top-1 agreement weight every position
+  equally (tools/golden_score.md).
+
 ## 11. Monitoring, logs and receipts
 
 Enable `--live_stats` for periodic counters and choose text, JSON or table formatting. The server stats endpoint and detached `stats` client report a running process without loading another model. The client accepts a numeric IPv4/IPv6 address, requires a port, and can print once. A client key file is a single-key file; it is not the named multi-user server key database. No credentials were read to validate this example:
@@ -4308,7 +4391,7 @@ Enable `--live_stats` for periodic counters and choose text, JSON or table forma
 anemone stats --host=127.0.0.1 --port=8321 --key_file=/secure/anemone-stats.key --interval_ms=1000 --format=table --once
 ```
 
-Check: `stats_poll` — native tcb82 stats parser accepted; no connection or credential read. Receipt: examples.json.
+Check: `stats_poll` — the 6 November 2026 build's native stats parser accepted; no connection or credential read. Receipt: examples.json.
 
 
 Inspect readiness and placement logs before accepting traffic: selected cards, weight family, arithmetic/wire class, context/slot capacity, prepared rows/programs, loader receipts and free memory. Keep the command line, binary hash, commit, model/map/pack identity and any explicit layout together. A command that parses but fails planning is a refused run, not a performance sample. A server “ready” line is an allocation/startup event, not an official-equivalence proof.
@@ -4360,7 +4443,7 @@ Stable-prefix and session-fork examples above are now accepted main commands. Sm
 anemone serve --placement=tp4_exl3 --speculative=2 --rows=8 --context_tokens=65536 --prefill_prefix_stable=1 --prefill_small_copy_rows=32 tokenizer.bin model.exl3map
 ```
 
-Check: `copy32` — expected tcb82 refusal: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
+Check: `copy32` — expected refusal of the 6 November 2026 build: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
 
 
 
@@ -4368,7 +4451,7 @@ Check: `copy32` — expected tcb82 refusal: usage: anemone load|generate|serve [
 anemone serve --placement=tp4_exl3 --speculative=2 --rows=8 --context_tokens=65536 --session_snapshot_format=5 tokenizer.bin model.exl3map
 ```
 
-Check: `branch_session_snapshot_format` — expected tcb82 refusal: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
+Check: `branch_session_snapshot_format` — expected refusal of the 6 November 2026 build: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
 
 
 
@@ -4376,7 +4459,7 @@ Check: `branch_session_snapshot_format` — expected tcb82 refusal: usage: anemo
 anemone serve --placement=tp4_exl3 --speculative=2 --rows=8 --context_tokens=65536 --tp_core_queries=1 tokenizer.bin model.exl3map
 ```
 
-Check: `branch_m25` — expected tcb82 refusal: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
+Check: `branch_m25` — expected refusal of the 6 November 2026 build: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
 
 
 A branch host-channel TP5 launch is also refused by this main parser:
@@ -4386,7 +4469,7 @@ A branch host-channel TP5 launch is also refused by this main parser:
 anemone serve --placement=tp5 --tp5_host_channels=1 --speculative=2 --rows=8 tokenizer.bin original.anemone
 ```
 
-Check: `branch_tp5_host` — expected tcb82 refusal: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
+Check: `branch_tp5_host` — expected refusal of the 6 November 2026 build: usage: anemone load|generate|serve [--card_order=1,0,2] [--numerics=exact|relaxed|fast (default exact; relaxed/fast enable fixed alternate CMP sums)] [--placement=pp5|tp4_pro|tp4_exl3|tp2_pp2_pro|tp2_ Receipt: examples.json.
 
 
 ### 12.4 Safe recovery and reproduction
@@ -4619,7 +4702,7 @@ do not establish full agent, tool, reasoning or stored-response compatibility.
 
 ## 15. Compact serve-flag reference
 
-**On main `69d4d967880fb39c9ed3f82bf646f95149374d04`, `bin/tcb82/anemone`.** This is the compact companion to the sections above. It lists every flag the final-main serve parser accepts; it does not import the older production tree's transport/scheduler switches.
+**On main `69d4d967880fb39c9ed3f82bf646f95149374d04`, the 6 November 2026 build.** This is the compact companion to the sections above. It lists every flag the final-main serve parser accepts; it does not import the older production tree's transport/scheduler switches.
 
 Defaults are stated for PP5, TP4_PRO and TP4_EXL3 wherever they differ. Unqualified numeric defaults apply to all three. A conditional default is part of a recipe: omitted pipeline depth becomes5 only for qualifying PP5 multi-session DSpark serve; compatible TP4_PRO wide experts become1; explicit values retain precedence. Four unset axes insert nothing. PRO uses class120 native/sm_120a math by default; `pro_emulation=1` is the opt-in class80 emulation and is refused by current TP startup.
 
@@ -4631,209 +4714,209 @@ Copy32, snapshot v5, TP5/M25 and pending O query/dense-shard controls are branch
 
 ### Loader and turbo replicas
 
-- [`--card_order`](#knob-card_order) — **Default:** Automatic backend enumeration/fill; TP4_EXL3 auto-selects four CMPs. The table's zero is array storage, not a request for card0 only. **Meaning:** Choose backend card ordinals in stage-fill order. Check: `knob_card_order` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--reader_threads_per_copy`](#knob-reader_threads_per_copy) — **Default:** 4. **Meaning:** Allocate this many asynchronous readers per pack copy. Check: `knob_reader_threads_per_copy` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_load_threads`](#knob-tp_load_threads) — **Default:** 32. **Meaning:** Load TP card weights concurrently; zero keeps the serial loader. Check: `knob_tp_load_threads` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--turbo_load`](#knob-turbo_load) — **Default:** 1. **Meaning:** Discover and read receipted replicas on other drives. Check: `knob_turbo_load` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--map_reads`](#knob-map_reads) — **Default:** 4 auto:3 when receipted replicas are found, otherwise1. **Meaning:** Choose buffered/direct EXL3-map reads and page-cache eviction policy. Check: `knob_map_reads` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_load_host_threads`](#knob-tp_load_host_threads) — **Default:** 16; explicit0 inherits tp_load_threads. **Meaning:** Load the host arena with this many workers; zero follows TP load threads. Check: `knob_tp_load_host_threads` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_load_copy_split`](#knob-tp_load_copy_split) — **Default:** 2. **Meaning:** Choose each TP load read's copy: roles with stealing (2), fixed roles (1) or soonest (0). Check: `knob_tp_load_copy_split` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_load_reads_per_copy`](#knob-tp_load_reads_per_copy) — **Default:** 0. **Meaning:** Limit TP in-flight reads per copy; zero is unlimited. Check: `knob_tp_load_reads_per_copy` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--card_order`](#knob-card_order) — **Default:** Automatic backend enumeration/fill; TP4_EXL3 auto-selects four CMPs. The table's zero is array storage, not a request for card0 only. **Meaning:** Choose backend card ordinals in stage-fill order. Check: `knob_card_order` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--reader_threads_per_copy`](#knob-reader_threads_per_copy) — **Default:** 4. **Meaning:** Allocate this many asynchronous readers per pack copy. Check: `knob_reader_threads_per_copy` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_load_threads`](#knob-tp_load_threads) — **Default:** 32. **Meaning:** Load TP card weights concurrently; zero keeps the serial loader. Check: `knob_tp_load_threads` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--turbo_load`](#knob-turbo_load) — **Default:** 1. **Meaning:** Discover and read receipted replicas beside the given copies, on drives holding none of them; 0: exactly the given copies. Check: `knob_turbo_load` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--map_reads`](#knob-map_reads) — **Default:** 4 auto:3 when receipted replicas are found, otherwise1. **Meaning:** Choose buffered/direct EXL3-map reads and page-cache eviction policy. Check: `knob_map_reads` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_load_host_threads`](#knob-tp_load_host_threads) — **Default:** 16; explicit0 inherits tp_load_threads. **Meaning:** Load the host arena with this many workers; zero follows TP load threads. Check: `knob_tp_load_host_threads` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_load_copy_split`](#knob-tp_load_copy_split) — **Default:** 2. **Meaning:** Choose each TP load read's copy: roles with stealing (2), fixed roles (1) or soonest (0). Check: `knob_tp_load_copy_split` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_load_reads_per_copy`](#knob-tp_load_reads_per_copy) — **Default:** 0. **Meaning:** Limit TP in-flight reads per copy; zero is unlimited. Check: `knob_tp_load_reads_per_copy` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Memory, slots, context and 1M
 
-- [`--card_memory_kept_free_mib`](#knob-card_memory_kept_free_mib) — **Default:** 0. **Meaning:** Subtract this many MiB from each card's placement budget. Check: `knob_card_memory_kept_free_mib` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--session_slots`](#knob-session_slots) — **Default:** 1. **Meaning:** Allocate this many independent active session slots. Check: `knob_session_slots` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--wide_rows`](#knob-wide_rows) — **Default:** 0. **Meaning:** Prepare a wide prefill program of this many rows; zero disables it. Check: `knob_wide_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--rows`](#knob-rows) — **Default:** 1 on every raw placement; the usable speculative TP recipes explicitly select8. **Meaning:** Set ordinary THIN step row capacity (and proposal capacity minus one). Check: `knob_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--context_tokens`](#knob-context_tokens) — **Default:** 16384 per slot for every raw placement; larger capacities are explicit. **Meaning:** Allocate the maximum prompt-plus-generation context per slot. Check: `knob_context_tokens` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--layout`](#knob-layout) — **Default:** automatic fill **Meaning:** Override PP5 unit placement. Check: `knob_layout` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--card_memory_kept_free_mib`](#knob-card_memory_kept_free_mib) — **Default:** 0. **Meaning:** Subtract this many MiB from each card's placement budget. Check: `knob_card_memory_kept_free_mib` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--session_slots`](#knob-session_slots) — **Default:** 1. **Meaning:** Allocate this many independent active session slots. Check: `knob_session_slots` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--wide_rows`](#knob-wide_rows) — **Default:** 0. **Meaning:** Prepare a wide prefill program of this many rows; zero disables it. Check: `knob_wide_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--rows`](#knob-rows) — **Default:** 1 on every raw placement; the usable speculative TP recipes explicitly select8. **Meaning:** Set ordinary THIN step row capacity (and proposal capacity minus one). Check: `knob_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--context_tokens`](#knob-context_tokens) — **Default:** 16384 per slot for every raw placement; larger capacities are explicit. **Meaning:** Allocate the maximum prompt-plus-generation context per slot. Check: `knob_context_tokens` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--layout`](#knob-layout) — **Default:** automatic fill **Meaning:** Override PP5 unit placement. Check: `knob_layout` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Prefill and chunk planning
 
-- [`--full_steps`](#knob-full_steps) — **Default:** 1. **Meaning:** Use full programs behind the prefill front. Check: `knob_full_steps` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--chunks_in_flight`](#knob-chunks_in_flight) — **Default:** 1. **Meaning:** Bound chunk steps in flight; one uses the exact cone planner. Check: `knob_chunks_in_flight` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_margin`](#knob-prefill_margin) — **Default:** 127. **Meaning:** Keep this many full rows beyond the prefill cone. Check: `knob_prefill_margin` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_fast_plan`](#knob-prefill_fast_plan) — **Default:** 0. **Meaning:** Choose the largest fitting prefill program instead of the exact plan. Check: `knob_prefill_fast_plan` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_chunk_rows`](#knob-prefill_chunk_rows) — **Default:** 0. **Meaning:** Cap all exact-plan prefill chunks. Check: `knob_prefill_chunk_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_cone_skip`](#knob-prefill_cone_skip) — **Default:** 1. **Meaning:** Skip dead cone work; modes two/three extend the retained optimization. Check: `knob_prefill_cone_skip` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_tail_rows`](#knob-prefill_tail_rows) — **Default:** 0 when ineligible;128 with eligible wide1024 or BATCH;448 with eligible wide2048+ THIN. BATCH retains128. **Meaning:** Prepare 128/320/448-row full tail programs; zero disables them. Check: `knob_prefill_tail_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_ladder_1024`](#knob-prefill_ladder_1024) — **Default:** 1. **Meaning:** Add 1024-row programs below larger wide programs. Check: `knob_prefill_ladder_1024` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_ladder_1536`](#knob-prefill_ladder_1536) — **Default:** 1. **Meaning:** Add 1536-row programs below larger wide programs. Check: `knob_prefill_ladder_1536` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_ladder_fine`](#knob-prefill_ladder_fine) — **Default:** 1 for wide2048+ THIN;0 for BATCH or smaller wide programs. **Meaning:** Add 1792/1280/768-row exact-plan programs. Check: `knob_prefill_ladder_fine` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_front_tail`](#knob-prefill_front_tail) — **Default:** 0 without tail;1 with other tails;2 with tail448. **Meaning:** Use tail programs for the front region; two also uses the longer full tails. Check: `knob_prefill_front_tail` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_tail_overlay`](#knob-prefill_tail_overlay) — **Default:** 1. **Meaning:** Overlay tail TC MoE workspace on prefill workspace. Check: `knob_prefill_tail_overlay` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_tail_sets`](#knob-prefill_tail_sets) — **Default:** 1. **Meaning:** Run tail trunk products over their 64-row groups in one launch. Check: `knob_prefill_tail_sets` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_thin_tail`](#knob-prefill_thin_tail) — **Default:** 1 with a tail and no BATCH;0 otherwise. **Meaning:** Use 16..56-row programs for rows below a 64-row tail. Check: `knob_prefill_thin_tail` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_dead_halves`](#knob-prefill_dead_halves) — **Default:** 2. **Meaning:** Trim cone-dead sums; mode two also trims dead copies. Check: `knob_prefill_dead_halves` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_cone`](#knob-prefill_cone) — **Default:** 0. **Meaning:** Use a bounded front region with a prepared prefill cone. Check: `knob_prefill_cone` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_prefix_stable`](#knob-prefill_prefix_stable) — **Default:** 0. **Meaning:** Use fixed-capacity prefill forms with closed eight-row prefixes. Check: `stable_prefix` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--full_steps`](#knob-full_steps) — **Default:** 1. **Meaning:** Use full programs behind the prefill front. Check: `knob_full_steps` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--chunks_in_flight`](#knob-chunks_in_flight) — **Default:** 1. **Meaning:** Bound chunk steps in flight; one uses the exact cone planner. Check: `knob_chunks_in_flight` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_margin`](#knob-prefill_margin) — **Default:** 127. **Meaning:** Keep this many full rows beyond the prefill cone. Check: `knob_prefill_margin` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_fast_plan`](#knob-prefill_fast_plan) — **Default:** 0. **Meaning:** Choose the largest fitting prefill program instead of the exact plan. Check: `knob_prefill_fast_plan` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_chunk_rows`](#knob-prefill_chunk_rows) — **Default:** 0. **Meaning:** Cap all exact-plan prefill chunks. Check: `knob_prefill_chunk_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_cone_skip`](#knob-prefill_cone_skip) — **Default:** 1. **Meaning:** Skip dead cone work; modes two/three extend the retained optimization. Check: `knob_prefill_cone_skip` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_tail_rows`](#knob-prefill_tail_rows) — **Default:** 0 when ineligible;128 with eligible wide1024 or BATCH;448 with eligible wide2048+ THIN. BATCH retains128. **Meaning:** Prepare 128/320/448-row full tail programs; zero disables them. Check: `knob_prefill_tail_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_ladder_1024`](#knob-prefill_ladder_1024) — **Default:** 1. **Meaning:** Add 1024-row programs below larger wide programs. Check: `knob_prefill_ladder_1024` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_ladder_1536`](#knob-prefill_ladder_1536) — **Default:** 1. **Meaning:** Add 1536-row programs below larger wide programs. Check: `knob_prefill_ladder_1536` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_ladder_fine`](#knob-prefill_ladder_fine) — **Default:** 1 for wide2048+ THIN;0 for BATCH or smaller wide programs. **Meaning:** Add 1792/1280/768-row exact-plan programs. Check: `knob_prefill_ladder_fine` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_front_tail`](#knob-prefill_front_tail) — **Default:** 0 without tail;1 with other tails;2 with tail448. **Meaning:** Use tail programs for the front region; two also uses the longer full tails. Check: `knob_prefill_front_tail` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_tail_overlay`](#knob-prefill_tail_overlay) — **Default:** 1. **Meaning:** Overlay tail TC MoE workspace on prefill workspace. Check: `knob_prefill_tail_overlay` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_tail_sets`](#knob-prefill_tail_sets) — **Default:** 1. **Meaning:** Run tail trunk products over their 64-row groups in one launch. Check: `knob_prefill_tail_sets` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_thin_tail`](#knob-prefill_thin_tail) — **Default:** 1 with a tail and no BATCH;0 otherwise. **Meaning:** Use 16..56-row programs for rows below a 64-row tail. Check: `knob_prefill_thin_tail` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_dead_halves`](#knob-prefill_dead_halves) — **Default:** 2. **Meaning:** Trim cone-dead sums; mode two also trims dead copies. Check: `knob_prefill_dead_halves` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_cone`](#knob-prefill_cone) — **Default:** 0. **Meaning:** Use a bounded front region with a prepared prefill cone. Check: `knob_prefill_cone` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_prefix_stable`](#knob-prefill_prefix_stable) — **Default:** 0. **Meaning:** Use fixed-capacity prefill forms with closed eight-row prefixes. Check: `stable_prefix` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Decode and scheduling
 
-- [`--batch_rows`](#knob-batch_rows) — **Default:** No BATCH list (zero-filled internal array); THIN programs are prepared. **Meaning:** Prepare BATCH programs at these row capacities instead of THIN programs. Check: `knob_batch_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_context_slabs`](#knob-batch_context_slabs) — **Default:** 0. **Meaning:** Process BATCH draft context in THIN-sized eight-row slabs. Check: `knob_batch_context_slabs` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_thin_bits`](#knob-batch_thin_bits) — **Default:** 1. **Meaning:** Use THIN numerical splits in BATCH trunk/head/TC-MoE products. Check: `knob_batch_thin_bits` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_tc_paired`](#knob-batch_tc_paired) — **Default:** 0. **Meaning:** Pair TC MoE short forms from this many BATCH rows; zero disables pairing. Check: `knob_batch_tc_paired` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_row_sets`](#knob-batch_row_sets) — **Default:** 0. **Meaning:** Use trunk-product row sets above the grouped-row threshold. Check: `knob_batch_row_sets` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_core_once`](#knob-batch_core_once) — **Default:** PP5/TP4_PRO and other original placements: 2; TP4_EXL3 THIN: 3. **Meaning:** Compute BATCH attention core once; mode2 adds window writes and mode3 pools/deferred slots. Check: `knob_batch_core_once` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_grouped_rows`](#knob-batch_grouped_rows) — **Default:** 16. **Meaning:** Use grouped THIN trunk forms through this BATCH row count. Check: `knob_batch_grouped_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_step_us`](#knob-batch_step_us) — **Default:** No raw prices. Eligible omitted-policy measured EXL3 BATCH receives19500,21500,28600,30000,32000,39000,46000,58000us. Explicit policy or costs preserve their former behavior. **Meaning:** Supply per-program measured costs for the BATCH expected-token planner. Check: `knob_batch_step_us` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_verifiers`](#knob-batch_verifiers) — **Default:** Unset/derived with the BATCH geometry; not a literal single verifier0. **Meaning:** Supply each BATCH program's drafting-session capacity. Check: `knob_batch_verifiers` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_first`](#knob-prefill_first) — **Default:** 0. **Meaning:** Prefer another session's wide/full prefill chunk before ordinary steps. Check: `knob_prefill_first` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_order`](#knob-prefill_order) — **Default:** 2 only for the qualified default BATCH1024 cap/round/waiter combination;0 otherwise. **Meaning:** Choose round-robin chunks, command arrival order, shortest remaining prompt or opt-in shared short residuals. Check: `knob_prefill_order` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_order_wait`](#knob-prefill_order_wait) — **Default:** 16. **Meaning:** Bound shortest-order waiting in serving scheduler ticks. Check: `knob_prefill_order_wait` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_decode_every`](#knob-prefill_decode_every) — **Default:** 0. **Meaning:** Insert one decode round after this many head chunks; zero disables it. Check: `knob_prefill_decode_every` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_decode_waiters`](#knob-prefill_decode_waiters) — **Default:** 0 on every no-axis route. **Meaning:** Keep whole chunks/one round while multiple prompts wait. Check: `knob_prefill_decode_waiters` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_decode_rounds`](#knob-prefill_decode_rounds) — **Default:** 1 (including qualified BATCH), unless explicitly overridden. **Meaning:** Run this many ordinary decode rounds between capped chunks. Check: `knob_prefill_decode_rounds` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefill_decode_rows`](#knob-prefill_decode_rows) — **Default:** Serve qualified BATCH1024:1024; THIN/generate/other:0. Explicit0 opts out. **Meaning:** Cap prefill chunks while decoders are active. Check: `knob_prefill_decode_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_rows`](#knob-batch_rows) — **Default:** No BATCH list (zero-filled internal array); THIN programs are prepared. **Meaning:** Prepare BATCH programs at these row capacities instead of THIN programs. Check: `knob_batch_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_context_slabs`](#knob-batch_context_slabs) — **Default:** 0. **Meaning:** Process BATCH draft context in THIN-sized eight-row slabs. Check: `knob_batch_context_slabs` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_thin_bits`](#knob-batch_thin_bits) — **Default:** 1. **Meaning:** Use THIN numerical splits in BATCH trunk/head/TC-MoE products. Check: `knob_batch_thin_bits` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_tc_paired`](#knob-batch_tc_paired) — **Default:** 0. **Meaning:** Pair TC MoE short forms from this many BATCH rows; zero disables pairing. Check: `knob_batch_tc_paired` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_row_sets`](#knob-batch_row_sets) — **Default:** 0. **Meaning:** Use trunk-product row sets above the grouped-row threshold. Check: `knob_batch_row_sets` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_core_once`](#knob-batch_core_once) — **Default:** PP5/TP4_PRO and other original placements: 2; TP4_EXL3 THIN: 3. **Meaning:** Compute BATCH attention core once; mode2 adds window writes and mode3 pools/deferred slots. Check: `knob_batch_core_once` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_grouped_rows`](#knob-batch_grouped_rows) — **Default:** 16. **Meaning:** Use grouped THIN trunk forms through this BATCH row count. Check: `knob_batch_grouped_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_step_us`](#knob-batch_step_us) — **Default:** No raw prices. Eligible omitted-policy measured EXL3 BATCH receives19500,21500,28600,30000,32000,39000,46000,58000us. Explicit policy or costs preserve their former behavior. **Meaning:** Supply per-program measured costs for the BATCH expected-token planner. Check: `knob_batch_step_us` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_verifiers`](#knob-batch_verifiers) — **Default:** Unset/derived with the BATCH geometry; not a literal single verifier0. **Meaning:** Supply each BATCH program's drafting-session capacity. Check: `knob_batch_verifiers` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_first`](#knob-prefill_first) — **Default:** 0. **Meaning:** Prefer another session's wide/full prefill chunk before ordinary steps. Check: `knob_prefill_first` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_order`](#knob-prefill_order) — **Default:** 2 only for the qualified default BATCH1024 cap/round/waiter combination;0 otherwise. **Meaning:** Choose round-robin chunks, command arrival order, shortest remaining prompt or opt-in shared short residuals. Check: `knob_prefill_order` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_order_wait`](#knob-prefill_order_wait) — **Default:** 16. **Meaning:** Bound shortest-order waiting in serving scheduler ticks. Check: `knob_prefill_order_wait` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_decode_every`](#knob-prefill_decode_every) — **Default:** 0. **Meaning:** Insert one decode round after this many head chunks; zero disables it. Check: `knob_prefill_decode_every` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_decode_waiters`](#knob-prefill_decode_waiters) — **Default:** 0 on every no-axis route. **Meaning:** Keep whole chunks/one round while multiple prompts wait. Check: `knob_prefill_decode_waiters` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_decode_rounds`](#knob-prefill_decode_rounds) — **Default:** 1 (including qualified BATCH), unless explicitly overridden. **Meaning:** Run this many ordinary decode rounds between capped chunks. Check: `knob_prefill_decode_rounds` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_decode_rows`](#knob-prefill_decode_rows) — **Default:** Serve qualified BATCH1024:1024; THIN/generate/other:0. Explicit0 opts out. **Meaning:** Cap prefill chunks while decoders are active. Check: `knob_prefill_decode_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Draft and speculative policy
 
-- [`--tp_draft_shards`](#knob-tp_draft_shards) — **Default:** 0. **Meaning:** Shard draft head, Markov projection and sampler with the target head. Check: `knob_tp_draft_shards` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_draft_layers`](#knob-tp_draft_layers) — **Default:** 0. **Meaning:** Tensor-parallelize the draft model's three layers. Check: `knob_tp_draft_layers` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_draft_rows`](#knob-batch_draft_rows) — **Default:** 0. **Meaning:** Batch verifier draft rows into the BATCH program. Check: `knob_batch_draft_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_wide_head`](#knob-batch_wide_head) — **Default:** 0. **Meaning:** Use the wide target head for BATCH verification. Check: `knob_batch_wide_head` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_draft_slots_head`](#knob-batch_draft_slots_head) — **Default:** 0. **Meaning:** Run one verifier's draft head across eight slots at each position. Check: `knob_batch_draft_slots_head` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_bf16_rows`](#knob-draft_bf16_rows) — **Default:** 0. **Meaning:** Use BF16 rows for draft attention products. Check: `knob_draft_bf16_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_draft_wide`](#knob-batch_draft_wide) — **Default:** 3. **Meaning:** Widen draft work: one sums/posts, two products, three cores. Check: `knob_batch_draft_wide` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_bf16_operands`](#knob-draft_bf16_operands) — **Default:** 0. **Meaning:** Use BF16 operands for class-80 draft quantized products. Check: `knob_draft_bf16_operands` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_learned_acceptance`](#knob-draft_learned_acceptance) — **Default:** PP5/TP4_PRO and other original placements: 0; TP4_EXL3 THIN: 1. **Meaning:** Update the draft policy's shared confidence table from outcomes. Check: `knob_draft_learned_acceptance` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_session_acceptance`](#knob-draft_session_acceptance) — **Default:** 0. **Meaning:** Scale proposal acceptance by the current session's measured outcomes. Check: `knob_draft_session_acceptance` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--batch_plan_ties`](#knob-batch_plan_ties) — **Default:** 0. **Meaning:** Cut planned drafts only between unequal predicted reach. Check: `knob_batch_plan_ties` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_start_economic`](#knob-draft_start_economic) — **Default:** 1. **Meaning:** Start DSpark at policy depth instead of a single-proposal probe. Check: `knob_draft_start_economic` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--speculative`](#knob-speculative) — **Default:** PP5/TP4_PRO and other original placements: 0; TP4_EXL3 THIN: 2. **Meaning:** Choose off, n-gram lookup, checkpoint DSpark or hybrid proposals. Check: `knob_speculative` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_policy`](#knob-draft_policy) — **Default:** PP5/TP4_PRO: cost1. EXL3 single-slot THIN: fixed0; BATCH or multiple slots: rate2. **Meaning:** Choose fixed, cost, rate or adaptive proposal-depth selection. Check: `knob_draft_policy` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_threshold`](#knob-draft_threshold) — **Default:** 100. **Meaning:** Set the minimum draft confidence in thousandths. Check: `knob_draft_threshold` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_base_us`](#knob-draft_base_us) — **Default:** PP5/TP4_PRO and other original placements: 12700; TP4_EXL3 THIN: 14300. **Meaning:** Estimate the base verification-step cost in microseconds. Check: `knob_draft_base_us` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_tail_us`](#knob-draft_tail_us) — **Default:** PP5/TP4_PRO and other original placements: 2200; TP4_EXL3 THIN: 0. **Meaning:** Estimate fixed tail cost in microseconds. Check: `knob_draft_tail_us` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_row_us`](#knob-draft_row_us) — **Default:** PP5/TP4_PRO and other original placements: 2700; TP4_EXL3 THIN: 690. **Meaning:** Estimate each additional verification row's cost in microseconds. Check: `knob_draft_row_us` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_probe_rounds`](#knob-draft_probe_rounds) — **Default:** 8. **Meaning:** Probe full draft depth after this many policy rounds. Check: `knob_draft_probe_rounds` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--hybrid_lookup_prior`](#knob-hybrid_lookup_prior) — **Default:** 500. **Meaning:** Set lookup acceptance prior in thousandths. Check: `knob_hybrid_lookup_prior` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--hybrid_lookup_min`](#knob-hybrid_lookup_min) — **Default:** 3. **Meaning:** Use lookup in hybrid mode only from this n-gram length. Check: `knob_hybrid_lookup_min` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_block`](#knob-draft_block) — **Default:** 5. **Meaning:** Set the device draft block capacity. Check: `knob_draft_block` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_positions`](#knob-draft_positions) — **Default:** Raw cap7; DSpark/hybrid with default block5 clips an omitted cap to5. An explicit cap above the allocated block refuses. **Meaning:** Bound proposals verified per round. Check: `knob_draft_positions` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--speculative_depth`](#knob-speculative_depth) — **Default:** Same destination as draft_positions: raw7, default DSpark clip5. Each spelling is unique, but supplying both distinct aliases is accepted on main and the later value wins. Prefer one spelling. **Meaning:** Alias of draft_positions. Check: `knob_speculative_depth` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--lookup_ngram_max`](#knob-lookup_ngram_max) — **Default:** 4. **Meaning:** Set the longest lookup suffix searched. Check: `knob_lookup_ngram_max` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--lookup_ngram_min`](#knob-lookup_ngram_min) — **Default:** 2. **Meaning:** Set the shortest lookup suffix searched. Check: `knob_lookup_ngram_min` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_calibration`](#knob-draft_calibration) — **Default:** none **Meaning:** Override draft acceptance priors in mode/position/bin order. Check: `knob_draft_calibration` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft`](#knob-draft) — **Default:** off **Meaning:** Select speculative proposal source by name. Check: `knob_draft` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_draft_shards`](#knob-tp_draft_shards) — **Default:** 0. **Meaning:** Shard draft head, Markov projection and sampler with the target head. Check: `knob_tp_draft_shards` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_draft_layers`](#knob-tp_draft_layers) — **Default:** 0. **Meaning:** Tensor-parallelize the draft model's three layers. Check: `knob_tp_draft_layers` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_draft_rows`](#knob-batch_draft_rows) — **Default:** 0. **Meaning:** Batch verifier draft rows into the BATCH program. Check: `knob_batch_draft_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_wide_head`](#knob-batch_wide_head) — **Default:** 0. **Meaning:** Use the wide target head for BATCH verification. Check: `knob_batch_wide_head` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_draft_slots_head`](#knob-batch_draft_slots_head) — **Default:** 0. **Meaning:** Run one verifier's draft head across eight slots at each position. Check: `knob_batch_draft_slots_head` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_bf16_rows`](#knob-draft_bf16_rows) — **Default:** 0. **Meaning:** Use BF16 rows for draft attention products. Check: `knob_draft_bf16_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_draft_wide`](#knob-batch_draft_wide) — **Default:** 3. **Meaning:** Widen draft work: one sums/posts, two products, three cores. Check: `knob_batch_draft_wide` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_bf16_operands`](#knob-draft_bf16_operands) — **Default:** 0. **Meaning:** Use BF16 operands for class-80 draft quantized products. Check: `knob_draft_bf16_operands` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_learned_acceptance`](#knob-draft_learned_acceptance) — **Default:** PP5/TP4_PRO and other original placements: 0; TP4_EXL3 THIN: 1. **Meaning:** Update the draft policy's shared confidence table from outcomes. Check: `knob_draft_learned_acceptance` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_session_acceptance`](#knob-draft_session_acceptance) — **Default:** 0. **Meaning:** Scale proposal acceptance by the current session's measured outcomes. Check: `knob_draft_session_acceptance` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--batch_plan_ties`](#knob-batch_plan_ties) — **Default:** 0. **Meaning:** Cut planned drafts only between unequal predicted reach. Check: `knob_batch_plan_ties` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_start_economic`](#knob-draft_start_economic) — **Default:** 1. **Meaning:** Start DSpark at policy depth instead of a single-proposal probe. Check: `knob_draft_start_economic` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--speculative`](#knob-speculative) — **Default:** PP5/TP4_PRO and other original placements: 0; TP4_EXL3 THIN: 2. **Meaning:** Choose off, n-gram lookup, checkpoint DSpark or hybrid proposals. Check: `knob_speculative` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_policy`](#knob-draft_policy) — **Default:** PP5/TP4_PRO: cost1. EXL3 single-slot THIN: fixed0; BATCH or multiple slots: rate2. **Meaning:** Choose fixed, cost, rate or adaptive proposal-depth selection. Check: `knob_draft_policy` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_threshold`](#knob-draft_threshold) — **Default:** 100. **Meaning:** Set the minimum draft confidence in thousandths. Check: `knob_draft_threshold` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_base_us`](#knob-draft_base_us) — **Default:** PP5/TP4_PRO and other original placements: 12700; TP4_EXL3 THIN: 14300. **Meaning:** Estimate the base verification-step cost in microseconds. Check: `knob_draft_base_us` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_tail_us`](#knob-draft_tail_us) — **Default:** PP5/TP4_PRO and other original placements: 2200; TP4_EXL3 THIN: 0. **Meaning:** Estimate fixed tail cost in microseconds. Check: `knob_draft_tail_us` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_row_us`](#knob-draft_row_us) — **Default:** PP5/TP4_PRO and other original placements: 2700; TP4_EXL3 THIN: 690. **Meaning:** Estimate each additional verification row's cost in microseconds. Check: `knob_draft_row_us` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_probe_rounds`](#knob-draft_probe_rounds) — **Default:** 8. **Meaning:** Probe full draft depth after this many policy rounds. Check: `knob_draft_probe_rounds` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--hybrid_lookup_prior`](#knob-hybrid_lookup_prior) — **Default:** 500. **Meaning:** Set lookup acceptance prior in thousandths. Check: `knob_hybrid_lookup_prior` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--hybrid_lookup_min`](#knob-hybrid_lookup_min) — **Default:** 3. **Meaning:** Use lookup in hybrid mode only from this n-gram length. Check: `knob_hybrid_lookup_min` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_block`](#knob-draft_block) — **Default:** 5. **Meaning:** Set the device draft block capacity. Check: `knob_draft_block` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_positions`](#knob-draft_positions) — **Default:** Raw cap7; DSpark/hybrid with default block5 clips an omitted cap to5. An explicit cap above the allocated block refuses. **Meaning:** Bound proposals verified per round. Check: `knob_draft_positions` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--speculative_depth`](#knob-speculative_depth) — **Default:** Same destination as draft_positions: raw7, default DSpark clip5. Each spelling is unique, but supplying both distinct aliases is accepted on main and the later value wins. Prefer one spelling. **Meaning:** Alias of draft_positions. Check: `knob_speculative_depth` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--lookup_ngram_max`](#knob-lookup_ngram_max) — **Default:** 4. **Meaning:** Set the longest lookup suffix searched. Check: `knob_lookup_ngram_max` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--lookup_ngram_min`](#knob-lookup_ngram_min) — **Default:** 2. **Meaning:** Set the shortest lookup suffix searched. Check: `knob_lookup_ngram_min` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_calibration`](#knob-draft_calibration) — **Default:** none **Meaning:** Override draft acceptance priors in mode/position/bin order. Check: `knob_draft_calibration` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft`](#knob-draft) — **Default:** off **Meaning:** Select speculative proposal source by name. Check: `knob_draft` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Attention, index and Engram
 
-- [`--tp_attention_owner`](#knob-tp_attention_owner) — **Default:** 0. **Meaning:** Keep experimental TP4 attention state on its owning rank. Check: `knob_tp_attention_owner` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_exact_dense`](#knob-tp_exact_dense) — **Default:** 1. **Meaning:** Use exact output-sharded attention dense products on the FP32 EXL3 recipe. Check: `knob_tp_exact_dense` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_gather_balance`](#knob-tp_gather_balance) — **Default:** 0. **Meaning:** Assign chunk index/router work to narrower expert ranks (four policies). Check: `knob_tp_gather_balance` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_pool_chunk`](#knob-tp_pool_chunk) — **Default:** 1. **Meaning:** Prepare pooled entries/keys before chunk-slab scans. Check: `knob_tp_pool_chunk` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_pool_gather`](#knob-tp_pool_gather) — **Default:** 1. **Meaning:** Partition pooled-source compressor rows over ranks and gather results. Check: `knob_tp_pool_gather` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_router_first_whole`](#knob-tp_router_first_whole) — **Default:** 0. **Meaning:** Compute first-half router rows on every rank without gathering. Check: `knob_tp_router_first_whole` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_queries_piece`](#knob-tp_queries_piece) — **Default:** 1. **Meaning:** Project wide-program queries by piece alongside wq_b. Check: `knob_tp_queries_piece` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_index_span`](#knob-tp_index_span) — **Default:** 1. **Meaning:** Scan/select a span of chunk index rows per launch. Check: `knob_tp_index_span` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_core_compact_halves`](#knob-tp_core_compact_halves) — **Default:** 1. **Meaning:** Write split-half core results into compact wo_a rows. Check: `knob_tp_core_compact_halves` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_chunk_core`](#knob-tp_chunk_core) — **Default:** 1. **Meaning:** Run a chunk's attention core over the whole chunk. Check: `knob_tp_chunk_core` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_core_heads`](#knob-tp_core_heads) — **Default:** 0. **Meaning:** Limit attention-core heads per block; zero uses the measured rule. Check: `knob_tp_core_heads` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--engram_shared`](#knob-engram_shared) — **Default:** 0. **Meaning:** Gather identical TP Engram inputs once into a shared pinned block. Check: `knob_engram_shared` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_attention_owner`](#knob-tp_attention_owner) — **Default:** 0. **Meaning:** Keep experimental TP4 attention state on its owning rank. Check: `knob_tp_attention_owner` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_exact_dense`](#knob-tp_exact_dense) — **Default:** 1. **Meaning:** Use exact output-sharded attention dense products on the FP32 EXL3 recipe. Check: `knob_tp_exact_dense` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_gather_balance`](#knob-tp_gather_balance) — **Default:** 0. **Meaning:** Assign chunk index/router work to narrower expert ranks (four policies). Check: `knob_tp_gather_balance` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_pool_chunk`](#knob-tp_pool_chunk) — **Default:** 1. **Meaning:** Prepare pooled entries/keys before chunk-slab scans. Check: `knob_tp_pool_chunk` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_pool_gather`](#knob-tp_pool_gather) — **Default:** 1. **Meaning:** Partition pooled-source compressor rows over ranks and gather results. Check: `knob_tp_pool_gather` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_router_first_whole`](#knob-tp_router_first_whole) — **Default:** 0. **Meaning:** Compute first-half router rows on every rank without gathering. Check: `knob_tp_router_first_whole` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_queries_piece`](#knob-tp_queries_piece) — **Default:** 1. **Meaning:** Project wide-program queries by piece alongside wq_b. Check: `knob_tp_queries_piece` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_index_span`](#knob-tp_index_span) — **Default:** 1. **Meaning:** Scan/select a span of chunk index rows per launch. Check: `knob_tp_index_span` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_core_compact_halves`](#knob-tp_core_compact_halves) — **Default:** 1. **Meaning:** Write split-half core results into compact wo_a rows. Check: `knob_tp_core_compact_halves` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_chunk_core`](#knob-tp_chunk_core) — **Default:** 1. **Meaning:** Run a chunk's attention core over the whole chunk. Check: `knob_tp_chunk_core` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_core_heads`](#knob-tp_core_heads) — **Default:** 0. **Meaning:** Limit attention-core heads per block; zero uses the measured rule. Check: `knob_tp_core_heads` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--engram_shared`](#knob-engram_shared) — **Default:** 0. **Meaning:** Gather identical TP Engram inputs once into a shared pinned block. Check: `knob_engram_shared` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### MoE and expert products
 
-- [`--exl3_expert_parts`](#knob-exl3_expert_parts) — **Default:** 4. **Meaning:** Choose four reference or eight alternate expert product parts. Check: `knob_exl3_expert_parts` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--exl3_fast_products`](#knob-exl3_fast_products) — **Default:** 1. **Meaning:** Use wide-kernel EXL3 products instead of the retained chain. Check: `knob_exl3_fast_products` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--exl3_wide_entry`](#knob-exl3_wide_entry) — **Default:** 1. **Meaning:** Run each chunk's EXL3 experts once over the full chunk. Check: `knob_exl3_wide_entry` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--exl3_tc_moe`](#knob-exl3_tc_moe) — **Default:** 0. **Meaning:** Use GNmac-style tensor-core EXL3 routed MoE products. Check: `knob_exl3_tc_moe` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--exl3_tc_product_blocks`](#knob-exl3_tc_product_blocks) — **Default:** 0. **Meaning:** Override the two EXL3 TC-MoE product grids in THIN/BATCH programs. Check: `knob_exl3_tc_product_blocks` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--exl3_expert_rotation`](#knob-exl3_expert_rotation) — **Default:** 0. **Meaning:** Rotate per-expert TC chunks across four ranks or three non-head ranks. Check: `knob_exl3_expert_rotation` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_router_mma`](#knob-tp_router_mma) — **Default:** 0. **Meaning:** Use split-K tensor-core BATCH router products (two alternate modes). Check: `knob_tp_router_mma` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--exl3_tcp_two_blocks`](#knob-exl3_tcp_two_blocks) — **Default:** 1. **Meaning:** Launch prefill TC MoE products at two blocks per multiprocessor. Check: `knob_exl3_tcp_two_blocks` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--exl3_expert_parts`](#knob-exl3_expert_parts) — **Default:** 4. **Meaning:** Choose four reference or eight alternate expert product parts. Check: `knob_exl3_expert_parts` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--exl3_fast_products`](#knob-exl3_fast_products) — **Default:** 1. **Meaning:** Use wide-kernel EXL3 products instead of the retained chain. Check: `knob_exl3_fast_products` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--exl3_wide_entry`](#knob-exl3_wide_entry) — **Default:** 1. **Meaning:** Run each chunk's EXL3 experts once over the full chunk. Check: `knob_exl3_wide_entry` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--exl3_tc_moe`](#knob-exl3_tc_moe) — **Default:** 0. **Meaning:** Use GNmac-style tensor-core EXL3 routed MoE products. Check: `knob_exl3_tc_moe` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--exl3_tc_product_blocks`](#knob-exl3_tc_product_blocks) — **Default:** 0. **Meaning:** Override the two EXL3 TC-MoE product grids in THIN/BATCH programs. Check: `knob_exl3_tc_product_blocks` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--exl3_expert_rotation`](#knob-exl3_expert_rotation) — **Default:** 0. **Meaning:** Rotate per-expert TC chunks across four ranks or three non-head ranks. Check: `knob_exl3_expert_rotation` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_router_mma`](#knob-tp_router_mma) — **Default:** 0. **Meaning:** Use split-K tensor-core BATCH router products (two alternate modes). Check: `knob_tp_router_mma` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--exl3_tcp_two_blocks`](#knob-exl3_tcp_two_blocks) — **Default:** 1. **Meaning:** Launch prefill TC MoE products at two blocks per multiprocessor. Check: `knob_exl3_tcp_two_blocks` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Tensor transport, graphs and overlap
 
-- [`--tp_parallel_launch`](#knob-tp_parallel_launch) — **Default:** 0. **Meaning:** Launch each TP card's graph groups from a separate host thread. Check: `knob_tp_parallel_launch` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_graph_parts`](#knob-tp_graph_parts) — **Default:** 1. **Meaning:** Partition each card's graph behind the prefill cone. Check: `knob_tp_graph_parts` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_ordered_wide`](#knob-tp_ordered_wide) — **Default:** 0. **Meaning:** Use ordered-wide attention trunk products for EXL3 prefill. Check: `knob_tp_ordered_wide` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_graph_branches`](#knob-tp_graph_branches) — **Default:** 1. **Meaning:** Branch shared-expert work beside routed experts; mode two includes BATCH. Check: `knob_tp_graph_branches` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_piece_rings`](#knob-tp_piece_rings) — **Default:** 0. **Meaning:** Exchange BF16 wide results over 64-row pieces instead of eight-row slabs. Check: `knob_tp_piece_rings` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_trunk_shape_slices`](#knob-tp_trunk_shape_slices) — **Default:** 1. **Meaning:** Use the measured slice count per THIN trunk shard shape; zero forces four. Check: `knob_tp_trunk_shape_slices` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_bf16_slab_rings`](#knob-tp_bf16_slab_rings) — **Default:** 0. **Meaning:** Use BF16 slab-ring attention sums instead of whole-row FP32 accumulation. Check: `knob_tp_bf16_slab_rings` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_wide_exchange`](#knob-tp_wide_exchange) — **Default:** 5. **Meaning:** Choose wide transport: push, slab rings, owner sums or copy-engine rings. Check: `knob_tp_wide_exchange` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_split_overlap`](#knob-tp_split_overlap) — **Default:** 7. **Meaning:** Overlap layer halves and wide exchange with a chosen split schedule. Check: `knob_tp_split_overlap` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_split_least_rows`](#knob-tp_split_least_rows) — **Default:** 0. **Meaning:** Run chunks below this row count whole instead of split. Check: `knob_tp_split_least_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_launch_trims`](#knob-tp_launch_trims) — **Default:** 1. **Meaning:** Remove redundant ring-input copies and wo_b quantization launches. Check: `knob_tp_launch_trims` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_full_split_overlap`](#knob-tp_full_split_overlap) — **Default:** 0. **Meaning:** Override full-program split overlap; zero inherits tp_split_overlap. Check: `knob_tp_full_split_overlap` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_replicated_embedding`](#knob-tp_replicated_embedding) — **Default:** 1. **Meaning:** Embed input rows on every rank instead of handing off rank zero. Check: `knob_tp_replicated_embedding` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_ring_column_owners`](#knob-tp_ring_column_owners) — **Default:** 1. **Meaning:** Assign BF16 ring ownership by column quarter for batch-independent addition order. Check: `knob_tp_ring_column_owners` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--step_graphs`](#knob-step_graphs) — **Default:** 0. **Meaning:** Capture/replay prepared CUDA step graphs instead of eager launches. Check: `knob_step_graphs` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--pipeline_steps`](#knob-pipeline_steps) — **Default:** Raw default1 on all placements. Qualifying original PP5 serve with session_slots>1, no BATCH and DSpark/speculative2 resolves omitted depth to5. Explicit depth is retained; the shipped original multiple-user decode axis explicitly selects8. Generate and single-slot raw defaults stay1. **Meaning:** Bound ordinary step pipeline depth. Check: `knob_pipeline_steps` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_parallel_launch`](#knob-tp_parallel_launch) — **Default:** 0. **Meaning:** Launch each TP card's graph groups from a separate host thread. Check: `knob_tp_parallel_launch` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_graph_parts`](#knob-tp_graph_parts) — **Default:** 1. **Meaning:** Partition each card's graph behind the prefill cone. Check: `knob_tp_graph_parts` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_ordered_wide`](#knob-tp_ordered_wide) — **Default:** 0. **Meaning:** Use ordered-wide attention trunk products for EXL3 prefill. Check: `knob_tp_ordered_wide` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_graph_branches`](#knob-tp_graph_branches) — **Default:** 1. **Meaning:** Branch shared-expert work beside routed experts; mode two includes BATCH. Check: `knob_tp_graph_branches` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_piece_rings`](#knob-tp_piece_rings) — **Default:** 0. **Meaning:** Exchange BF16 wide results over 64-row pieces instead of eight-row slabs. Check: `knob_tp_piece_rings` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_trunk_shape_slices`](#knob-tp_trunk_shape_slices) — **Default:** 1. **Meaning:** Use the measured slice count per THIN trunk shard shape; zero forces four. Check: `knob_tp_trunk_shape_slices` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_bf16_slab_rings`](#knob-tp_bf16_slab_rings) — **Default:** 0. **Meaning:** Use BF16 slab-ring attention sums instead of whole-row FP32 accumulation. Check: `knob_tp_bf16_slab_rings` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_wide_exchange`](#knob-tp_wide_exchange) — **Default:** 5. **Meaning:** Choose wide transport: push, slab rings, owner sums or copy-engine rings. Check: `knob_tp_wide_exchange` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_split_overlap`](#knob-tp_split_overlap) — **Default:** 7. **Meaning:** Overlap layer halves and wide exchange with a chosen split schedule. Check: `knob_tp_split_overlap` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_split_least_rows`](#knob-tp_split_least_rows) — **Default:** 0. **Meaning:** Run chunks below this row count whole instead of split. Check: `knob_tp_split_least_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_launch_trims`](#knob-tp_launch_trims) — **Default:** 1. **Meaning:** Remove redundant ring-input copies and wo_b quantization launches. Check: `knob_tp_launch_trims` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_full_split_overlap`](#knob-tp_full_split_overlap) — **Default:** 0. **Meaning:** Override full-program split overlap; zero inherits tp_split_overlap. Check: `knob_tp_full_split_overlap` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_replicated_embedding`](#knob-tp_replicated_embedding) — **Default:** 1. **Meaning:** Embed input rows on every rank instead of handing off rank zero. Check: `knob_tp_replicated_embedding` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_ring_column_owners`](#knob-tp_ring_column_owners) — **Default:** 1. **Meaning:** Assign BF16 ring ownership by column quarter for batch-independent addition order. Check: `knob_tp_ring_column_owners` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--step_graphs`](#knob-step_graphs) — **Default:** 0. **Meaning:** Capture/replay prepared CUDA step graphs instead of eager launches. Check: `knob_step_graphs` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--pipeline_steps`](#knob-pipeline_steps) — **Default:** Raw default1 on all placements. Qualifying original PP5 serve with session_slots>1, no BATCH and DSpark/speculative2 resolves omitted depth to5. Explicit depth is retained; the shipped original multiple-user decode axis explicitly selects8. Generate and single-slot raw defaults stay1. **Meaning:** Bound ordinary step pipeline depth. Check: `knob_pipeline_steps` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Precision, exactness, head and dense forms
 
-- [`--tp_head_shards`](#knob-tp_head_shards) — **Default:** 0. **Meaning:** Shard target head products and sampling over TP4_EXL3 ranks. Check: `knob_tp_head_shards` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_head_stream`](#knob-tp_head_stream) — **Default:** 0. **Meaning:** Use the dense-stream target head products. Check: `knob_tp_head_stream` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_head_mma`](#knob-tp_head_mma) — **Default:** 0. **Meaning:** Use tensor-core target-head products on the BF16 recipe. Check: `knob_tp_head_mma` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_trunk_mma`](#knob-tp_trunk_mma) — **Default:** 0. **Meaning:** Use tensor-core BF16-row trunk products on the BF16 recipe. Check: `knob_tp_trunk_mma` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_trunk_mma_fused`](#knob-tp_trunk_mma_fused) — **Default:** 0. **Meaning:** Sum trunk MMA split partials inside the 64-row kernel. Check: `knob_tp_trunk_mma_fused` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_trunk_mma_thin_splits`](#knob-tp_trunk_mma_thin_splits) — **Default:** 0. **Meaning:** Give 64-row trunk MMA products the THIN split geometry. Check: `knob_tp_trunk_mma_thin_splits` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--dense_skinny_bf16`](#knob-dense_skinny_bf16) — **Default:** 0. **Meaning:** Tile BF16 skinny dense outputs per block above 48 rows; zero retains wide form. Check: `knob_dense_skinny_bf16` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--dense_skinny_f32`](#knob-dense_skinny_f32) — **Default:** 0. **Meaning:** Tile FP32-weight skinny dense outputs per block above 48 rows. Check: `knob_dense_skinny_f32` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--dense_staged`](#knob-dense_staged) — **Default:** 16. **Meaning:** Stage wide dense-product inputs with a selectable output-block width. Check: `knob_dense_staged` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_front_branch`](#knob-tp_front_branch) — **Default:** 0. **Meaning:** Branch THIN attention mix coefficients; mode two also branches FFN coefficients. Check: `knob_tp_front_branch` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_decode_round_once`](#knob-tp_decode_round_once) — **Default:** 0. **Meaning:** Sum published BF16 target partials in ascending-rank FP32 and round the result once. Check: `knob_tp_decode_round_once` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_wire_bf16`](#knob-tp_wire_bf16) — **Default:** 0. **Meaning:** Round TP transport partials/sums to BF16; zero retains FP32 wire. Check: `knob_tp_wire_bf16` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--linear_profile`](#knob-linear_profile) — **Default:** 0. **Meaning:** Choose precision or speed linear-product preparation. Check: `knob_linear_profile` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--linear_order`](#knob-linear_order) — **Default:** 1. **Meaning:** Choose fixed (zero) or source reference (one) product accumulation order. Check: `knob_linear_order` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--official_hc_rows`](#knob-official_hc_rows) — **Default:** 0. **Meaning:** Select pinned HC arithmetic with an explicit reference call shape. Check: `knob_official_hc_rows` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--numerics`](#knob-numerics) — **Default:** exact **Meaning:** Choose admitted startup numerical policy. Check: `knob_numerics` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--placement`](#knob-placement) — **Default:** pp5 **Meaning:** Choose prepared weight/state placement. Check: `knob_placement` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--cmp_order`](#knob-cmp_order) — **Default:** reference **Meaning:** Choose CMP trunk/expert sum order. Check: `knob_cmp_order` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_head_shards`](#knob-tp_head_shards) — **Default:** 0. **Meaning:** Shard target head products and sampling over TP4_EXL3 ranks. Check: `knob_tp_head_shards` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_head_stream`](#knob-tp_head_stream) — **Default:** 0. **Meaning:** Use the dense-stream target head products. Check: `knob_tp_head_stream` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_head_mma`](#knob-tp_head_mma) — **Default:** 0. **Meaning:** Use tensor-core target-head products on the BF16 recipe. Check: `knob_tp_head_mma` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_trunk_mma`](#knob-tp_trunk_mma) — **Default:** 0. **Meaning:** Use tensor-core BF16-row trunk products on the BF16 recipe. Check: `knob_tp_trunk_mma` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_trunk_mma_fused`](#knob-tp_trunk_mma_fused) — **Default:** 0. **Meaning:** Sum trunk MMA split partials inside the 64-row kernel. Check: `knob_tp_trunk_mma_fused` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_trunk_mma_thin_splits`](#knob-tp_trunk_mma_thin_splits) — **Default:** 0. **Meaning:** Give 64-row trunk MMA products the THIN split geometry. Check: `knob_tp_trunk_mma_thin_splits` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--dense_skinny_bf16`](#knob-dense_skinny_bf16) — **Default:** 0. **Meaning:** Tile BF16 skinny dense outputs per block above 48 rows; zero retains wide form. Check: `knob_dense_skinny_bf16` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--dense_skinny_f32`](#knob-dense_skinny_f32) — **Default:** 0. **Meaning:** Tile FP32-weight skinny dense outputs per block above 48 rows. Check: `knob_dense_skinny_f32` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--dense_staged`](#knob-dense_staged) — **Default:** 16. **Meaning:** Stage wide dense-product inputs with a selectable output-block width. Check: `knob_dense_staged` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_front_branch`](#knob-tp_front_branch) — **Default:** 0. **Meaning:** Branch THIN attention mix coefficients; mode two also branches FFN coefficients. Check: `knob_tp_front_branch` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_decode_round_once`](#knob-tp_decode_round_once) — **Default:** 0. **Meaning:** Sum published BF16 target partials in ascending-rank FP32 and round the result once. Check: `knob_tp_decode_round_once` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_wire_bf16`](#knob-tp_wire_bf16) — **Default:** 0. **Meaning:** Round TP transport partials/sums to BF16; zero retains FP32 wire. Check: `knob_tp_wire_bf16` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--linear_profile`](#knob-linear_profile) — **Default:** 0. **Meaning:** Choose precision or speed linear-product preparation. Check: `knob_linear_profile` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--linear_order`](#knob-linear_order) — **Default:** 1. **Meaning:** Choose fixed (zero) or source reference (one) product accumulation order. Check: `knob_linear_order` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--official_hc_rows`](#knob-official_hc_rows) — **Default:** 0. **Meaning:** Select pinned HC arithmetic with an explicit reference call shape. Check: `knob_official_hc_rows` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--numerics`](#knob-numerics) — **Default:** exact **Meaning:** Choose admitted startup numerical policy. Check: `knob_numerics` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--placement`](#knob-placement) — **Default:** pp5 **Meaning:** Choose prepared weight/state placement. Check: `knob_placement` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--cmp_order`](#knob-cmp_order) — **Default:** reference **Meaning:** Choose CMP trunk/expert sum order. Check: `knob_cmp_order` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Cache, prefix reuse and snapshots
 
-- [`--prefix_reuse`](#knob-prefix_reuse) — **Default:** 1. **Meaning:** Reuse eligible cached prompt prefixes instead of prefilling cold. Check: `knob_prefix_reuse` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--prefix_reuse_exact`](#knob-prefix_reuse_exact) — **Default:** 0. **Meaning:** Admit same-length cold-provenance prompt prefixes through repeat or cold-plan boundaries. Check: `knob_prefix_reuse_exact` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--cache_scope`](#knob-cache_scope) — **Default:** 0. **Meaning:** Choose the namespace used for tokenizer, slot and snapshot reuse. Check: `knob_cache_scope` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--session_grace_seconds`](#knob-session_grace_seconds) — **Default:** 30. **Meaning:** Prefer retaining a recently finished namespace when choosing an idle slot. Check: `knob_session_grace_seconds` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--session_save_tokens`](#knob-session_save_tokens) — **Default:** 1024 when omitted; explicit CLI0 is refused (server API zero-initialization is a separate convention). **Meaning:** Require this many processed tokens absent from a snapshot before saving. Check: `knob_session_save_tokens` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--session_load_tokens`](#knob-session_load_tokens) — **Default:** 256 when omitted; explicit CLI0 is refused. **Meaning:** Require this much reusable-token gain before loading a snapshot. Check: `knob_session_load_tokens` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--session_idle_save_seconds`](#knob-session_idle_save_seconds) — **Default:** 120 when omitted; explicit CLI0 is refused. **Meaning:** Wait this long without work before starting an eligible idle snapshot save. Check: `knob_session_idle_save_seconds` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--session_directory`](#knob-session_directory) — **Default:** none **Meaning:** Persist eligible session snapshots in this directory (requires prefix_reuse=1). Check: `knob_session_directory` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--session_fork`](#knob-session_fork) — **Default:** 0. **Meaning:** Copy an eligible same-owner prefix into an independent child session slot. Check: `fork` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefix_reuse`](#knob-prefix_reuse) — **Default:** 1. **Meaning:** Reuse eligible cached prompt prefixes instead of prefilling cold. Check: `knob_prefix_reuse` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefix_reuse_exact`](#knob-prefix_reuse_exact) — **Default:** 0. **Meaning:** Admit same-length cold-provenance prompt prefixes through repeat or cold-plan boundaries. Check: `knob_prefix_reuse_exact` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--cache_scope`](#knob-cache_scope) — **Default:** 0. **Meaning:** Choose the namespace used for tokenizer, slot and snapshot reuse. Check: `knob_cache_scope` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--session_grace_seconds`](#knob-session_grace_seconds) — **Default:** 30. **Meaning:** Prefer retaining a recently finished namespace when choosing an idle slot. Check: `knob_session_grace_seconds` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--session_save_tokens`](#knob-session_save_tokens) — **Default:** 1024 when omitted; explicit CLI0 is refused (server API zero-initialization is a separate convention). **Meaning:** Require this many processed tokens absent from a snapshot before saving. Check: `knob_session_save_tokens` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--session_load_tokens`](#knob-session_load_tokens) — **Default:** 256 when omitted; explicit CLI0 is refused. **Meaning:** Require this much reusable-token gain before loading a snapshot. Check: `knob_session_load_tokens` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--session_idle_save_seconds`](#knob-session_idle_save_seconds) — **Default:** 120 when omitted; explicit CLI0 is refused. **Meaning:** Wait this long without work before starting an eligible idle snapshot save. Check: `knob_session_idle_save_seconds` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--session_directory`](#knob-session_directory) — **Default:** none **Meaning:** Persist eligible session snapshots in this directory (requires prefix_reuse=1). Check: `knob_session_directory` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--session_fork`](#knob-session_fork) — **Default:** 0. **Meaning:** Copy an eligible same-owner prefix into an independent child session slot. Check: `fork` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### HTTP server, authentication and queues
 
-- [`--queue_depth`](#knob-queue_depth) — **Default:** 16. **Meaning:** Bound all waiting server requests. Check: `knob_queue_depth` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--user_queue_depth`](#knob-user_queue_depth) — **Default:** Omitted: automatic max(1,queue_depth/2), represented internally by0. Explicit CLI0 is refused; accepted explicit values are1..queue_depth. **Meaning:** Bound waiting requests per API user. Check: `knob_user_queue_depth` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--port`](#knob-port) — **Default:** 8321. **Meaning:** Listen on this TCP port. Check: `knob_port` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--bind_address`](#knob-bind_address) — **Default:** 127.0.0.1 **Meaning:** Bind the server listener. Check: `knob_bind_address` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--key_file`](#knob-key_file) — **Default:** none **Meaning:** Read API-user authentication records at startup. Check: `knob_key_file` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--stats_users`](#knob-stats_users) — **Default:** all authenticated users; open stats when auth disabled **Meaning:** Authorize named users to access the statistics endpoint. Check: `knob_stats_users` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--model_alias`](#knob-model_alias) — **Default:** none **Meaning:** Add a request/listing model alias. Check: `knob_model_alias` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--queue_depth`](#knob-queue_depth) — **Default:** 16. **Meaning:** Bound all waiting server requests. Check: `knob_queue_depth` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--user_queue_depth`](#knob-user_queue_depth) — **Default:** Omitted: automatic max(1,queue_depth/2), represented internally by0. Explicit CLI0 is refused; accepted explicit values are1..queue_depth. **Meaning:** Bound waiting requests per API user. Check: `knob_user_queue_depth` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--port`](#knob-port) — **Default:** 8321. **Meaning:** Listen on this TCP port. Check: `knob_port` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--bind_address`](#knob-bind_address) — **Default:** 127.0.0.1 **Meaning:** Bind the server listener. Check: `knob_bind_address` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--key_file`](#knob-key_file) — **Default:** none **Meaning:** Read API-user authentication records at startup. Check: `knob_key_file` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--stats_users`](#knob-stats_users) — **Default:** all authenticated users; open stats when auth disabled **Meaning:** Authorize named users to access the statistics endpoint. Check: `knob_stats_users` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--model_alias`](#knob-model_alias) — **Default:** none **Meaning:** Add a request/listing model alias. Check: `knob_model_alias` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Sampling, output and template controls
 
-- [`--generated_tokens`](#knob-generated_tokens) — **Default:** Generate64; serve4294967295 (effective context still bounds it). **Meaning:** Cap generate output; supply the omitted-request output default in serve. Explicit request output limits replace this default within context capacity. Check: `knob_generated_tokens` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--seed`](#knob-seed) — **Default:** Generate0; serve draws a request seed when neither request nor server explicitly seeds. CLI value0 explicitly seeds, not random. **Meaning:** Set sampler seed; omitted serving requests draw a seed. Check: `knob_seed` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--reasoning_effort`](#knob-reasoning_effort) — **Default:** 0. **Meaning:** Set template reasoning effort from zero (off) through 100. Check: `knob_reasoning_effort` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--temperature`](#knob-temperature) — **Default:** 0 **Meaning:** Set sampling temperature; zero is greedy. Check: `knob_temperature` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--top_p`](#knob-top_p) — **Default:** 1 **Meaning:** Set nucleus probability cutoff. Check: `knob_top_p` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_usage`](#knob-draft_usage) — **Default:** compact **Meaning:** Choose draft statistics detail in responses. Check: `knob_draft_usage` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--generated_tokens`](#knob-generated_tokens) — **Default:** Generate64; serve4294967295 (effective context still bounds it). **Meaning:** Cap generate output; supply the omitted-request output default in serve. Explicit request output limits replace this default within context capacity. Check: `knob_generated_tokens` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--seed`](#knob-seed) — **Default:** Generate0; serve draws a request seed when neither request nor server explicitly seeds. CLI value0 explicitly seeds, not random. **Meaning:** Set sampler seed; omitted serving requests draw a seed. Check: `knob_seed` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--reasoning_effort`](#knob-reasoning_effort) — **Default:** 0. **Meaning:** Set template reasoning effort from zero (off) through 100. Check: `knob_reasoning_effort` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--temperature`](#knob-temperature) — **Default:** 0 **Meaning:** Set sampling temperature; zero is greedy. Check: `knob_temperature` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--top_p`](#knob-top_p) — **Default:** 1 **Meaning:** Set nucleus probability cutoff. Check: `knob_top_p` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_usage`](#knob-draft_usage) — **Default:** compact **Meaning:** Choose draft statistics detail in responses. Check: `knob_draft_usage` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Logging, profiling and diagnostic dumps
 
-- [`--live_stats`](#knob-live_stats) — **Default:** 0. **Meaning:** Print server counters at this interval in milliseconds; zero disables them. Check: `knob_live_stats` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--draft_trace`](#knob-draft_trace) — **Default:** 0. **Meaning:** Print per-round draft anchors and proposals for diagnostics. Check: `knob_draft_trace` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--dump_draft_ring`](#knob-dump_draft_ring) — **Default:** none **Meaning:** Shared parser accepts the path; serve performs no dump (generate-only effect). Check: `serve_flag_dump_draft_ring` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--live_stats_format`](#knob-live_stats_format) — **Default:** text **Meaning:** Choose live server statistics format. Check: `knob_live_stats_format` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--help-scheduling`](#knob-help-scheduling) — **Default:** not requested **Meaning:** Print scheduling examples and measured pause/TTFT tradeoffs without opening a model. Check: `scheduling` — tcb82 help printed; no model/backend opened. Receipt: examples.json.
+- [`--live_stats`](#knob-live_stats) — **Default:** 0. **Meaning:** Print server counters at this interval in milliseconds; zero disables them. Check: `knob_live_stats` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--draft_trace`](#knob-draft_trace) — **Default:** 0. **Meaning:** Print per-round draft anchors and proposals for diagnostics. Check: `knob_draft_trace` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--dump_draft_ring`](#knob-dump_draft_ring) — **Default:** none **Meaning:** Shared parser accepts the path; serve performs no dump (generate-only effect). Check: `serve_flag_dump_draft_ring` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--live_stats_format`](#knob-live_stats_format) — **Default:** text **Meaning:** Choose live server statistics format. Check: `knob_live_stats_format` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--help-scheduling`](#knob-help-scheduling) — **Default:** not requested **Meaning:** Print scheduling examples and measured pause/TTFT tradeoffs without opening a model. Check: `scheduling` — the 6 November 2026 build's help printed; no model/backend opened. Receipt: examples.json.
 ### Original weights and PRO arithmetic
 
-- [`--pro_emulation`](#knob-pro_emulation) — **Default:** 0. **Meaning:** Emulate class-80 sums on the PRO; zero uses class-120 native arithmetic. Check: `knob_pro_emulation` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_code_wire`](#knob-tp_code_wire) — **Default:** 0. **Meaning:** Transport original quantized codes/scales losslessly across TP ranks. Check: `knob_tp_code_wire` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--original_dense_staged`](#knob-original_dense_staged) — **Default:** 0. **Meaning:** Stage original TP4 BF16/FP32 dense products. Check: `knob_original_dense_staged` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--original_wide_experts`](#knob-original_wide_experts) — **Default:** 1 only for compatible exact TP4_PRO wide64..1024/reference/native-PRO/FP32-wire recipes with no TC-MoE, BATCH, code/owner path, EXL3 wide entry, split/full-split or original_chunk_core.0 elsewhere; explicit0 retains slabs. **Meaning:** Run original TP4 expert jobs over complete chunks with lossless slab gathers. Check: `knob_original_wide_experts` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--original_chunk_core`](#knob-original_chunk_core) — **Default:** 0. **Meaning:** Use original TP4 full-head attention core on whole eight-row slabs. Check: `knob_original_chunk_core` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--original_batch`](#knob-original_batch) — **Default:** 0. **Meaning:** Admit the fixed original TP4 BATCH48/eight-verifier/eight-slot pilot. Check: `knob_original_batch` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--tp_pipeline_overlap`](#knob-tp_pipeline_overlap) — **Default:** 0. **Meaning:** Run the CMP prefix and native PRO tail on disjoint workers. Check: `knob_tp_pipeline_overlap` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--pro_emulation`](#knob-pro_emulation) — **Default:** 0. **Meaning:** Emulate class-80 sums on the PRO; zero uses class-120 native arithmetic. Check: `knob_pro_emulation` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_code_wire`](#knob-tp_code_wire) — **Default:** 0. **Meaning:** Transport original quantized codes/scales losslessly across TP ranks. Check: `knob_tp_code_wire` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--original_dense_staged`](#knob-original_dense_staged) — **Default:** 0. **Meaning:** Stage original TP4 BF16/FP32 dense products. Check: `knob_original_dense_staged` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--original_wide_experts`](#knob-original_wide_experts) — **Default:** 1 only for compatible exact TP4_PRO wide64..1024/reference/native-PRO/FP32-wire recipes with no TC-MoE, BATCH, code/owner path, EXL3 wide entry, split/full-split or original_chunk_core.0 elsewhere; explicit0 retains slabs. **Meaning:** Run original TP4 expert jobs over complete chunks with lossless slab gathers. Check: `knob_original_wide_experts` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--original_chunk_core`](#knob-original_chunk_core) — **Default:** 0. **Meaning:** Use original TP4 full-head attention core on whole eight-row slabs. Check: `knob_original_chunk_core` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--original_batch`](#knob-original_batch) — **Default:** 0. **Meaning:** Admit the fixed original TP4 BATCH48/eight-verifier/eight-slot pilot. Check: `knob_original_batch` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--tp_pipeline_overlap`](#knob-tp_pipeline_overlap) — **Default:** 0. **Meaning:** Run the CMP prefix and native PRO tail on disjoint workers. Check: `knob_tp_pipeline_overlap` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 ### Axes and branch feature boundaries
 
-- [`--category`](#knob-category) — **Default:** unset; no axis default selected **Meaning:** Choose the workload objective; EXL3 balanced requires its scoped mixed-user benchmark; Original balanced/single/decode is qualified on the per-genre C1 decode wins of TP4_PRO at pipeline depth 2 with 1 serving slot. Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--exactness`](#knob-exactness) — **Default:** unset; no axis default selected **Meaning:** Choose reference arithmetic, current reproducible arithmetic, or qualified bounded-loss arithmetic. Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--concurrency`](#knob-concurrency) — **Default:** unset; no axis default selected **Meaning:** Choose a C1 recipe, a C2-C8 recipe, or a measured compromise. Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--focus`](#knob-focus) — **Default:** unset; no axis default selected **Meaning:** Choose the optimization objective within the selected numerical tier. Check: `axes_c1` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--category`](#knob-category) — **Default:** unset; no axis default selected **Meaning:** Choose the workload objective; EXL3 balanced requires its scoped mixed-user benchmark; Original balanced/single/decode is qualified on the per-genre C1 decode wins of TP4_PRO at pipeline depth 2 with 1 serving slot. Check: `axes_c1` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--exactness`](#knob-exactness) — **Default:** unset; no axis default selected **Meaning:** Choose reference arithmetic, current reproducible arithmetic, or qualified bounded-loss arithmetic. Check: `axes_c1` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--concurrency`](#knob-concurrency) — **Default:** unset; no axis default selected **Meaning:** Choose a C1 recipe, a C2-C8 recipe, or a measured compromise. Check: `axes_c1` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--focus`](#knob-focus) — **Default:** unset; no axis default selected **Meaning:** Choose the optimization objective within the selected numerical tier. Check: `axes_c1` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 Original exact is limited to the capacity-512 serial M1 recipe; EXL3 exact is the one-session exact-shaping set (not official-exact). Additional lossy fast, vision and full mixed-envelope holds still apply. Order3 is opt-in and refuses exact-prefix modes1/2, stable1 and fork1. Forking additionally needs authenticated hard-owner equality, stable1 donor provenance, independent slots and immutable cold-plan capability; stable0 follows the legacy cold fallback. Snapshot format remains v4; main has no v5 format-selection flag.
 
-### Additional main options in tcb82
+### Additional main options in the 6 November 2026 build
 
-- [`--prefill_prompt_chunks`](#knob-prefill_prompt_chunks) — **Default:** 0 on all placements. **Meaning:** Keep chunk-ready prompt owners out of decode BATCH; the measured first0/order0 guard trades code C8 aggregate −1.76% for the recorded mixed-output identity. Check: `knob_prefill_prompt_chunks` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--official_reference`](#knob-official_reference) — **Default:** 0 on raw placements; original exact inserts1. **Meaning:** Enable the bounded PP THIN serial M1 reference runtime, one session and capacity512; production T=1/top_p=1 is explicit, stochastic source ID identity is not claimed. Check: `knob_official_reference` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
-- [`--ignore_eos`](#knob-ignore_eos) — **Default:** 0 on all placements. **Meaning:** Continue after EOS in non-speculative THIN fixed-horizon checks; ordinary serving retains stopping. Check: `knob_ignore_eos` — accepted by the tcb82 resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--prefill_prompt_chunks`](#knob-prefill_prompt_chunks) — **Default:** 0 on all placements. **Meaning:** Keep chunk-ready prompt owners out of decode BATCH; the measured first0/order0 guard trades code C8 aggregate −1.76% for the recorded mixed-output identity. Check: `knob_prefill_prompt_chunks` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--official_reference`](#knob-official_reference) — **Default:** 0 on raw placements; original exact inserts1. **Meaning:** Enable the bounded PP THIN serial M1 reference runtime, one session and capacity512; production T=1/top_p=1 is explicit, stochastic source ID identity is not claimed. Check: `knob_official_reference` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
+- [`--ignore_eos`](#knob-ignore_eos) — **Default:** 0 on all placements. **Meaning:** Continue after EOS in non-speculative THIN fixed-horizon checks; ordinary serving retains stopping. Check: `knob_ignore_eos` — accepted by the 6 November 2026 build's resolver/parser; stopped before model/socket/backend I/O. Receipt: examples.json.
 
 `--prompt_token_ids` is generate-only and therefore does not appear as a serve flag.
 

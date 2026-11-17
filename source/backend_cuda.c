@@ -26,6 +26,7 @@
 
 #include <ctype.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -127,6 +128,92 @@ bool cuda_driver_succeeded(const char *function_name, CUresult result)
 	return false;
 }
 
+/* Whether the card lies after the other on the bus: the domain, then the bus, then the device. */
+static bool address_after(const struct backend_cuda_bus_place *card,
+			  const struct backend_cuda_bus_place *other)
+{
+	if (card->domain != other->domain)
+		return card->domain > other->domain;
+	return card->bus != other->bus ? card->bus > other->bus :
+					 card->device > other->device;
+}
+
+bool backend_cuda_bus_order(uint32_t count,
+			    struct backend_cuda_bus_place places[],
+			    char line[BACKEND_CUDA_ORDER_LINE_BYTES])
+{
+	bool moved = false;
+	/* a stable insertion sort */
+	for (uint32_t index = 1; index < count; index++) {
+		const struct backend_cuda_bus_place card = places[index];
+		uint32_t place = index;
+		for (; place > 0 && address_after(&places[place - 1], &card);
+		     place--)
+			places[place] = places[place - 1];
+		places[place] = card;
+		moved = moved || place != index;
+	}
+	char ordinals[BACKEND_CUDA_ORDER_LINE_BYTES] = "";
+	size_t used = 0;
+	for (uint32_t index = 0;
+	     moved && index < count && used < sizeof(ordinals); index++) {
+		const int written = snprintf(ordinals + used,
+					     sizeof(ordinals) - used, "%s%d",
+					     index == 0 ? "" : ",",
+					     places[index].ordinal);
+		used = written < 0 ? sizeof(ordinals) : used + (size_t)written;
+	}
+	const int length =
+		moved && used < sizeof(ordinals) ?
+			snprintf(
+				line, BACKEND_CUDA_ORDER_LINE_BYTES,
+				"cards: numbered by PCI address, not in the driver's order: cards 0 to %" PRIu32
+				" are its ordinals %s (--card_order orders the cards)\n",
+				count - 1u, ordinals) :
+			0;
+	if (length <= 0 || (size_t)length >= BACKEND_CUDA_ORDER_LINE_BYTES)
+		line[0] = '\0';
+	return moved;
+}
+
+/* Each visible card's PCI domain, bus and device, in the driver's order. The reads have their own fault point, so the
+ * card's other attribute reads keep their call numbers. */
+static bool
+cards_bus_places(int device_count,
+		 struct backend_cuda_bus_place places[BACKEND_MAXIMUM_CARDS])
+{
+	static const CUdevice_attribute fields[] = {
+		CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID,
+		CU_DEVICE_ATTRIBUTE_PCI_BUS_ID,
+		CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID
+	};
+	for (int ordinal = 0; ordinal < device_count; ordinal++) {
+		struct backend_cuda_bus_place *const place = &places[ordinal];
+		uint32_t *const values[] = { &place->domain, &place->bus,
+					     &place->device };
+		CUdevice device = 0;
+		bool read = DRIVER_CALL(cuDeviceGet, &device, ordinal);
+		for (size_t field = 0;
+		     read && field < sizeof(fields) / sizeof(fields[0]);
+		     field++) {
+			int value = 0;
+			read = cuda_driver_succeeded(
+				       "cuDeviceGetAttribute",
+				       FAULT_POINT(backend_cuda_pci_address) ?
+					       CUDA_ERROR_UNKNOWN :
+					       cuDeviceGetAttribute(
+						       &value, fields[field],
+						       device)) &&
+			       value >= 0;
+			*values[field] = read ? (uint32_t)value : 0u;
+		}
+		if (!read)
+			return false;
+		place->ordinal = ordinal;
+	}
+	return true;
+}
+
 /* Run once: describes every card, whose record is all zero, and retains its context; backend_status says how. */
 static void backend_initialise(void)
 {
@@ -147,6 +234,15 @@ static void backend_initialise(void)
 		backend_status = STATUS_UNSUPPORTED;
 		return;
 	}
+	struct backend_cuda_bus_place places[BACKEND_MAXIMUM_CARDS] = { 0 };
+	if (!cards_bus_places(device_count, places)) {
+		LOG_ERROR("the cards' PCI addresses cannot be read");
+		return;
+	}
+	/* a product output, as the other startup lines: release prints it too */
+	char order_line[BACKEND_CUDA_ORDER_LINE_BYTES];
+	if (backend_cuda_bus_order((uint32_t)device_count, places, order_line))
+		(void)fputs(order_line, stderr);
 	for (int device_index = 0; device_index < device_count;
 	     device_index++) {
 		struct device_card *const card = &cards[device_index];
@@ -161,7 +257,8 @@ static void backend_initialise(void)
 		int multiprocessors = 0;
 		/* The driver is not offered the last byte of a text;
 		 * bytes after its terminator are zeroed below. */
-		if (!DRIVER_CALL(cuDeviceGet, &device, device_index) ||
+		if (!DRIVER_CALL(cuDeviceGet, &device,
+				 places[device_index].ordinal) ||
 		    !DRIVER_CALL(cuDeviceGetName, description->name,
 				 CARD_NAME_CAPACITY - 1, device) ||
 		    !DRIVER_CALL(cuDeviceGetPCIBusId, bus_address,

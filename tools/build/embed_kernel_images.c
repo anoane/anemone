@@ -107,8 +107,8 @@ int main(int argument_count, char **arguments)
 		free(partial_path);
 		return 1;
 	}
-	int status = 0;
-	fputs("/* SPDX-License-Identifier: AGPL-3.0-or-later */\n"
+	int status = 0; /* REUSE-IgnoreStart: a generated tag */
+	fputs("/* SPDX-License-Identifier: AGPL-3.0-or-later */\n" /* REUSE-IgnoreEnd: the output's, not this file's */
 	      "/* Written by tools/build/embed_kernel_images.c: a build product, never edited. */\n"
 	      "#include \"backend_cuda_kernel_images.h\"\n\n",
 	      output);

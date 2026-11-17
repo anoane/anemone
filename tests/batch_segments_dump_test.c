@@ -27,73 +27,11 @@
 #define DUMP_LAUNCHES_SHOWN 40u /* the launches shown from a card's last sampler on */
 #define DUMP_GRID_Z 2 /* a launch grid's third dimension */
 
-int main(void)
+/* The two BATCH programs' segments side by side, the driver over both, and each card's launches from its last sampler
+ * on. */
+static void programs_dump(struct execution_program *programs[DUMP_PROGRAMS],
+			  struct device_card *cards[DUMP_CARDS])
 {
-	struct pack_record *pack = NULL;
-	const struct test_model_v41_change change = { .kind = TEST_MODEL_V41_CHANGE_EXL3 };
-	if (test_model_v41_draft_pack_open(change, &pack) != STATUS_OK) {
-		printf("batch_segments_dump_test: the fixture did not open\n");
-		return 0;
-	}
-	struct v41_tp2_model_description description = {
-		.limits = { MODEL_CONTEXT_WITHOUT_CANDIDATES,
-			    MODEL_WIDE_LEAST_ROWS, DUMP_SESSIONS,
-			    STATE_WIDTH_16, LINEAR_PROFILE_PRECISION,
-			    LINEAR_ORDER_FIXED, CMP_ORDER_REFERENCE,
-			    MODEL_DRAFT_BLOCK, 0, 0 },
-		.tensor_layout = V41_DATA_TP_LAYOUT_QUAD_ALL,
-		.wire_format = ORDERED_PUSH_BF16,
-		.head_shards = true,
-		.draft_shards = true,
-		.draft_layers = true,
-		.exl3_fast_products = true,
-		.exl3_wide_entry = true,
-		.replicated_embedding = true,
-		.batch = true,
-		.batch_wide_head = true,
-		.batch_draft_rows = true,
-		.exl3_tc_moe = true,
-		.trunk_mma = true,
-		.head_mma = true,
-		.wide_exchange = 1u
-	};
-	struct device_card *cards[DUMP_CARDS] = { 0 };
-	struct card_description_record reported[DUMP_CARDS] = { 0 };
-	test_host_memory_backend_reset(DUMP_CARDS, DUMP_CARD_BYTES);
-	for (uint32_t card = 0; card < DUMP_CARDS; card++) {
-		reported[card].arithmetic_class = ARITHMETIC_CLASS_SM_80;
-		reported[card].memory_total_bytes = reported[card].memory_free_bytes = DUMP_REPORTED_BYTES;
-		description.cards[card] = reported[card];
-		test_host_memory_backend_set_arithmetic_class(
-			card, ARITHMETIC_CLASS_SM_80);
-		if (test_host_memory_backend.card_open(
-			    card, DUMP_CARD_BYTES, &cards[card]) != STATUS_OK)
-			printf("batch_segments_dump_test: card %" PRIu32 " did not open\n", card);
-	}
-	struct v41_tp2_model *model = NULL;
-	struct v41_tp2_program_description build = { 0 };
-	if (v41_tp2_model_create(pack, &description, &model) != STATUS_OK ||
-	    v41_tp2_model_program_description(model, &build) != STATUS_OK) {
-		printf("batch_segments_dump_test: the model did not prepare\n");
-		return 0;
-	}
-	const uint32_t rows[DUMP_PROGRAMS] = { DUMP_BATCH_ROWS, LINEAR_MAXIMUM_ROWS };
-	struct execution_program *programs[DUMP_PROGRAMS] = { 0 };
-	for (uint32_t index = 0; index < DUMP_PROGRAMS; index++) {
-		struct step_companion_program companions = { 0 };
-		const result_status prepared = v41_tp_program_prepare(
-			&build, &test_host_memory_backend, cards, reported,
-			PROGRAM_BATCH, rows[index], &programs[index],
-			&companions);
-		if (prepared != STATUS_OK || programs[index] == NULL) {
-			printf("BATCH %" PRIu32 " rows: did not prepare (%s)\n",
-			       rows[index], status_text(prepared));
-			return 0;
-		}
-		const struct execution_program *const program = programs[index];
-		printf("BATCH %" PRIu32 " rows: %" PRIu32 " segments, front %" PRIu32 ", draft from %" PRIu32 "\n",
-		       rows[index], program->segment_count, program->front_segment_count, program->draft_segment_first);
-	}
 	const uint32_t most = programs[0]->segment_count > programs[1]->segment_count ? programs[0]->segment_count :
 											  programs[1]->segment_count;
 	for (uint32_t index = 0; index < most; index++) {
@@ -156,6 +94,88 @@ int main(void)
 		}
 	}
 	step_driver_destroy(driver);
+}
+
+int main(void)
+{
+	struct pack_record *pack = NULL;
+	const struct test_model_v41_change change = {
+		.kind = TEST_MODEL_V41_CHANGE_EXL3
+	};
+	if (test_model_v41_draft_pack_open(change, &pack) != STATUS_OK) {
+		printf("batch_segments_dump_test: the fixture did not open\n");
+		return 0;
+	}
+	struct v41_tp2_model_description description = {
+		.limits = { MODEL_CONTEXT_WITHOUT_CANDIDATES,
+			    MODEL_WIDE_LEAST_ROWS, DUMP_SESSIONS,
+			    STATE_WIDTH_16, LINEAR_PROFILE_PRECISION,
+			    LINEAR_ORDER_FIXED, CMP_ORDER_REFERENCE,
+			    MODEL_DRAFT_BLOCK, 0, 0 },
+		.tensor_layout = V41_DATA_TP_LAYOUT_QUAD_ALL,
+		.wire_format = ORDERED_PUSH_BF16,
+		.head_shards = true,
+		.draft_shards = true,
+		.draft_layers = true,
+		.exl3_fast_products = true,
+		.exl3_wide_entry = true,
+		.replicated_embedding = true,
+		.batch = true,
+		.batch_wide_head = true,
+		.batch_draft_rows = true,
+		.exl3_tc_moe = true,
+		.trunk_mma = true,
+		.head_mma = true,
+		.wide_exchange = 1u
+	};
+	struct device_card *cards[DUMP_CARDS] = { 0 };
+	struct card_description_record reported[DUMP_CARDS] = { 0 };
+	test_host_memory_backend_reset(DUMP_CARDS, DUMP_CARD_BYTES);
+	for (uint32_t card = 0; card < DUMP_CARDS; card++) {
+		reported[card].arithmetic_class = ARITHMETIC_CLASS_SM_80;
+		reported[card].memory_total_bytes =
+			reported[card].memory_free_bytes = DUMP_REPORTED_BYTES;
+		description.cards[card] = reported[card];
+		test_host_memory_backend_set_arithmetic_class(
+			card, ARITHMETIC_CLASS_SM_80);
+		if (test_host_memory_backend.card_open(
+			    card, DUMP_CARD_BYTES, &cards[card]) != STATUS_OK)
+			printf("batch_segments_dump_test: card %" PRIu32
+			       " did not open\n",
+			       card);
+	}
+	struct v41_tp2_model *model = NULL;
+	struct v41_tp2_program_description build = { 0 };
+	/* a failure (a machine without the kernels' builds) still frees what is held below; the dump stays exit 0 */
+	bool prepared =
+		v41_tp2_model_create(pack, &description, &model) == STATUS_OK &&
+		v41_tp2_model_program_description(model, &build) == STATUS_OK;
+	if (!prepared)
+		printf("batch_segments_dump_test: the model did not prepare\n");
+	const uint32_t rows[DUMP_PROGRAMS] = { DUMP_BATCH_ROWS,
+					       LINEAR_MAXIMUM_ROWS };
+	struct execution_program *programs[DUMP_PROGRAMS] = { 0 };
+	for (uint32_t index = 0; prepared && index < DUMP_PROGRAMS; index++) {
+		struct step_companion_program companions = { 0 };
+		const result_status status = v41_tp_program_prepare(
+			&build, &test_host_memory_backend, cards, reported,
+			PROGRAM_BATCH, rows[index], &programs[index],
+			&companions);
+		prepared = status == STATUS_OK && programs[index] != NULL;
+		if (!prepared) {
+			printf("BATCH %" PRIu32 " rows: did not prepare (%s)\n",
+			       rows[index], status_text(status));
+			continue;
+		}
+		const struct execution_program *const program = programs[index];
+		printf("BATCH %" PRIu32 " rows: %" PRIu32
+		       " segments, front %" PRIu32 ", draft from %" PRIu32 "\n",
+		       rows[index], program->segment_count,
+		       program->front_segment_count,
+		       program->draft_segment_first);
+	}
+	if (prepared)
+		programs_dump(programs, cards);
 	for (uint32_t index = 0; index < DUMP_PROGRAMS; index++)
 		free(programs[index]);
 	v41_tp2_model_destroy(model);
@@ -163,6 +183,7 @@ int main(void)
 	for (uint32_t card = 0; card < DUMP_CARDS; card++)
 		if (cards[card] != NULL)
 			test_host_memory_backend.card_close(cards[card], DUMP_WAIT_NS);
-	printf("batch_segments_dump_test passed\n");
+	if (prepared)
+		printf("batch_segments_dump_test passed\n");
 	return 0;
 }

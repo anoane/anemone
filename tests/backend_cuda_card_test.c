@@ -237,7 +237,48 @@ static void test_machine_without_cards(void)
 	       "the refusals of a machine without cards leave their outputs untouched");
 }
 
+/* Whether the backend numbers the cards in their PCI addresses' order: each card's bus address after the one before. */
+static bool described_in_bus_order(uint32_t card_count)
+{
+	struct card_description_record earlier, later;
+	bool ordered = true;
+	for (uint32_t card_index = 1; ordered && card_index < card_count;
+	     card_index++)
+		ordered = backend->card_describe(card_index - 1u, &earlier) ==
+				  STATUS_OK &&
+			  backend->card_describe(card_index, &later) ==
+				  STATUS_OK &&
+			  strcmp(earlier.bus_address, later.bus_address) < 0;
+	return ordered;
+}
+
+/* The driver told to number the fastest card first, before it is initialised: the backend still numbers the cards in
+ * the bus's order. */
+static void test_bus_order_fastest_first(void)
+{
+	uint32_t card_count = UNTOUCHED_COUNT;
+	expect(setenv("CUDA_DEVICE_ORDER", "FASTEST_FIRST", 1) == 0,
+	       "the driver is told to number the fastest card first");
+	expect_status(backend->card_count(&card_count), STATUS_OK,
+		      "the cards are counted");
+	expect(described_in_bus_order(card_count),
+	       "the cards are numbered in their PCI addresses' order whatever CUDA_DEVICE_ORDER says");
+}
+
 #if CHECKING_HOOKS_ENABLED
+
+/* A card whose PCI address cannot be read: the cards cannot be put in the bus's order, so none is counted. */
+static void test_bus_order_unread(void)
+{
+	uint32_t card_count = UNTOUCHED_COUNT;
+	expect(fault_arm("backend_cuda_pci_address", 1),
+	       "the fault of a card's PCI address is armed");
+	expect_status(
+		backend->card_count(&card_count), STATUS_DEVICE_ERROR,
+		"a card whose PCI address cannot be read is a device error");
+	expect(fault_disarm() == 1 && card_count == UNTOUCHED_COUNT,
+	       "the initialisation stopped at the first address");
+}
 
 /* A driver that fails while it is initialised: every function answers a device error, and it is not tried again. */
 static void test_failed_initialisation(void)
@@ -1123,7 +1164,12 @@ int main(void)
     run_in_child(test_machine_without_cards, "a machine without cards is answered as backend_seam.h says");
 #if CHECKING_HOOKS_ENABLED
     run_in_child(test_failed_initialisation, "a driver that fails while it is initialised is answered as one");
+    run_in_child(test_bus_order_unread,
+		 "a card without a PCI address fails the initialisation");
 #endif
+    run_in_child(
+	    test_bus_order_fastest_first,
+	    "the cards keep the bus's order under CUDA_DEVICE_ORDER=FASTEST_FIRST");
     expect_status(backend->card_count(&card_count), STATUS_OK,
 		  "the cards are counted");
     expect(card_count > 0 && card_count <= BACKEND_MAXIMUM_CARDS,
@@ -1131,6 +1177,8 @@ int main(void)
     if (card_count == 0 || card_count > BACKEND_MAXIMUM_CARDS) {
 	    return EXIT_FAILURE; /* nothing to test on: what the children found is on the lines above */
     }
+    expect(described_in_bus_order(card_count),
+	   "the cards are numbered in their PCI addresses' order");
     test_refusals_without_a_card(card_count);
     test_staging_blocks();
     test_staging_from_threads();

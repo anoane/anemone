@@ -80,6 +80,18 @@ static bool explicit_key(const char *option, int count, char *const *values)
 	return false;
 }
 
+/* BATCH runs one pipeline step, and the parser refuses it at any other: an inserted --pipeline_steps of another depth
+ * (a split base's) yields to the user's --batch_rows, as an explicit knob wins. The setting ends at its newline. */
+static bool yields_to_batch(const char *setting, int count, char *const *values)
+{
+	static const char depth[] = "--pipeline_steps=";
+	if (strncmp(setting, depth, strlen(depth)) != 0)
+		return false;
+	const char *const value = setting + strlen(depth);
+	return !(value[0] == '1' && (value[1] == '\0' || value[1] == '\n')) &&
+	       explicit_key("--batch_rows=", count, values);
+}
+
 /* A clamp line's next field, and a field's bytes (fields end at a space or
  * at the end of the line). */
 static const char *clamp_field(const char *field)
@@ -352,13 +364,22 @@ static void sources_log(const struct axis_arguments_record *arguments,
 							serving, option);
 					struct bound_outcome bound;
 					if (inserted != NULL &&
-					    bound_setting(
-						    arguments->choice, serving,
+					    yields_to_batch(
 						    inserted,
 						    arguments->explicit_count,
-						    arguments->explicit_values,
-						    &bound) &&
-					    bound.bound != NULL)
+						    arguments->explicit_values))
+						(void)fputs(
+							" (yields to the user's --batch_rows: "
+							"BATCH runs one pipeline step)",
+							stream);
+					else if (inserted != NULL &&
+						 bound_setting(
+							 arguments->choice,
+							 serving, inserted,
+							 arguments->explicit_count,
+							 arguments->explicit_values,
+							 &bound) &&
+						 bound.bound != NULL)
 						bound_log(&bound, stream);
 					printed = true;
 				}
@@ -581,8 +602,9 @@ bool axis_expand(int count, char **values, struct axis_arguments_record *result)
 	if (off_index != 0)
 		return axes_off_expand(count, values, off_index, result);
 	/* Stage 3: without an axis flag, generate and serve take the split's
-	 * all-balanced row (its base); other commands insert nothing. */
+	 * all-balanced row (its base), capture as generate; other commands insert nothing. */
 	if (count < AXIS_OPTION_START || (strcmp(values[1], "generate") != 0 &&
+					  strcmp(values[1], "capture") != 0 &&
 					  strcmp(values[1], "serve") != 0))
 		return result->selected_count == 0;
 	/* The table is keyed on (split, weight family): an explicit --placement names the split, --weights alone its
@@ -712,7 +734,8 @@ bool axis_expand(int count, char **values, struct axis_arguments_record *result)
 							AXIS_BOUND_WORD_BYTES),
 				       bound.word, strlen(bound.word) + 1u);
 		}
-		if (!explicit_key(setting, count, values)) {
+		if (!explicit_key(setting, count, values) &&
+		    !yields_to_batch(setting, count, values)) {
 			expanded[expanded_count++] = setting;
 			result->inserted_count++;
 		}

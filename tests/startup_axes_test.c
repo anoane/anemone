@@ -5,7 +5,9 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include <linux/magic.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
 #include <sys/wait.h>
 #include "anemone/head_offload_records.h"
 #include "step_driver.h"
@@ -2698,7 +2700,7 @@ static bool engram_parser_cases(void)
 }
 
 #define TEST_READERS_DEFAULT \
-	4u /* the PP loader's readers a copy since R24 (15 Nov 2026) */
+	4u /* the PP loader's readers a copy since the real PP5 serve loads of 15 Nov 2026 */
 #define TEST_READERS_EARLIER \
 	2u /* the default before it, which the knob still reaches */
 /* The PP loader's readers a copy as the parser leaves them, for generate and serve: the default without the knob,
@@ -2974,7 +2976,9 @@ static const void *pack_bytes_header(const unsigned char *bytes)
 	return bytes;
 }
 
-/* In a child: the test pack in three files, opened as commands.c opens a disk store, with its engram attached. */
+/* In a child: the test pack in three files, opened as commands.c opens a disk store, with its engram attached. The
+ * files are in a folder of their own under TMPDIR, else /var/tmp (a disk where /tmp is a tmpfs, as on Debian),
+ * whatever the working directory is; the step I/O does not start on a tmpfs, so a store there is refused by name. */
 static bool engram_store_open(char paths[TEST_STEP_COPIES][TEST_PATH_BYTES],
 			      char *directory, size_t directory_bytes)
 {
@@ -2985,9 +2989,24 @@ static bool engram_store_open(char paths[TEST_STEP_COPIES][TEST_PATH_BYTES],
 	const uint64_t pack_bytes =
 		((const struct pack_header *)pack_bytes_header(bytes))
 			->file_byte_count;
-	(void)snprintf(directory, directory_bytes,
-		       "build/startup_axes_engram.%ld", (long)getpid());
-	bool written = mkdir(directory, S_IRWXU) == 0;
+	const char *const temporary = getenv("TMPDIR");
+	const int length = snprintf(directory, directory_bytes,
+				    "%s/anemone-startup-axes-XXXXXX",
+				    temporary != NULL ? temporary : "/var/tmp");
+	struct statfs file_system;
+	const bool made = length > 0 && (size_t)length < directory_bytes &&
+			  mkdtemp(directory) != NULL;
+	if (!made)
+		directory[0] = '\0'; /* no folder of its own: none to remove */
+	bool written = made && statfs(directory, &file_system) == 0;
+	if (written && file_system.f_type == TMPFS_MAGIC) {
+		(void)fprintf(
+			stderr,
+			"startup_axes_test: the Engram store %s is on a tmpfs, where the step I/O does not start: set "
+			"TMPDIR to a folder on a disk\n",
+			directory);
+		written = false;
+	}
 	const char *names[TEST_STEP_COPIES];
 	for (uint32_t copy = 0; written && copy < TEST_STEP_COPIES; copy++) {
 		(void)snprintf(paths[copy], TEST_PATH_BYTES,
@@ -3001,6 +3020,8 @@ static bool engram_store_open(char paths[TEST_STEP_COPIES][TEST_PATH_BYTES],
 				  (ssize_t)pack_bytes;
 		if (descriptor >= 0)
 			(void)close(descriptor);
+		else
+			paths[copy][0] = '\0'; /* not made: not removed */
 	}
 	engram_close(memory_engram);
 	free(bytes);
@@ -3032,8 +3053,9 @@ static bool engram_steps_start_cases(void)
 {
 	const pid_t child = fork();
 	if (child == 0) {
-		char paths[TEST_STEP_COPIES][TEST_PATH_BYTES],
-			directory[TEST_DIRECTORY_BYTES];
+		/* empty until made: the cleanup below removes only what was made */
+		char paths[TEST_STEP_COPIES][TEST_PATH_BYTES] = { { 0 } },
+		     directory[TEST_DIRECTORY_BYTES] = { 0 };
 		bool passed =
 			engram_store_open(paths, directory, sizeof(directory));
 		engram_io_threads = 1;
@@ -3070,8 +3092,10 @@ static bool engram_steps_start_cases(void)
 		pack_close(pack);
 		storage_direct.reader_close(reader);
 		for (uint32_t copy = 0; copy < TEST_STEP_COPIES; copy++)
-			(void)unlink(paths[copy]);
-		(void)rmdir(directory);
+			if (paths[copy][0] != '\0')
+				(void)unlink(paths[copy]);
+		if (directory[0] != '\0')
+			(void)rmdir(directory);
 		_exit(passed ? 0 : 1);
 	}
 	int status = 0;

@@ -12,8 +12,10 @@
  *     the calls of one card. Calls for different cards run concurrently. The three calls that wait for a card's
  *     work (upload_wait, digest, card_close) take a limit; no other call waits for an upload or a kernel.
  *   - card_count fails with STATUS_UNSUPPORTED above BACKEND_MAXIMUM_CARDS and answers 0 on a
- *     machine without cards. card_index is the order of enumeration in this process and may change between
- *     boots: a saved plan names a card by its bus_address. An index at or above the count is
+ *     machine without cards. card_index is the order of enumeration in this process (the CUDA backend's: PCI
+ *     address order, domain, bus and device, whatever CUDA_DEVICE_ORDER or the order of a CUDA_VISIBLE_DEVICES
+ *     list says: backend_cuda_bus_order) and may change between boots: a saved plan names a card by its
+ *     bus_address. An index at or above the count is
  *     STATUS_INVALID_ARGUMENT. card_describe needs no open card and writes every byte of the
  *     description: the two strings are NUL-terminated and zero-filled to their capacity.
  *   - A card is opened once (opening an open card is STATUS_INVALID_ARGUMENT) with one arena of a size
@@ -306,6 +308,20 @@ struct backend_operations {
 };
 
 extern const struct backend_operations backend_cuda_value;
+/* A visible card as the CUDA driver enumerates it: its PCI address (domain, bus, device) and the driver's ordinal. */
+struct backend_cuda_bus_place {
+	uint32_t domain, bus, device;
+	int ordinal;
+};
+#define BACKEND_CUDA_ORDER_LINE_BYTES \
+	256u /* the startup line of backend_cuda_bus_order: BACKEND_MAXIMUM_CARDS ordinals and its words */
+/* backend_cuda_value's numbering of the visible cards, pure so that a host test checks it: places, in the driver's
+ * order, are sorted into PCI address order (the domain, then the bus, then the device; cards of one address keep the
+ * driver's order), whatever CUDA_DEVICE_ORDER or the order of a CUDA_VISIBLE_DEVICES list says. True when that moved
+ * a card: line then holds the startup line that says so (the driver's ordinals in the cards' order), else it is "". */
+bool backend_cuda_bus_order(uint32_t count,
+			    struct backend_cuda_bus_place places[],
+			    char line[BACKEND_CUDA_ORDER_LINE_BYTES]);
 /* backend_cuda_value's memory_reserved_bytes on every card: the modules, the driver's own growth */
 #define BACKEND_CUDA_MEMORY_RESERVED_BYTES (256ull << 20u)
 

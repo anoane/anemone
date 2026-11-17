@@ -1,8 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Build Anemone from source
 
-Anemone builds on Linux x86-64. The recorded toolchain is CUDA 13.5 V13.5.37,
-GCC 14.2.0 and GNU Make 4.4.1. Install the CUDA toolkit, CUDA driver development
+Anemone builds on Linux x86-64. The recorded toolchain is CUDA 13.5 V13.5.37, GCC 14.2.0 and GNU Make 4.4.1. Install the CUDA toolkit, CUDA driver development
 library (`libcuda`), a C/C++ compiler, binutils and Make through the target
 system's normal setup. The reference host is AMD Zen 4; `HOST_ARCHITECTURE` in
 [Makefile](Makefile) selects that host target. See [README](README.md#target-hardware)
@@ -19,23 +18,26 @@ env -i PATH=/usr/local/cuda/bin:/usr/bin:/bin make -j32 header_check
 sha256sum build/release/anemone
 ```
 
-The release executable is `build/release/anemone`. The v0.0.3-alpha reference
-executable SHA256 (source `f57d81375a8830db16925e42740aae1fe0773e90`) with the
+The release executable is `build/release/anemone`. The v0.0.4-alpha reference
+executable SHA256 (source `6ecf1bb3e8b5e2abc57d8de3a90d9d6b064f8584`) with the
 recorded toolchain and flags is:
 
 ```text
-2afdfc7138b74baa94f9bfe9f426d188e6af1be8e6729230e6c4f21f070d317b
+15abb30da13582cd5a9b004014654b02b2da4d508001d049a932667f55458e49
 ```
 
 Compilation and native host/header checks need no weights or GPU context.
 Release compilation uses native C/CUDA helpers and pinned inputs, with no Python,
 Git checkout, package download or code-generation overlay prerequisite. It
 compiles 119 CUDA modules for the selected class-80/class-120 targets; host tests
-run 157 programs excluding `_card_test`, and header checks cover 675 compilations.
-`make host_tests` needs a `HOME`: under `env -i` without one, a case of
-`replica_prepare_test` fails, so the command above gives it an empty folder.
-The `v0.0.3-alpha` tag marks the published source snapshot. Its build inputs are
-those of the development source `f57d813` named above, which is not in the
+run 163 programs excluding `_card_test`, and header checks cover 684 compilations.
+The command above gives `make host_tests` an empty `HOME`, so that no test reads
+or writes the operator's own. The suite also passes without one: `anemone
+autotune` names a missing default profile (no `XDG_CONFIG_HOME` or `HOME`) and its
+own option refusals first, where v0.0.3-alpha printed the usage alone and a case of
+`replica_prepare_test` failed under `env -i`.
+The `v0.0.4-alpha` tag marks the published source snapshot. Its build inputs are
+those of the development source `6ecf1bb` named above, which is not in the
 published repository; [VALIDATION.md](docs/VALIDATION.md) gives the scope.
 
 `CUDA_DIRECTORY` defaults to `/usr/local/cuda`; override it for another installed
@@ -63,7 +65,7 @@ included in both the public checkout and source archive. They are described in
 [DEVELOPMENT.md](docs/DEVELOPMENT.md) and [the tools index](tools/README.md).
 Optional checks have their own dependencies. `make check` runs lint, header_check,
 analysis, the host suites in all four builds, python_tests, release_audit and
-self_test, and must pass clean. For v0.0.3-alpha every part but self_test was run
+self_test, and must pass clean. For v0.0.4-alpha every part but self_test was run
 on the reference machine and passed: the lints and `make analysis` report nothing,
 and every host suite passes in release, debug, thread and profile.
 

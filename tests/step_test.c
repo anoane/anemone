@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include "anemone/model_layout.h"
+#include "step_driver.h"
 
 #define PIPELINE_DEPTH 3u
 #define PIPELINE_ROWS 2u
@@ -18,6 +19,17 @@
 #define SNAPSHOT_ROWS 4u
 #define SNAPSHOT_CAPACITY 4096u
 #define SNAPSHOT_REFUSALS 3u
+#define ARENA_READ_REFUSALS 5u
+#define ARENA_READ_ROWS \
+	2u /* a step of the arena reads: a row, then a drawing row */
+#define ARENA_READ_PAST \
+	2u /* a read from the arena's last byte of this many: beyond it */
+#define PIECES_ARENA_BYTES \
+	(STEP_SESSION_STAGING_BYTES + ARENA_BYTES) /* more than a piece */
+#define PIECES_OFFSET 3u /* an odd offset: the read takes two pieces from it */
+#define PIECES_HAND_OFFS 2u /* the pool's and card 1's streams to the last */
+#define PATTERN_MULTIPLIER 2654435761u /* Knuth's: no two pieces alike */
+#define PATTERN_SHIFT 24u
 /* Pinned merge5r fixture identities: reference remains compatible; the old trunk-only relaxed state does not. */
 #define BASE_REFERENCE_IDENTITY 11630104210251508399ull
 #define BASE_RELAXED_TRUNK_IDENTITY 10051950646683646284ull
@@ -1861,6 +1873,196 @@ static void test_snapshots(void)
 	cards_close();
 }
 
+MUST_CHECK static result_status
+failing_download_begin(struct device_card *card, uint64_t arena_byte_offset,
+		       void *destination, uint64_t byte_count,
+		       uint64_t *ticket_out)
+{
+	(void)card;
+	(void)arena_byte_offset;
+	(void)destination;
+	(void)byte_count;
+	(void)ticket_out;
+	return STATUS_DEVICE_ERROR;
+}
+
+/* step_arena_read: the bytes a step left on any card, its refusals (each logged), none with a step in flight, and a
+ * card's error that fails the driver. */
+static void test_arena_read(void)
+{
+	struct fixture fixture;
+	unsigned char bytes[ARENA_BYTES];
+	struct step_row_result results[ROW_CAPACITY];
+	context_text = "arena reads";
+	fixture_build(&fixture, cards_open());
+	struct step_driver *driver = driver_of(&fixture, PROGRAMS);
+	const struct step_row_record rows[ARENA_READ_ROWS] = {
+		{ 0, 1, 0, 0 }, { 1, POSITION_TWO, 0, STEP_ROW_LOGITS }
+	};
+	step_expecting(driver, rows, ARENA_READ_ROWS, ROW_CAPACITY);
+	for (uint32_t card = 0; card < CARDS; card++) {
+		memset(bytes, POISON_BYTE, sizeof(bytes));
+		expect_status(step_arena_read(driver, card, 0, ARENA_BYTES,
+					      bytes),
+			      STATUS_OK, "a card's whole arena is read");
+		expect(memcmp(bytes, arena_of(card), ARENA_BYTES) == 0,
+		       "the read holds the card's bytes");
+	}
+	expect_status(step_arena_read(driver, 1, STREAMS_OFFSET + 1u,
+				      ENTRY_BYTES, bytes),
+		      STATUS_OK, "a piece at an odd offset is read");
+	expect(memcmp(bytes, arena_of(1) + STREAMS_OFFSET + 1u, ENTRY_BYTES) ==
+		       0,
+	       "it holds the bytes at that offset");
+	capture_begin();
+	expect_status(step_arena_read(driver, CARDS, 0, 1, bytes),
+		      STATUS_INVALID_ARGUMENT, "a card the programs lack");
+	expect_status(step_arena_read(driver, 0, ARENA_BYTES - 1u,
+				      ARENA_READ_PAST, bytes),
+		      STATUS_INVALID_ARGUMENT, "a range beyond the arena");
+	expect_status(step_arena_read(driver, 0, TOO_FAR, 1, bytes),
+		      STATUS_INVALID_ARGUMENT, "an offset beyond the arena");
+	expect_status(step_arena_read(driver, 0, 0, 1, NULL),
+		      STATUS_INVALID_ARGUMENT, "no bytes");
+	expect_status(step_arena_read(NULL, 0, 0, 1, bytes),
+		      STATUS_INVALID_ARGUMENT, "no driver");
+	expect(capture_end() == TEST_LOG_EXPECTED_LINES(ARENA_READ_REFUSALS),
+	       "a line for each refusal");
+	step_driver_destroy(driver);
+	driver = NULL;
+	expect_status(
+		step_driver_create(&test_host_memory_backend, cards,
+				   fixture.pointers, PROGRAMS, engram,
+				   WAIT_LIMIT, &driver),
+		STATUS_OK,
+		"a driver on the backend itself: the pipeline's workers copy at once");
+	expect_status(step_pipeline_start(driver, FRONT_DEPTH), STATUS_OK,
+		      "a pipeline starts");
+	expect_status(step_submit(driver, rows, ARENA_READ_ROWS), STATUS_OK,
+		      "a step goes in flight");
+	capture_begin();
+	expect_status(step_arena_read(driver, 0, 0, 1, bytes),
+		      STATUS_INVALID_ARGUMENT, "a read with a step in flight");
+	expect(capture_end() == TEST_LOG_EXPECTED_LINES(1u),
+	       "a line for the refusal");
+	expect_status(step_finish(driver, results), STATUS_OK,
+		      "the step lands");
+	expect_status(step_arena_read(driver, LAST_CARD, RESULT_OFFSET,
+				      STEP_RESULT_BYTES, bytes),
+		      STATUS_OK, "after it lands the read goes");
+	expect(memcmp(bytes, arena_of(LAST_CARD) + RESULT_OFFSET,
+		      STEP_RESULT_BYTES) == 0,
+	       "and holds the landed step's result");
+	step_driver_destroy(driver);
+	struct backend_operations failing = checked_backend;
+	failing.download_begin = failing_download_begin;
+	driver = NULL;
+	expect_status(step_driver_create(&failing, cards, fixture.pointers,
+					 PROGRAMS, engram, WAIT_LIMIT, &driver),
+		      STATUS_OK, "a driver whose downloads fail");
+	expect_status(step_arena_read(driver, 0, 0, 1, bytes),
+		      STATUS_DEVICE_ERROR, "a card's error fails the read");
+	expect_status(step_arena_read(driver, 0, 0, 1, bytes),
+		      STATUS_DEVICE_ERROR,
+		      "and the driver answers its failure");
+	step_driver_destroy(driver);
+	cards_close();
+}
+
+/* step_arena_read in pieces, on cards of an arena larger than the session block: a read of more than a piece at an
+ * odd offset holds every byte where the card holds it (each piece from its own offset); card 0, which runs nothing in
+ * these programs (card 1 embeds), is not opened, and a read of it is refused with its line. */
+static void test_arena_read_pieces(void)
+{
+	struct fixture fixture;
+	uint64_t ticket = 0;
+	uint32_t kernel = 0;
+	unsigned char *pattern = NULL;
+	unsigned char *const bytes = malloc(PIECES_ARENA_BYTES);
+	struct step_driver *driver = NULL;
+	context_text = "arena reads in pieces";
+	test_host_memory_backend_reset(CARDS, PIECES_ARENA_BYTES);
+	for (uint32_t card = 1; card < CARDS; card++) {
+		test_host_memory_backend_set_arithmetic_class(
+			card, card == LAST_CARD ? ARITHMETIC_CLASS_SM_120 :
+						  ARITHMETIC_CLASS_SM_80);
+		expect_status(test_host_memory_backend.card_open(
+				      card, PIECES_ARENA_BYTES, &cards[card]),
+			      STATUS_OK, "a card of the larger arena opens");
+		expect_status(test_host_memory_backend.kernel_prepare(
+				      cards[card], KERNEL_FILE_FILL,
+				      KERNEL_FILL_WORDS, FILL_RECORD_BYTES,
+				      &kernel),
+			      STATUS_OK, "the fill kernel");
+	}
+	fixture_build(&fixture, kernel);
+	for (uint32_t program = 0; program < PROGRAMS; program++) {
+		struct program_card_record *const areas =
+			fixture.program_cards[program];
+		struct hand_off_record *const hand_offs =
+			fixture.hand_offs[program];
+		for (uint32_t card = 0; card < CARDS; card++)
+			areas[card].arena_byte_count = PIECES_ARENA_BYTES;
+		areas[0].launch_count = 0;
+		areas[0].engram_tables = 0;
+		areas[0].step_offset = PROGRAM_NOWHERE;
+		areas[1].launch_count = LAUNCHES_PER_CARD;
+		fixture.segments[program][SEGMENT_EMBED] =
+			(struct segment_record){ .card = 1, .launch_count = 1 };
+		for (uint32_t segment = SEGMENT_FIRST_LAYER;
+		     segment <= SEGMENT_THIRD_LAYER; segment++)
+			fixture.segments[program][segment].first_launch++;
+		hand_offs[0] = hand_offs[HAND_OFF_POOL];
+		hand_offs[1] = hand_offs[HAND_OFF_TO_LAST];
+		fixture.programs[program].hand_off_count = PIECES_HAND_OFFS;
+	}
+	fixture_link(&fixture);
+	expect_status(test_host_memory_backend.staging_allocate(
+			      PIECES_ARENA_BYTES, (void **)&pattern),
+		      STATUS_OK, "a staging block of card 1's bytes");
+	for (uint32_t index = 0; pattern != NULL && index < PIECES_ARENA_BYTES;
+	     index++)
+		pattern[index] = (unsigned char)((index * PATTERN_MULTIPLIER) >>
+						 PATTERN_SHIFT);
+	expect(pattern != NULL && bytes != NULL, "the test's memory");
+	expect_status(step_driver_create(&test_host_memory_backend, cards,
+					 fixture.pointers, PROGRAMS, engram,
+					 WAIT_LIMIT, &driver),
+		      STATUS_OK, "a driver with card 0 not opened");
+	if (pattern != NULL && bytes != NULL && driver != NULL) {
+		expect_status(test_host_memory_backend.upload_begin(
+				      cards[1], 0, pattern, PIECES_ARENA_BYTES,
+				      &ticket),
+			      STATUS_OK, "card 1's bytes");
+		expect_status(test_host_memory_backend.upload_wait(
+				      cards[1], ticket, WAIT_LIMIT),
+			      STATUS_OK, "are there");
+		memset(bytes, POISON_BYTE, PIECES_ARENA_BYTES);
+		expect_status(
+			step_arena_read(driver, 1, PIECES_OFFSET,
+					PIECES_ARENA_BYTES - PIECES_OFFSET,
+					bytes),
+			STATUS_OK, "a read of more than a piece");
+		expect(memcmp(bytes, pattern + PIECES_OFFSET,
+			      PIECES_ARENA_BYTES - PIECES_OFFSET) == 0,
+		       "holds every byte where the card holds it");
+		capture_begin();
+		expect_status(step_arena_read(driver, 0, 0, 1, bytes),
+			      STATUS_INVALID_ARGUMENT,
+			      "a card the programs have but did not open");
+		expect(capture_end() == TEST_LOG_EXPECTED_LINES(1u),
+		       "a line for the refusal");
+	}
+	step_driver_destroy(driver);
+	for (uint32_t card = 1; card < CARDS; card++) {
+		test_host_memory_backend.card_close(cards[card], CLOSE_LIMIT);
+		cards[card] = NULL;
+	}
+	if (pattern != NULL)
+		test_host_memory_backend.staging_free(pattern);
+	free(bytes);
+}
+
 /* DRAFTS is a separate run, downloaded with the target result in one bounded span, while an ordinary step skips
  * it and downloads only its target results. The same protocol runs eagerly and through pipelined visits.
  * Nine independently corrupted round fields poison the driver before a caller can obtain a round. */
@@ -2095,6 +2297,8 @@ int main(void)
 	test_rounds(false);
 	test_rounds(true);
 	test_snapshots();
+	test_arena_read();
+	test_arena_read_pieces();
 	test_interleaved_steps();
 	test_interleaved_pipeline();
 	test_interleaved_lease();

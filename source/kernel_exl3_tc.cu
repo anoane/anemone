@@ -340,7 +340,7 @@ __device__ __forceinline__ void tc_products(const struct exl3_tc_record &record,
 	}
 /* a width's forms: gate/up t20/t40, down t16/t32 (512) or t20/t40 (640); --exl3_expert_rotation: gate/up (record.pass
  * 0) at 640 with narrow jobs' column groups cut, down (pass 1) at 640 with narrow jobs' K steps */
-#define TC_PRODUCTS_WIDTH(width, bits_x2)                                   \
+#define TC_PRODUCTS_WIDTH(width, bits_x2, ...)                              \
 	TC_PRODUCTS(TWENTY_K_STEPS, TWENTY_K_STEPS, bits_x2, false,         \
 		    exl3_tc_products_t20_##width)                           \
 	TC_PRODUCTS(FORTY_K_STEPS, FORTY_K_STEPS, bits_x2, false,           \
@@ -357,9 +357,7 @@ __device__ __forceinline__ void tc_products(const struct exl3_tc_record &record,
 		    exl3_tc_products_t20n16_##width)                        \
 	TC_PRODUCTS(FORTY_K_STEPS, THIRTY_TWO_K_STEPS, bits_x2, true,       \
 		    exl3_tc_products_t40n32_##width)
-TC_PRODUCTS_WIDTH(k2, EXL3_BITS_X2_K2)
-TC_PRODUCTS_WIDTH(k2_5, EXL3_BITS_X2_K2_5)
-TC_PRODUCTS_WIDTH(k3, EXL3_BITS_X2_K3)
+EXL3_WIDTHS(EXL3_TC_WIDTH, TC_PRODUCTS_WIDTH, )
 #undef TC_PRODUCTS_WIDTH
 #undef TC_PRODUCTS
 /* two slices an item (exl3_tc_prepare_paired): gate/up t20x2, down t20x2 (640) or t16x2 (512) */
@@ -371,12 +369,13 @@ TC_PRODUCTS_WIDTH(k3, EXL3_BITS_X2_K3)
 		tc_products<k_steps, k_steps, bits_x2, false,              \
 			    TC_MOE_PAIRED_SLICES>(record, arena);          \
 	}
-TC_PRODUCTS_PAIRED(TWENTY_K_STEPS, EXL3_BITS_X2_K2, exl3_tc_products_t20x2_k2)
-TC_PRODUCTS_PAIRED(SIXTEEN_K_STEPS, EXL3_BITS_X2_K2, exl3_tc_products_t16x2_k2)
-TC_PRODUCTS_PAIRED(TWENTY_K_STEPS, EXL3_BITS_X2_K2_5, exl3_tc_products_t20x2_k2_5)
-TC_PRODUCTS_PAIRED(SIXTEEN_K_STEPS, EXL3_BITS_X2_K2_5, exl3_tc_products_t16x2_k2_5)
-TC_PRODUCTS_PAIRED(TWENTY_K_STEPS, EXL3_BITS_X2_K3, exl3_tc_products_t20x2_k3)
-TC_PRODUCTS_PAIRED(SIXTEEN_K_STEPS, EXL3_BITS_X2_K3, exl3_tc_products_t16x2_k3)
+#define TC_PRODUCTS_PAIRED_WIDTH(width, bits_x2, ...)      \
+	TC_PRODUCTS_PAIRED(TWENTY_K_STEPS, bits_x2,        \
+			   exl3_tc_products_t20x2_##width) \
+	TC_PRODUCTS_PAIRED(SIXTEEN_K_STEPS, bits_x2,       \
+			   exl3_tc_products_t16x2_##width)
+EXL3_WIDTHS(EXL3_TC_WIDTH, TC_PRODUCTS_PAIRED_WIDTH, )
+#undef TC_PRODUCTS_PAIRED_WIDTH
 #undef TC_PRODUCTS_PAIRED
 
 /* ---- activation: a routed pair each, the jobs in table order ---- */

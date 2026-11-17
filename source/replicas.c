@@ -184,7 +184,18 @@ replica_directories(const char *point,
 	return count;
 }
 
-uint32_t replicas_find_mounts(FILE *mounts, const char *source_path,
+/* A given copy's drive can be compared: its description names its physical devices, or its filesystem is RAM-backed
+ * (tmpfs, ramfs, by name), which shares no drive. */
+static bool copy_comparable(const struct local_device_description *device)
+{
+	return (device->count != 0 &&
+		device->count <= LOCAL_DEVICE_PHYSICAL_MOST) ||
+	       strcmp(device->filesystem, "tmpfs") == 0 ||
+	       strcmp(device->filesystem, "ramfs") == 0;
+}
+
+uint32_t replicas_find_mounts(FILE *mounts, const char *const *copies,
+			      uint32_t copy_count,
 			      const struct pack_header *header,
 			      char (*paths)[REPLICA_PATH_CAPACITY],
 			      uint32_t capacity, bool external)
@@ -192,8 +203,10 @@ uint32_t replicas_find_mounts(FILE *mounts, const char *source_path,
 	char real_source[REPLICA_PATH_CAPACITY];
 	char expected[RECEIPT_CAPACITY];
 	char name[REPLICA_PATH_CAPACITY];
-	if (mounts == NULL || source_path == NULL || header == NULL ||
-	    paths == NULL || realpath(source_path, real_source) == NULL ||
+	if (mounts == NULL || copies == NULL || copy_count == 0 ||
+	    copy_count > STORAGE_MAXIMUM_COPIES || copies[0] == NULL ||
+	    header == NULL || paths == NULL ||
+	    realpath(copies[0], real_source) == NULL ||
 	    !receipt_text(expected, real_source, header))
 		return 0;
 	(void)snprintf(name, sizeof(name), REPLICA_NAME_FORMAT,
@@ -202,7 +215,7 @@ uint32_t replicas_find_mounts(FILE *mounts, const char *source_path,
 	uint32_t seen_count = 0, found = 0;
 	struct local_device_description selected[STORAGE_MAXIMUM_COPIES];
 	uint32_t selected_count = 0;
-	bool source_described = false;
+	bool copies_described = false;
 	char point[REPLICA_PATH_CAPACITY];
 	while (found < capacity &&
 	       next_mount_point(mounts, seen, &seen_count, point)) {
@@ -216,8 +229,10 @@ uint32_t replicas_find_mounts(FILE *mounts, const char *source_path,
 		char receipt[REPLICA_PATH_CAPACITY];
 		const uint32_t layouts =
 			replica_directories(point, directories);
-		/* a receipt stands for its file only when that is a regular file (no link) of the source's size */
-		bool receipted = false, stale = false;
+		/* a receipt stands for its file only when that is a regular file (no link) of the source's size; one
+		   that does not is stale: a bit per layout */
+		bool receipted = false;
+		uint32_t stale_layouts = 0;
 		for (uint32_t layout = 0; !receipted && layout < layouts;
 		     layout++) {
 			struct stat replica;
@@ -233,10 +248,11 @@ uint32_t replicas_find_mounts(FILE *mounts, const char *source_path,
 				    S_ISREG(replica.st_mode) &&
 				    (uint64_t)replica.st_size ==
 					    header->file_byte_count;
-			stale = stale || (holds && !receipted);
+			stale_layouts |= holds && !receipted ? 1u << layout :
+							       0u;
 		}
 		if (!receipted) {
-			if (stale)
+			if (stale_layouts != 0)
 				local_device_print(
 					stderr, &candidate,
 					"replica_missing_short_or_unverified",
@@ -244,17 +260,36 @@ uint32_t replicas_find_mounts(FILE *mounts, const char *source_path,
 					0, 0);
 			continue;
 		}
-		/* The source is described once, for the first receipted replica (duplicates), by the device that holds
-		   its bytes: an EXL3 map's largest source, not the map file. */
-		if (!source_described) {
-			source_described = true;
+		/* The given copies are described once, for the first receipted replica (duplicates), each by the device
+		   that holds its bytes: an EXL3 map's largest source, not the map file; the source by its real path.
+		   A copy no topology describes (an anonymous st_dev: btrfs, ZFS) or whose medium names no drive
+		   (overlay, a loop or virtual block device, FUSE, a network filesystem) could share any drive, so the
+		   search ends with one line naming it and admits no replica; a RAM-backed copy shares none. */
+		for (uint32_t copy = 0; !copies_described && copy < copy_count;
+		     copy++) {
 			char bytes_path[EXL3_MAP_PATH_BYTES];
-			if (local_device_describe(
-				    storage_device_path(real_source,
-							bytes_path),
-				    &selected[0]) == STATUS_OK)
-				selected_count = 1;
+			const char *const given = copy == 0 ? real_source :
+							      copies[copy];
+			if (given != NULL &&
+			    local_device_describe(
+				    storage_device_path(given, bytes_path),
+				    &selected[selected_count]) == STATUS_OK &&
+			    copy_comparable(&selected[selected_count])) {
+				selected_count++;
+				continue;
+			}
+			char shown[REPLICA_PATH_CAPACITY];
+			local_device_display(shown, sizeof(shown),
+					     given != NULL ? given : "");
+			(void)fprintf(
+				stderr,
+				"storage: replica search ends: given copy %" PRIu32
+				" %s is on no described drive, so no replica is admitted beside it: "
+				"unknown_physical_topology\n",
+				copy, shown);
+			return 0;
 		}
+		copies_described = true;
 		const char *refused = NULL;
 		for (uint32_t index = 0;
 		     refused == NULL && index < selected_count; index++)
@@ -267,6 +302,18 @@ uint32_t replicas_find_mounts(FILE *mounts, const char *source_path,
 				   LOCAL_DEVICE_DEFAULT_FLOOR_PERCENT, 0, 0);
 		if (refused != NULL)
 			continue;
+		/* a stale receipt before the layout admitted on this mount is named too, never passed over silently */
+		for (uint32_t layout = 0; stale_layouts >> layout != 0;
+		     layout++)
+			if ((stale_layouts >> layout & 1u) != 0 &&
+			    path_join(receipt, directories[layout], name,
+				      RECEIPT_SUFFIX))
+				(void)fprintf(
+					stderr,
+					"storage: replica receipt %s passed over: "
+					"replica_missing_short_or_unverified (a later layout on its mount is "
+					"admitted)\n",
+					receipt);
 		selected[selected_count++] = candidate;
 		found++;
 	}
@@ -275,24 +322,29 @@ uint32_t replicas_find_mounts(FILE *mounts, const char *source_path,
 
 uint32_t
 replicas_reader_open(const struct storage_operations_record *operations,
-		     const char *source,
+		     const char *const *given, uint32_t given_count,
 		     const char (*replicas)[REPLICA_PATH_CAPACITY],
 		     uint32_t count, const char **copies_out,
 		     struct storage_reader **reader_out, FILE *output)
 {
 	*reader_out = NULL;
-	copies_out[0] = source;
+	if (given_count == 0 || given_count > STORAGE_MAXIMUM_COPIES ||
+	    count > STORAGE_MAXIMUM_COPIES - given_count)
+		return 0;
+	for (uint32_t copy = 0; copy < given_count; copy++)
+		copies_out[copy] = given[copy];
 	/* the full set first: when every replica opens, one open, as before; the greedy opens only on its refusal */
 	for (uint32_t index = 0; index < count; index++)
-		copies_out[index + 1u] = replicas[index];
-	if (count != 0 && operations->reader_open(copies_out, count + 1u,
-						  reader_out) == STATUS_OK)
+		copies_out[given_count + index] = replicas[index];
+	if (count != 0 &&
+	    operations->reader_open(copies_out, given_count + count,
+				    reader_out) == STATUS_OK)
 		return count;
 	*reader_out = NULL;
 	uint32_t kept = 0;
 	for (uint32_t index = 0; index < count; index++) {
-		/* the replica on trial follows the source and those kept */
-		const uint32_t trial = kept + 1u;
+		/* the replica on trial follows the given copies and those kept */
+		const uint32_t trial = given_count + kept;
 		copies_out[trial] = replicas[index];
 		struct storage_reader *opened_reader = NULL;
 		const result_status opened = operations->reader_open(
@@ -313,7 +365,7 @@ replicas_reader_open(const struct storage_operations_record *operations,
 	return kept;
 }
 
-uint32_t replicas_find_policy(const char *source_path,
+uint32_t replicas_find_policy(const char *const *copies, uint32_t copy_count,
 			      const struct pack_header *header,
 			      char (*paths)[REPLICA_PATH_CAPACITY],
 			      uint32_t capacity, bool external)
@@ -321,8 +373,8 @@ uint32_t replicas_find_policy(const char *source_path,
 	FILE *const mounts = fopen("/proc/self/mounts", "re");
 	if (mounts == NULL)
 		return 0;
-	const uint32_t found = replicas_find_mounts(mounts, source_path, header,
-						    paths, capacity, external);
+	const uint32_t found = replicas_find_mounts(
+		mounts, copies, copy_count, header, paths, capacity, external);
 	(void)fclose(mounts);
 	return found;
 }
@@ -331,7 +383,7 @@ uint32_t replicas_find(const char *source_path,
 		       const struct pack_header *header,
 		       char (*paths)[REPLICA_PATH_CAPACITY], uint32_t capacity)
 {
-	return replicas_find_policy(source_path, header, paths, capacity,
+	return replicas_find_policy(&source_path, 1u, header, paths, capacity,
 				    false);
 }
 

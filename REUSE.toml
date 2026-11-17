@@ -1,19 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Data and deliberately malformed fixtures retain their exact format and bytes.
 version = 1
 
+# Every file of the project: the author's copyright, and the project's licence where a file states none. The licence
+# identifier a file carries in its own header stays its own (closest). Data and deliberately malformed fixtures carry
+# no header, to keep their exact format and bytes, and take both from here.
 [[annotations]]
-path = [
-    "tests/check_cases/**",
-    "docs/SERVER_PROFILE_COMMANDS.json",
-    "docs/results/*.json",
-    "docs/user/model-data/*.json",
-    "docs/user/model-data/*.sha256",
-    "tools/cli/*.json",
-    "tools/measure/prefix_stable_references.json",
-    "tools/metrics/vllm_contract.json",
-    "tools/vision/fixtures/**",
-]
+path = "**"
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Fabiano Anemone <fabiano.anemone@gmail.com>"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
@@ -24,3 +16,10 @@ path = "tools/metrics/vllm_dashboard_queries.json"
 precedence = "closest"
 SPDX-FileCopyrightText = "Copyright contributors to the vLLM project"
 SPDX-License-Identifier = "Apache-2.0"
+
+# The Linux kernel's .clang-format, its header kept verbatim: its deprecated identifier GPL-2.0 means GPL-2.0-only.
+[[annotations]]
+path = ".clang-format"
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel contributors"
+SPDX-License-Identifier = "GPL-2.0-only"

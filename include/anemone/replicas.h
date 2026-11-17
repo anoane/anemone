@@ -34,13 +34,22 @@
  * source and the pack, not the replica's inode or times, so a same-size replacement is caught only by the extent
  * digests every read checks.
  *
- * replicas_reader_open opens a reader over source and the count replicas together, one open when all open. When that
- * open is refused it keeps, greedily in their order, each replica that opens together with the copies already kept: a
- * replica whose open fails beside them is left out, with one line on output naming it and the open's status, and the
- * next is tried. Per-copy resources (registered buffers, locked memory, queue depth) can fail only in combination, so
- * the kept set is one that did open, in at most 1 + count opens.
- * copies_out (count + 1 entries) receives the source and the kept replicas; reader_out the reader over them, or
- * NULL when none was kept (the caller keeps its reader over the source). Returns the number kept.
+ * replicas_find_policy and replicas_find_mounts search beside the copy_count copies a load was given (copies[0] the
+ * source, whose receipts they match; serve's turbo load beside explicit copies, 17 Nov 2026): a replica on a drive that
+ * holds any given copy is refused as duplicate_physical_device, as one on the source's drive is. A given copy no
+ * device topology describes (an anonymous st_dev: btrfs, ZFS) or whose medium names no drive (overlay, a loop or
+ * virtual block device, FUSE, a network filesystem), the source too, ends the search at its first receipted replica
+ * with one stderr line naming it (unknown_physical_topology): no replica is admitted beside it, as its drive cannot be
+ * compared. A copy on a RAM-backed filesystem (tmpfs, ramfs, by name) shares no drive, so the search runs beside it.
+ * replicas_find is the search beside the source alone.
+ *
+ * replicas_reader_open opens a reader over the given_count given copies and the count replicas together, one open when
+ * all open. When that open is refused it keeps, greedily in their order, each replica that opens together with the
+ * copies already kept: a replica whose open fails beside them is left out, with one line on output naming it and the
+ * open's status, and the next is tried. Per-copy resources (registered buffers, locked memory, queue depth) can fail
+ * only in combination, so the kept set is one that did open, in at most 1 + count opens.
+ * copies_out (given_count + count entries) receives the given copies and the kept replicas; reader_out the reader over
+ * them, or NULL when none was kept (the caller keeps its reader over the given copies). Returns the number kept.
  */
 #ifndef REPLICAS_H
 #define REPLICAS_H
@@ -73,18 +82,19 @@ MUST_CHECK bool replicas_receipt_text(char *output, size_t capacity,
 uint32_t replicas_find(const char *source_path,
 		       const struct pack_header *header,
 		       char (*paths)[REPLICA_PATH_CAPACITY], uint32_t capacity);
-uint32_t replicas_find_policy(const char *source_path,
+uint32_t replicas_find_policy(const char *const *copies, uint32_t copy_count,
 			      const struct pack_header *header,
 			      char (*paths)[REPLICA_PATH_CAPACITY],
 			      uint32_t capacity, bool external);
 /* replicas_find_policy over the mount table stream mounts (the product's is /proc/self/mounts). */
-uint32_t replicas_find_mounts(FILE *mounts, const char *source_path,
+uint32_t replicas_find_mounts(FILE *mounts, const char *const *copies,
+			      uint32_t copy_count,
 			      const struct pack_header *header,
 			      char (*paths)[REPLICA_PATH_CAPACITY],
 			      uint32_t capacity, bool external);
 uint32_t
 replicas_reader_open(const struct storage_operations_record *operations,
-		     const char *source,
+		     const char *const *given, uint32_t given_count,
 		     const char (*replicas)[REPLICA_PATH_CAPACITY],
 		     uint32_t count, const char **copies_out,
 		     struct storage_reader **reader_out, FILE *output);

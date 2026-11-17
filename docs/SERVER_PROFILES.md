@@ -1,23 +1,23 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Server profiles for Anemone v0.0.3-alpha
+# Server profiles for Anemone v0.0.4-alpha
 
 The default-off [Messages adapter](ANTHROPIC_MESSAGES.md) and shared HTTP
 `top_k` extension are newer than the `6b9e276` option-map snapshots and functional
 smokes below, which retain their original option counts and qualification scope.
-The `f57d813` parser contains them, but its pass over the four arrays neither
+The `6ecf1bb` parser contains them, but its pass over the four arrays neither
 enables nor exercises them.
 
 Use this page for the three release launch recipes: original exact, original
 balanced and EXL3 balanced. Each complete command below passed the real axis
 resolver and argument parser at source
-`f57d81375a8830db16925e42740aae1fe0773e90` (v0.0.3-alpha). Four separate functional
+`6ecf1bb3e8b5e2abc57d8de3a90d9d6b064f8584` (v0.0.4-alpha). Four separate functional
 smokes, at source `6b9e276fe4da6750be46c874e5fb5c0ee2a46871` and with that source's
 arrays, started these three servers plus the optional guard: all 12 health, model-listing
 and tiny T0 Chat requests returned HTTP 200. Every Chat request completed eight
 native output tokens with finish reason `length`. This is functional model/HTTP
 evidence, with no speed, quality, concurrency or full-context claim. Commit `ab815b6`
 later gave the two EXL3 arrays eight explicit knobs, `--pipeline_steps=1` among them;
-in that form they passed the parser at `f57d813` but were not smoke-run.
+in that form they passed the parser at `6ecf1bb` but were not smoke-run.
 The CPU parser check itself stops before model, GPU, socket and server startup.
 The [comparison matrix](results/COMPARISON_MATRIX.md)
 records GPU execution, identity, quality, timing and capacity separately, with
@@ -37,7 +37,7 @@ numerical controls when comparing a measurement.
 
 1. Follow [BUILD.md](../BUILD.md) from a fresh release export on Linux x86-64.
    The tested CUDA 13.5 V13.5.37 and GCC 14.2.0 release build needs neither Git nor Python nor
-   GPU devices. Check `./build/release/anemone --version` for `v0.0.3-alpha`.
+   GPU devices. Check `./build/release/anemone --version` for `v0.0.4-alpha`.
 2. Follow [MODEL_DATA.md](user/MODEL_DATA.md) for the separate CPU Python
    environment, all 112 pinned input files, SHA256 verification and every
    producer command. The official source is
@@ -299,11 +299,11 @@ prints `N session(s) fit at C tokens of context on this split; a shorter --conte
 concurrency=multiple runs BATCH on serve only at exactly `--session_slots=8` (for example with
 `--context_tokens=65536`, as measured); otherwise it runs its concurrency=balanced row, and that line says
 `concurrency=multiple: ...; BATCH needs exactly 8`. The interim it replaces (stage 2: TP4_PRO and TP4_EXL3 balanced repeated their
-single set, one slot) stays the comparison arm of per-split request 5, which is held under the owner's pause. The
-recipes leave the draft block, depth, policy and session acceptance (and TP4_PRO's rows) to category=code (depth 7)
-and focus=decode (arm 1; on TP4_PRO with 6 rows). PP5's concurrency=single is `--rows=6` (r7c g3): single/decode
-without `--placement` runs the PP5 base at 6 rows with arm 1, and the fastest original single-user decode is
-`--placement=tp4_pro`.
+single set, one slot) stays the comparison arm of the stage 3 GPU confirmation (9 Nov 2026: each balanced serve booted
+at its session count, a 1M fill a slot, C1 to CN against the interim and against `--axes=off`). The recipes leave the
+draft block, depth, policy and session acceptance (and TP4_PRO's rows) to category=code (depth 7) and focus=decode (arm
+1; on TP4_PRO with 6 rows). PP5's concurrency=single is `--rows=6` (r7c g3): single/decode without `--placement` runs
+the PP5 base at 6 rows with arm 1, and the fastest original single-user decode is `--placement=tp4_pro`.
 
 Selectable non-lossy balanced tuples also accept `--exactness=fast` with exactly
 the same low-level settings and evidence boundaries. This adds no arithmetic
@@ -440,7 +440,7 @@ serve takes `--session_slots=max` and 1M context when they are omitted.
 | [--card_order](USAGE.md#knob-card_order): 0..15; comma list, at most16. Choose backend card ordinals in stage-fill order. | auto | 0,1,3,4,2 | 0,1,3,4,2 | auto |
 | [--reader_threads_per_copy](USAGE.md#knob-reader_threads_per_copy) `C`: 1..16. Allocate this many asynchronous readers per pack copy. | 4 | 4 | 4 | 4 |
 | [--tp_load_threads](USAGE.md#knob-tp_load_threads): 0..64. Load TP card weights concurrently; zero keeps the serial loader. | 32 | 32 (I) | 32 (I) | 32 |
-| [--turbo_load](USAGE.md#knob-turbo_load): 0..1. Discover and read receipted replicas on other drives. | 1 | 1 | 1 | 1 |
+| [--turbo_load](USAGE.md#knob-turbo_load): 0..1. Discover and read receipted replicas beside the given copies, on drives holding none of them; 0: exactly the given copies. | 1 | 1 | 1 | 1 |
 | [--map_reads](USAGE.md#knob-map_reads): 0 buffered;1 drop;2 direct;3 direct+drop;4 auto. Choose buffered/direct EXL3-map reads and page-cache eviction policy. | 4 auto | 4 auto (I) | 4 auto (I) | 4 auto |
 | [--tp_load_host_threads](USAGE.md#knob-tp_load_host_threads): 0..64. Load the host arena with this many workers; zero follows TP load threads. | 16 | 16 (I) | 16 (I) | 16 |
 | [--tp_load_copy_split](USAGE.md#knob-tp_load_copy_split) `C`: 0..2. Choose each TP load read's copy: roles with stealing (2), fixed roles (1) or soonest (0). | 2 | 2 (I) | 2 (I) | 2 |
@@ -711,7 +711,7 @@ their resolved values. Its snapshot and complete command were checked separately
 
 ## Evidence and limits of this setup check
 
-At source `f57d81375a8830db16925e42740aae1fe0773e90` (v0.0.3-alpha), the release
+At source `6ecf1bb3e8b5e2abc57d8de3a90d9d6b064f8584` (v0.0.4-alpha), the release
 executable itself ran the four arrays of [SERVER_PROFILE_COMMANDS.json](SERVER_PROFILE_COMMANDS.json)
 with nonexistent data paths: each parsed and stopped with exit 1 at its first
 front-end step, `open the tables and the socket`, before any model, socket or GPU
@@ -732,7 +732,7 @@ default-versus-request distinction without starting a model or HTTP listener.
 The four separately admitted model/HTTP smokes used the command arrays as they
 were at `6b9e276` and the requests above, substituting only the executable and two
 data paths. `ab815b6` later gave the two EXL3 arrays eight explicit knobs; in that
-form they passed the parser at `f57d813` but were not smoke-run.
+form they passed the parser at `6ecf1bb` but were not smoke-run.
 They passed on `6b9e276` / `spdx_02` / SHA256 `da39965f79adf7883f92c8941e2b92d928706dc7b3f55671b89dce23b67c413e`:
 all 12 responses were HTTP 200; each tiny Chat response had eight native output
 tokens and finish reason `length`. All owned servers/statistics/telemetry

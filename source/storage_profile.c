@@ -4,6 +4,7 @@
 #include "anemone/loader.h"
 #include "anemone/storage_exl3.h"
 #include "anemone/tp_load.h"
+#include "engram_step.h"
 #include "json.h"
 #include "sha256.h"
 #include "storage_prepare.h"
@@ -1763,33 +1764,106 @@ result_status prepare_manifest_read(const char *path,
 	return valid ? STATUS_OK : STATUS_CORRUPT_PACK;
 }
 
-result_status prepare_profile_slot(const char *path)
+/* The stages' sections (storage_profile.h). A schema 3 profile's top level holds the source and one member a stage;
+ * each stage rewrites only its own member, and every other byte of the file stays as it was. stage_section_open opens
+ * the profile at path and finds member_name's member and the source's real path; false, the document closed, with
+ * reason missing, unreadable_or_invalid_json, not_a_stage_profile, no_<member>_section or <member>_section_malformed
+ * (the source). The caller closes the document after a true. */
+static bool stage_section_open(const char *path, const char *member_name,
+			       struct document *profile,
+			       struct json_value *section,
+			       char source[REPLICA_PATH_CAPACITY],
+			       char reason[STORAGE_PROFILE_REASON_BYTES])
 {
-	struct stat file;
-	if (lstat(path, &file) != 0)
-		return errno == ENOENT ? STATUS_OK : STATUS_INPUT_OUTPUT_ERROR;
-	struct document document;
-	if (!document_open(path, &document))
-		return STATUS_INVALID_ARGUMENT;
+	if (!document_open(path, profile))
+		return reason_set(reason, access(path, F_OK) == 0 ?
+						  "unreadable_or_invalid_json" :
+						  "missing");
 	uint32_t schema = 0;
-	const struct json_value devices =
-		member(&document, document.root, "devices");
-	char source[PATH_MAX];
-	const bool valid =
-		field(&document, document.root, "schema", UINT32_MAX,
-		      &schema) &&
-		schema == PROFILE_SCHEMA &&
-		text_value(&document,
-			   member(&document, document.root, "source"), source,
-			   sizeof(source)) &&
-		source[0] == '/' && devices.text != NULL &&
-		devices.text[devices.begin] == '[';
-	document_close(&document);
-	return valid ? STATUS_OK : STATUS_INVALID_ARGUMENT;
+	*section = member(profile, profile->root, member_name);
+	const bool staged =
+		field(profile, profile->root, "schema", UINT32_MAX, &schema) &&
+		schema == STORAGE_PROFILE_STAGES_SCHEMA;
+	const bool present = staged && section->text != NULL;
+	if (present &&
+	    text_value(profile, member(profile, profile->root, "source"),
+		       source, REPLICA_PATH_CAPACITY) &&
+	    source[0] == '/')
+		return true;
+	document_close(profile);
+	if (!staged)
+		return reason_set(reason, "not_a_stage_profile");
+	(void)snprintf(reason, STORAGE_PROFILE_REASON_BYTES,
+		       present ? "%s_section_malformed" : "no_%s_section",
+		       member_name);
+	return false;
 }
 
-/* The load stage's section (storage_profile.h). A schema 3 profile's top level holds the source and one member a
- * stage; each stage rewrites only its own member, and every other byte of the file stays as it was. */
+/* The identity every stage's member holds: its schema (member_schema), enabled, the pack's header digest and size, and
+ * the copies' device keys in order; false when one is missing or malformed. */
+static bool section_identity(struct document *profile,
+			     struct json_value section, uint32_t member_schema,
+			     uint32_t *enabled,
+			     char pack_identity[STORAGE_PROFILE_KEY_BYTES],
+			     uint64_t *file_byte_count,
+			     char (*keys)[STORAGE_PROFILE_KEY_BYTES],
+			     uint32_t *copy_count)
+{
+	uint32_t schema = 0, count = 0;
+	const struct json_value pack = member(profile, section, "pack");
+	const struct json_value copies = member(profile, section, "copies");
+	bool valid = field(profile, section, "schema", UINT32_MAX, &schema) &&
+		     schema == member_schema &&
+		     field(profile, section, "enabled", 1, enabled) &&
+		     text_value(profile, member(profile, pack, "header_digest"),
+				pack_identity, STORAGE_PROFILE_KEY_BYTES) &&
+		     strlen(pack_identity) == STORAGE_PACK_IDENTITY_DIGITS &&
+		     strspn(pack_identity, "0123456789abcdef") ==
+			     STORAGE_PACK_IDENTITY_DIGITS &&
+		     number(member(profile, pack, "file_byte_count"),
+			    UINT64_MAX, file_byte_count) &&
+		     copies.text != NULL && copies.text[copies.begin] == '[';
+	size_t cursor = copies.begin;
+	struct json_value copy;
+	while (valid && json_next(copies, &cursor, NULL, &copy)) {
+		valid = count < STORAGE_MAXIMUM_COPIES &&
+			text_value(profile, member(profile, copy, "key"),
+				   keys[count], STORAGE_PROFILE_KEY_BYTES) &&
+			hex_key(keys[count]);
+		count++;
+	}
+	*copy_count = count;
+	return valid && count != 0;
+}
+
+/* Whether a section names this pack and exactly these copies, by their device keys in order; false with reason
+ * <member>_section_stale_pack or <member>_section_stale_copies. A copy whose key is empty (none could be read) is
+ * another copy. */
+static bool section_names(const char *member_name, const char *pack_identity,
+			  uint64_t file_byte_count,
+			  const char (*keys)[STORAGE_PROFILE_KEY_BYTES],
+			  uint32_t key_count, const struct pack_header *header,
+			  const char (*copy_keys)[STORAGE_PROFILE_KEY_BYTES],
+			  uint32_t copy_count,
+			  char reason[STORAGE_PROFILE_REASON_BYTES])
+{
+	char identity[STORAGE_PROFILE_KEY_BYTES];
+	(void)snprintf(identity, sizeof(identity), "%016" PRIx64,
+		       header->header_digest);
+	const bool same_pack = strcmp(identity, pack_identity) == 0 &&
+			       header->file_byte_count == file_byte_count;
+	bool same = same_pack && copy_count == key_count;
+	for (uint32_t index = 0; same && index < copy_count; index++)
+		same = strcmp(copy_keys[index], keys[index]) == 0;
+	if (same)
+		return true;
+	(void)snprintf(reason, STORAGE_PROFILE_REASON_BYTES,
+		       same_pack ? "%s_section_stale_copies" :
+				   "%s_section_stale_pack",
+		       member_name);
+	return false;
+}
+
 bool storage_load_section_read(const char *path,
 			       struct storage_load_section *output,
 			       char reason[STORAGE_PROFILE_REASON_BYTES])
@@ -1797,89 +1871,37 @@ bool storage_load_section_read(const char *path,
 	if (path == NULL || output == NULL || reason == NULL)
 		return false;
 	struct document profile;
-	if (!document_open(path, &profile))
-		return reason_set(reason, access(path, F_OK) == 0 ?
-						  "unreadable_or_invalid_json" :
-						  "missing");
+	struct json_value section;
 	struct storage_load_section result = { 0 };
-	uint32_t schema = 0, section_schema = 0;
-	const struct json_value section =
-		member(&profile, profile.root, STORAGE_LOAD_SECTION_NAME);
-	const struct json_value pack = member(&profile, section, "pack");
+	if (!stage_section_open(path, STORAGE_LOAD_SECTION_NAME, &profile,
+				&section, result.source, reason))
+		return false;
 	const struct json_value tp = member(&profile, section, "tp");
-	const struct json_value copies = member(&profile, section, "copies");
 	uint64_t piece_bytes = 0;
 	char split[SPLIT_NAME_BYTES] = "";
-	const char *failure =
-		!field(&profile, profile.root, "schema", UINT32_MAX, &schema) ||
-				schema != STORAGE_PROFILE_STAGES_SCHEMA ?
-			"not_a_stage_profile" :
-		section.text == NULL ? "no_load_section" :
-		!text_value(&profile, member(&profile, profile.root, "source"),
-			    result.source, sizeof(result.source)) ||
-				result.source[0] != '/' ||
-				!field(&profile, section, "schema", UINT32_MAX,
-				       &section_schema) ||
-				section_schema != STORAGE_LOAD_SECTION_SCHEMA ||
-				!field(&profile, section, "enabled", 1,
-				       &result.enabled) ||
-				!text_value(&profile,
-					    member(&profile, pack,
-						   "header_digest"),
-					    result.pack_identity,
-					    sizeof(result.pack_identity)) ||
-				strlen(result.pack_identity) !=
-					STORAGE_LOAD_PACK_IDENTITY_DIGITS ||
-				strspn(result.pack_identity,
-				       "0123456789abcdef") !=
-					STORAGE_LOAD_PACK_IDENTITY_DIGITS ||
-				!number(member(&profile, pack,
-					       "file_byte_count"),
-					UINT64_MAX, &result.file_byte_count) ||
-				!field(&profile, tp, "readers_per_copy",
-				       TP_LOAD_MAXIMUM_WORKERS,
-				       &result.tp_readers_per_copy) ||
-				!number(member(&profile, tp, "piece_bytes"),
-					TP_HOST_LOAD_CHUNK_BYTES_MOST,
-					&piece_bytes) ||
-				!field(&profile, tp, "host_threads",
-				       TP_LOAD_MAXIMUM_WORKERS,
-				       &result.tp_host_threads) ||
-				!text_value(&profile,
-					    member(&profile, tp, "split"),
-					    split, sizeof(split)) ||
-				piece_bytes == 0 ||
-				piece_bytes % PACK_BLOCK_BYTES != 0 ||
-				copies.text == NULL ||
-				copies.text[copies.begin] != '[' ?
-				       "load_section_malformed" :
-				       NULL;
-	size_t cursor = copies.begin;
-	struct json_value copy;
-	while (failure == NULL && json_next(copies, &cursor, NULL, &copy)) {
-		char *const key = result.copy_count < STORAGE_MAXIMUM_COPIES ?
-					  result.keys[result.copy_count] :
-					  NULL;
-		if (key == NULL ||
-		    !text_value(&profile, member(&profile, copy, "key"), key,
-				STORAGE_PROFILE_KEY_BYTES) ||
-		    !hex_key(key))
-			failure = "load_section_malformed";
-		result.copy_count++;
-	}
-	if (failure == NULL && result.copy_count == 0)
-		failure = "load_section_malformed";
+	const bool valid =
+		section_identity(&profile, section, STORAGE_LOAD_SECTION_SCHEMA,
+				 &result.enabled, result.pack_identity,
+				 &result.file_byte_count, result.keys,
+				 &result.copy_count) &&
+		field(&profile, tp, "readers_per_copy", TP_LOAD_MAXIMUM_WORKERS,
+		      &result.tp_readers_per_copy) &&
+		number(member(&profile, tp, "piece_bytes"),
+		       TP_HOST_LOAD_CHUNK_BYTES_MOST, &piece_bytes) &&
+		field(&profile, tp, "host_threads", TP_LOAD_MAXIMUM_WORKERS,
+		      &result.tp_host_threads) &&
+		text_value(&profile, member(&profile, tp, "split"), split,
+			   sizeof(split)) &&
+		piece_bytes != 0 && piece_bytes % PACK_BLOCK_BYTES == 0;
 	result.tp_split = TP_LOAD_SPLITS;
 	for (uint32_t name = 0; name < TP_LOAD_SPLITS; name++)
 		result.tp_split = strcmp(split, tp_load_split_names[name]) ==
 						  0 ?
 					  name :
 					  result.tp_split;
-	if (failure == NULL && result.tp_split == TP_LOAD_SPLITS)
-		failure = "load_section_malformed";
 	document_close(&profile);
-	if (failure != NULL)
-		return reason_set(reason, failure);
+	if (!valid || result.tp_split == TP_LOAD_SPLITS)
+		return reason_set(reason, "load_section_malformed");
 	result.tp_piece_bytes = piece_bytes;
 	*output = result;
 	return true;
@@ -1892,30 +1914,136 @@ bool storage_load_section_matches(const struct storage_load_section *section,
 				  uint32_t host_threads, uint32_t split,
 				  char reason[STORAGE_PROFILE_REASON_BYTES])
 {
-	char identity[STORAGE_PROFILE_KEY_BYTES];
-	(void)snprintf(identity, sizeof(identity), "%016" PRIx64,
-		       header->header_digest);
-	if (strcmp(identity, section->pack_identity) != 0 ||
-	    header->file_byte_count != section->file_byte_count)
-		return reason_set(reason, "load_section_stale_pack");
-	bool same = copy_count == section->copy_count;
-	for (uint32_t index = 0; same && index < copy_count; index++) {
-		char key[STORAGE_PROFILE_KEY_BYTES],
-			bytes_path[EXL3_MAP_PATH_BYTES];
+	/* each copy keyed by the drive of its bytes (an EXL3 map by its data drive), as the load stage keys it; a copy
+	 * with no key (empty) matches none */
+	char keys[STORAGE_MAXIMUM_COPIES][STORAGE_PROFILE_KEY_BYTES] = { { 0 } };
+	for (uint32_t index = 0;
+	     index < copy_count && index < STORAGE_MAXIMUM_COPIES; index++) {
+		char bytes_path[EXL3_MAP_PATH_BYTES];
 		struct local_device_description device;
-		/* an EXL3 map by its data drive, as the load stage keys it */
-		same = storage_device_key_for(
-			       storage_device_path(copy_paths[index],
-						   bytes_path),
-			       external, key, &device) == STATUS_OK &&
-		       strcmp(key, section->keys[index]) == 0;
+		if (storage_device_key_for(
+			    storage_device_path(copy_paths[index], bytes_path),
+			    external, keys[index], &device) != STATUS_OK)
+			keys[index][0] = '\0';
 	}
-	if (!same)
-		return reason_set(reason, "load_section_stale_copies");
 	/* measured with other host threads or another split, its readers are no measure of this load's */
-	return (section->tp_host_threads == host_threads &&
-		section->tp_split == split) ||
-	       reason_set(reason, "load_section_stale_shape");
+	return section_names(
+		       STORAGE_LOAD_SECTION_NAME, section->pack_identity,
+		       section->file_byte_count,
+		       (const char (*)[STORAGE_PROFILE_KEY_BYTES])section->keys,
+		       section->copy_count, header,
+		       (const char (*)[STORAGE_PROFILE_KEY_BYTES])keys,
+		       copy_count <= STORAGE_MAXIMUM_COPIES ?
+			       copy_count :
+			       STORAGE_MAXIMUM_COPIES + 1u,
+		       reason) &&
+	       ((section->tp_host_threads == host_threads &&
+		 section->tp_split == split) ||
+		reason_set(reason, "load_section_stale_shape"));
+}
+
+bool storage_engram_section_read(const char *path,
+				 struct storage_engram_section *output,
+				 char reason[STORAGE_PROFILE_REASON_BYTES])
+{
+	if (path == NULL || output == NULL || reason == NULL)
+		return false;
+	struct document profile;
+	struct json_value section;
+	struct storage_engram_section result = { 0 };
+	if (!stage_section_open(path, STORAGE_ENGRAM_SECTION_NAME, &profile,
+				&section, result.source, reason))
+		return false;
+	const struct json_value shape = member(&profile, section, "shape");
+	const struct json_value step_io = member(&profile, section, "step_io");
+	char interface[sizeof(STORAGE_ENGRAM_INTERFACE)] = "";
+	const bool valid =
+		section_identity(&profile, section,
+				 STORAGE_ENGRAM_SECTION_SCHEMA, &result.enabled,
+				 result.pack_identity, &result.file_byte_count,
+				 result.keys, &result.copy_count) &&
+		text_value(&profile, member(&profile, shape, "interface"),
+			   interface, sizeof(interface)) &&
+		strcmp(interface, STORAGE_ENGRAM_INTERFACE) == 0 &&
+		field(&profile, shape, "steps", UINT32_MAX, &result.steps) &&
+		field(&profile, shape, "slots", UINT32_MAX, &result.slots) &&
+		field(&profile, step_io, "threads_per_copy",
+		      STORAGE_FLIGHT_THREADS_PER_COPY_MOST,
+		      &result.threads_per_copy) &&
+		result.threads_per_copy != 0 &&
+		field(&profile, step_io, "spin_us", ENGRAM_STEP_SPIN_US_MOST,
+		      &result.spin_us) &&
+		field(&profile, step_io, "pin", 1, &result.pin);
+	document_close(&profile);
+	if (!valid)
+		return reason_set(reason, "engram_section_malformed");
+	*output = result;
+	return true;
+}
+
+bool storage_engram_section_matches(
+	const struct storage_engram_section *section,
+	const struct pack_header *header,
+	const char (*copy_keys)[STORAGE_PROFILE_KEY_BYTES], uint32_t copy_count,
+	uint32_t steps, uint32_t slots,
+	char reason[STORAGE_PROFILE_REASON_BYTES])
+{
+	/* another flight shape is another measurement (serving's: 1 + STEP_PIPELINE_MOST steps of ENGRAM_STEP_SLOTS) */
+	return section_names(
+		       STORAGE_ENGRAM_SECTION_NAME, section->pack_identity,
+		       section->file_byte_count,
+		       (const char (*)[STORAGE_PROFILE_KEY_BYTES])section->keys,
+		       section->copy_count, header, copy_keys, copy_count,
+		       reason) &&
+	       ((section->steps == steps && section->slots == slots) ||
+		reason_set(reason, "engram_section_stale_shape"));
+}
+
+void storage_engram_choose(const struct storage_engram_section *section,
+			   uint32_t ram_percent, bool explicit_threads,
+			   bool explicit_spin, bool explicit_pin,
+			   struct storage_engram_choice *choice)
+{
+	const bool applies = section != NULL &&
+			     ram_percent < ENGRAM_RAM_PERCENT;
+	choice->threads_from_profile = applies && !explicit_threads;
+	choice->spin_from_profile = applies && !explicit_spin;
+	choice->pin_from_profile = applies && !explicit_pin;
+	if (choice->threads_from_profile)
+		choice->threads_per_copy = section->threads_per_copy;
+	if (choice->spin_from_profile)
+		choice->spin_us = section->spin_us;
+	if (choice->pin_from_profile)
+		choice->pin = section->pin;
+}
+
+void storage_engram_section_apply(const struct storage_engram_serving *serving,
+				  struct storage_engram_choice *choice,
+				  char reason[STORAGE_PROFILE_REASON_BYTES])
+{
+	struct storage_engram_section section;
+	const bool on_disk = serving->ram_percent < ENGRAM_RAM_PERCENT;
+	(void)snprintf(reason, STORAGE_PROFILE_REASON_BYTES, "%s",
+		       !on_disk ? "tables_in_ram" : "profile_off");
+	bool usable = on_disk && serving->profile != NULL &&
+		      serving->profile[0] != '\0' &&
+		      storage_engram_section_read(serving->profile, &section,
+						  reason) &&
+		      storage_engram_section_matches(&section, serving->header,
+						     serving->copy_keys,
+						     serving->copy_count,
+						     serving->steps,
+						     serving->slots, reason);
+	if (usable && section.enabled == 0) {
+		(void)snprintf(reason, STORAGE_PROFILE_REASON_BYTES, "%s",
+			       "engram_section_candidate");
+		usable = false;
+	}
+	if (usable)
+		reason[0] = '\0';
+	storage_engram_choose(usable ? &section : NULL, serving->ram_percent,
+			      serving->explicit_threads, serving->explicit_spin,
+			      serving->explicit_pin, choice);
 }
 
 bool storage_load_section_reads_match(uint32_t copy_count, uint32_t map_reads,
@@ -1992,13 +2120,23 @@ spliced_write(const char *path, const char *text, size_t length, size_t begin,
 	return prepare_file_commit(&file);
 }
 
-result_status storage_load_section_write(const char *path,
-					 const char *real_source,
-					 const char *section, size_t length,
-					 const char **refusal)
+/* A stage's member name: one of the stages' (storage_profile.h), so the JSON key needs no escape. */
+static bool stage_member_known(const char *member_name)
+{
+	return member_name != NULL &&
+	       (strcmp(member_name, STORAGE_LOAD_SECTION_NAME) == 0 ||
+		strcmp(member_name, STORAGE_ENGRAM_SECTION_NAME) == 0);
+}
+
+result_status storage_stage_section_write(const char *path,
+					  const char *real_source,
+					  const char *member_name,
+					  const char *section, size_t length,
+					  const char **refusal)
 {
 	if (path == NULL || real_source == NULL || section == NULL ||
-	    refusal == NULL || !prepare_utf8_text(real_source))
+	    refusal == NULL || !prepare_utf8_text(real_source) ||
+	    !stage_member_known(member_name))
 		return STATUS_INVALID_ARGUMENT;
 	*refusal = NULL;
 	struct document document = { 0 };
@@ -2015,7 +2153,7 @@ result_status storage_load_section_write(const char *path,
 		(void)fprintf(stream, "{\"schema\":%u,\"source\":",
 			      STORAGE_PROFILE_STAGES_SCHEMA);
 		prepare_json_text(stream, real_source);
-		(void)fputs(",\"" STORAGE_LOAD_SECTION_NAME "\":", stream);
+		(void)fprintf(stream, ",\"%s\":", member_name);
 		(void)fwrite(section, 1, length, stream);
 		(void)fputs("}\n", stream);
 		status = fclose(stream) == 0 ?
@@ -2027,10 +2165,7 @@ result_status storage_load_section_write(const char *path,
 		return status;
 	}
 	const struct json_value root = document.root;
-	const struct json_value kept =
-		member(&document, root, STORAGE_LOAD_SECTION_NAME);
-	static const char member_prefix[] = ",\"" STORAGE_LOAD_SECTION_NAME
-					    "\":";
+	const struct json_value kept = member(&document, root, member_name);
 	char *inserted = NULL;
 	size_t inserted_length = 0;
 	FILE *const stream = open_memstream(&inserted, &inserted_length);
@@ -2039,7 +2174,7 @@ result_status storage_load_section_write(const char *path,
 		return STATUS_OUT_OF_MEMORY;
 	}
 	if (kept.text == NULL)
-		(void)fputs(member_prefix, stream);
+		(void)fprintf(stream, ",\"%s\":", member_name);
 	(void)fwrite(section, 1, length, stream);
 	/* an existing member's value is replaced; else the member goes in before the root's closing brace */
 	const size_t begin = kept.text != NULL ? kept.begin : root.end - 1u;
@@ -2054,9 +2189,19 @@ result_status storage_load_section_write(const char *path,
 	return status;
 }
 
-result_status storage_load_section_writable(const char *path,
-					    const char *real_source,
-					    const char **refusal)
+result_status storage_load_section_write(const char *path,
+					 const char *real_source,
+					 const char *section, size_t length,
+					 const char **refusal)
+{
+	return storage_stage_section_write(path, real_source,
+					   STORAGE_LOAD_SECTION_NAME, section,
+					   length, refusal);
+}
+
+result_status storage_stage_section_writable(const char *path,
+					     const char *real_source,
+					     const char **refusal)
 {
 	if (path == NULL || real_source == NULL || refusal == NULL)
 		return STATUS_INVALID_ARGUMENT;
@@ -2069,11 +2214,20 @@ result_status storage_load_section_writable(const char *path,
 	return status;
 }
 
-result_status storage_load_section_qualify(const char *path,
-					   const char *real_source,
-					   const char **refusal)
+result_status storage_load_section_writable(const char *path,
+					    const char *real_source,
+					    const char **refusal)
 {
-	if (path == NULL || real_source == NULL || refusal == NULL)
+	return storage_stage_section_writable(path, real_source, refusal);
+}
+
+result_status storage_stage_section_qualify(const char *path,
+					    const char *real_source,
+					    const char *member_name,
+					    const char **refusal)
+{
+	if (path == NULL || real_source == NULL || refusal == NULL ||
+	    !stage_member_known(member_name))
 		return STATUS_INVALID_ARGUMENT;
 	*refusal = NULL;
 	struct document document = { 0 };
@@ -2087,7 +2241,7 @@ result_status storage_load_section_qualify(const char *path,
 		return STATUS_INVALID_ARGUMENT;
 	}
 	const struct json_value section =
-		member(&document, document.root, STORAGE_LOAD_SECTION_NAME);
+		member(&document, document.root, member_name);
 	const struct json_value enabled = member(&document, section, "enabled");
 	const struct json_value qualification =
 		member(&document, section, "qualification");
@@ -2104,7 +2258,10 @@ result_status storage_load_section_qualify(const char *path,
 		       sizeof(between) - 1u) == 0 &&
 		json_string_is(&document.scratch, qualification, "candidate");
 	if (!candidate) {
-		*refusal = "the profile holds no candidate load section";
+		*refusal =
+			strcmp(member_name, STORAGE_ENGRAM_SECTION_NAME) == 0 ?
+				"the profile holds no candidate engram section" :
+				"the profile holds no candidate load section";
 		status = STATUS_INVALID_ARGUMENT;
 	} else
 		status = spliced_write(path, document.bytes,
@@ -2113,4 +2270,12 @@ result_status storage_load_section_qualify(const char *path,
 				       sizeof(qualified) - 1u);
 	document_close(&document);
 	return status;
+}
+
+result_status storage_load_section_qualify(const char *path,
+					   const char *real_source,
+					   const char **refusal)
+{
+	return storage_stage_section_qualify(
+		path, real_source, STORAGE_LOAD_SECTION_NAME, refusal);
 }

@@ -130,6 +130,9 @@ uint32_t engram_steps_live(const struct engram_steps *steps);
 uint32_t engram_steps_probation(const struct engram_steps *steps);
 /* How many times a copy was put on probation since the open (each retirement brought back counts once). */
 uint32_t engram_steps_probations(const struct engram_steps *steps);
+/* How many step reads failed (the drive's status, a digest, a quarantined slot) since the open: each was read again
+ * from another copy or by a waiter's fallback (for the Engram stage's disturbed points). */
+uint64_t engram_steps_failed_reads(const struct engram_steps *steps);
 /* A copy's current backoff (for tests and reports). */
 uint64_t engram_steps_backoff(struct engram_steps *steps, uint32_t copy);
 

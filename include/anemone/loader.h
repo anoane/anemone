@@ -59,9 +59,9 @@
 	67108864ull /* 64 MiB: the largest piece a request may name (8 slots a card of it are page-locked) */
 #define LOADER_STAGING_SLOTS_PER_CARD \
 	8 /* half of a card's uploads in flight (backend_seam.h) */
-/* Readers a copy by default: request 30's R24 (15 Nov 2026, real PP5 serve loads of 195.32 GiB from the source and
- * three replicas, every extent's digest checked, A D D A) took 16.442 and 16.399 s with 4 against 16.854 and 17.207 s
- * with 2 (+3.58 %, a 2.07 % spread), in the transfer. `--reader_threads_per_copy=2` is the earlier default. */
+/* Readers a copy by default: measured on 15 Nov 2026 (real PP5 serve loads of 195.32 GiB from the source and three
+ * replicas, every extent's digest checked, A D D A), the transfer took 16.442 and 16.399 s with 4 against 16.854 and
+ * 17.207 s with 2 (+3.58 %, a 2.07 % spread). `--reader_threads_per_copy=2` is the earlier default. */
 #define LOADER_DEFAULT_READER_THREADS_PER_COPY 4
 #define LOADER_MAXIMUM_READER_THREADS_PER_COPY 16
 #define LOADER_DEFAULT_STALL_LIMIT_NANOSECONDS \

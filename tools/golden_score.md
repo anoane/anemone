@@ -32,6 +32,14 @@ Each capture directory contains:
 
 `alignment.mode` is `autoregressive_greedy` for a golden and `teacher_forced` for an aligned candidate. Golden self-comparison accepts the same directory. The alignment object binds `prompt_ids_sha256`, `continuation_ids_sha256` and `conditioning_ids_sha256`. Each hash is SHA256 of the compact ASCII JSON ID array (`json.dumps(ids, separators=(',', ':'), ensure_ascii=True)`, without a newline). The scorer checks complete shapes, finite values, ID ranges, exact conditioning, hashes and vocabulary equality. Producer records must establish that the conditioning witness was actually observed. A declaration or hash alone cannot prove execution.
 
+
+`anemone capture` (docs/USAGE.md section 10.1) writes candidates in this layout from the engine's own production
+path: each case one forced continuation of the golden tokens, every landed row's full F32 head as the sampler read it,
+`conditioning_ids.json` the driver's committed history read at the case's last landing, and per row a witness (its
+position and input token, the draw the lowest-ID argmax, the draw's logit bits). Its metadata adds a `capture` object
+(the executable's SHA-256, the step's rows, placement, map) beside the alignment. `tools/golden/golden_capture_score.py`
+scores every case of a capture root, in full or `--compact` mode, and aggregates them by position into one record.
+
 Candidate row `i` predicts golden ID `i` after the complete prompt and golden IDs before `i`. Free-run logits after a divergent token do not have that conditioning. Record them separately. The R demonstration uses independent cold full-prefix commands and one native draw per command, with a resident model. Its producer checks every actual prefix and every rank before forming the scorer's canonical conditioning witness. This evaluates conditional heads; it does not claim a continuous candidate cache trajectory.
 
 Top-1 ties select the lowest ID. The certain bucket uses a strict golden top-1 minus top-2 logit margin greater than `--certain-margin` (default 1). It reports the bucket's share and agreement within both certain and uncertain buckets. This threshold is a specified margin, not a calibration claim. Free divergence is zero-based in generated-token coordinates; a length mismatch is distinguished from equal completed continuations.

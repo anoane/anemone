@@ -1,6 +1,145 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Release notes
 
+## v0.0.4-alpha
+
+Anemone v0.0.4-alpha is a C11/CUDA engine for DeepSeek-V4.1-Flash-1017, on four CMP 170HX cards for EXL3, and on four
+CMP 170HX plus an RTX PRO 6000 Blackwell for the original weights. It adds an Engram autotune stage, an engine-native
+teacher-forced logits capture, EXL3 map descriptors with quality statuses and card numbering by PCI address, and PP5
+fits one more 1M session.
+
+### Serving
+- **One more 1M session on PP5.** A PP plan sizes its attention-core scratch by a slab and its queries by a span, as
+  its programs use them, which leaves 226.25 MiB more for sessions on every PP card; the programs and their outputs
+  are unchanged. The release gate's PP5 serve fitted 6 sessions of 1,048,576 tokens (v0.0.3-alpha: 5).
+  The engine's placement test at the same free memory gives 6 / 10 / 17 / 24 sessions at 1M / 512K / 256K / 128K
+  (v0.0.3-alpha: 5 / 10 / 16 / 22). TP plans are unchanged.
+- **Cards numbered by PCI address.** The CUDA backend numbers the visible cards by PCI domain, bus and device, whatever
+  `CUDA_DEVICE_ORDER` or the order of a `CUDA_VISIBLE_DEVICES` list says, and prints one line when that differs from
+  the driver's order ([INSTALL.md](INSTALL.md#card-placement)). `CUDA_DEVICE_ORDER=PCI_BUS_ID` is no longer needed
+  for the PP5 fit.
+- **A command-line refusal that was silent names the option and why,** in one `refused: OPTION: WHY` line before the
+  usage. The refusals that already gave their reason keep their own wording, and some of them name no option.
+- An inserted `--pipeline_steps` yields to an explicit `--batch_rows` (BATCH runs one pipeline step), and the
+  `axes from` line says so.
+
+### Loading and storage
+- **The Engram autotune stage.** `anemone autotune PACK --stage=engram --tokens=FILE...` tunes serving's Engram step
+  I/O (threads per copy, spin and pin: 32 arms) by replaying real token traces at seven levels, with cold reads and a
+  byte-identity check of every point against the per-row path, and confirms the best challenger against the default
+  with an A D D A. It writes the profile's own `engram` section, which serving applies (knob over profile over default)
+  with a tagged `engram step io:` line; its parameters and state are separate from the load stage's. The earlier
+  combined tuning is retired: `anemone autotune PACK` without `--stage` runs the copy, load and Engram stages in turn
+  ([STORAGE_PROFILE.md](docs/user/STORAGE_PROFILE.md)).
+- **Turbo load beside given copies.** Serve runs the replica search beside copies given on the command line too, not
+  only beside a lone source. Before, one extra copy path turned the search off: on 15 Nov 2026, with the same binary,
+  PP5 given the tables, the pack and one copy read 2 copies in 29.63 s, while the search from the tables and the pack
+  alone read 4 in 16.94 s. A load given more than one copy prints one `turbo load: the load reads N copies:` line, and
+  `--turbo_load=0` keeps exactly the given copies. A replica on a drive that holds a given copy is refused
+  (`duplicate_physical_device`), and a given copy on no described drive (an anonymous `st_dev`, or a medium that names
+  no drive: overlay, a loop or virtual block device, FUSE, a network filesystem) ends the search with one
+  `unknown_physical_topology` line naming it; a copy on tmpfs or ramfs shares no drive.
+- **The load stage in a balanced order.** Its 35 arms run in a fixed balanced order and then reversed, so a linear
+  drift cancels in each arm's mean, with a warm-up before the first point, an eight-point A D D A D A A D confirmation
+  and, before each point, a wait for every NVMe drive to cool below 60 °C (at most 180 s).
+  `tools/measure/load_arena_probe` measures the stage's host read point by point.
+- A stale replica receipt that the search passes over is named on a `storage: replica receipt` line.
+- `anemone autotune` copes with an unset `HOME`: with neither `XDG_CONFIG_HOME` nor `HOME` it refuses by name for want
+  of a default profile.
+
+### EXL3
+- **Map descriptors with quality statuses.** At startup the engine reads an EXL3 map's descriptor and checks it against
+  the open pack, the model and the tables. The established 2.9 bpw map serves by default: `tools/model_data.sh`
+  writes its descriptor with the quality `established`. A map of quality `none`, such as the 2.68 bpw map, serves only
+  with `--exl3_unrated_map=1`. The descriptor's SHA-256 goes on the startup line.
+- `--exl3_map=NAME` picks `NAME.exl3map` in `--model_dir`'s folder (default `model`).
+- One table, `EXL3_WIDTHS`, drives every width set and kernel instantiation; every CUDA module is byte-identical.
+- The engine carries a registry of its models (one entry, DeepSeek-V4.1-Flash): an EXL3 pack naming a model the build
+  does not carry is refused in one line, and with `--exl3_tc_moe=1` the routed experts are checked against the
+  tensor-core MoE's geometry before anything loads.
+
+### Quality and code
+- **`anemone capture`,** the engine-native teacher-forced logits capture: each golden case runs generate's whole path
+  as a forced continuation, one or several rows a step as decode's verify steps run, and each drawing step's full F32
+  head rows are read where the sampler read them, checked against their witness and written in the scorer's layout.
+  `tools/golden/golden_capture_score.py` scores a capture against the
+  [golden dataset](https://huggingface.co/datasets/anoane/anemone-ds41f1017-golden). The default path is unchanged.
+- **REUSE compliance:** `reuse lint` passes on the tree. Every file states its copyright and licence, in its own
+  header or through `REUSE.toml`, and every licence text is in `LICENSES/`. The Linux kernel's `.clang-format` keeps
+  its header verbatim and is declared GPL-2.0-only.
+- The [option catalogue](tools/cli/KNOBS.md) covers the `anemone autotune` and `anemone capture` options.
+- `startup_axes_test` keeps its Engram store under `TMPDIR`, so it passes from any working directory, and the host
+  tests free what they hold on their no-kernel paths.
+- **Proven changes:** every merge had CPU proof on the reference machine: every program built in release, debug,
+  thread and profile with GCC 14.2 (native and cross), the host suites under the sanitizers, mutants of the changed
+  checks, object identity outside the intended changes and the dry-run sweep identical except its named texts, plus an
+  adversarial review of the code. The [release gate](#release-gate)'s identity check compares the release with
+  v0.0.3-alpha (source `f57d813`) on the three GPU splits' gated routes (PP5, TP4_PRO and TP4_EXL3; one user, 15
+  streams each).
+
+### Upgrade from v0.0.3-alpha
+- **An EXL3 map made by v0.0.3-alpha's `tools/model_data.sh`** has a descriptor of quality `none` beside it, which
+  v0.0.4-alpha refuses without `--exl3_unrated_map=1`. Rewrite the descriptor with the converter as v0.0.4-alpha's
+  `tools/model_data.sh` calls it. The converter never writes over a map or a descriptor, so it writes into a new
+  folder; the map it makes there is the same bytes as yours, and its descriptor then goes beside your map. `DATA` is
+  the data folder your map is in, by the absolute path it was made with (the `tools/model_data.sh` destination),
+  `EXL3` the EXL3 source folder, `NEW` a folder that does not exist yet and `PYTHON` the model-data environment's
+  Python ([MODEL_DATA.md](docs/user/MODEL_DATA.md)). From the v0.0.4-alpha repository root:
+
+  ```sh
+  mkdir "$NEW"
+  "$PYTHON" tools/convert/make_virtual_pack.py --native "$DATA/original.anemone" --hybrid "$DATA/hybrid" \
+    --exl3-config "$EXL3/quantization_config.json" \
+    --quality-established "LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-2.9bpw @ 0be63c33, TP4_EXL3's default map: qualified by the release gates' TP4_EXL3 identity checks (RELEASE_NOTES.md) and its golden metrics (docs/results/GOLDEN_METRICS.md)" \
+    --output "$NEW/model.exl3map"
+  cmp "$NEW/model.exl3map" "$DATA/model.exl3map" &&
+    mv "$DATA/model.exl3map.descriptor.json" "$DATA/model.exl3map.descriptor.json.v0.0.3-alpha" &&
+    mv "$NEW/model.exl3map.descriptor.json" "$DATA/model.exl3map.descriptor.json"
+  ```
+
+  The converter only reads `DATA` and `EXL3` (the routed experts again: about 2 minutes on the reference machine) and
+  writes only into `NEW`. If `cmp` reports a difference, the map was not made from these paths: nothing is moved, and
+  v0.0.4-alpha's `tools/model_data.sh` makes the map again. The engine reads only `model.exl3map.descriptor.json`, so
+  it ignores the kept v0.0.3-alpha descriptor, and startup prints `exl3 descriptor: ... quality established (...)`.
+  `NEW` can then be removed.
+
+### Limits
+- Alpha software. The exact profile stays bounded to one session of 512 tokens. Vision is experimental. The comparison
+  tables in the README keep their 6 November measurements, within the v0.0.2-alpha [measured scope](#measured-scope).
+- The 2.68 bpw EXL3 map has no quality claim yet; it serves only on `--exl3_unrated_map=1`.
+- At 256K, PP5's 17th session leaves the first card about 7.7 MiB of its budget: a little less free memory there at
+  startup gives 16.
+- Golden scores for all 435 cases, with `anemone capture`, follow in a later release.
+
+### Known issues
+Two help texts built into the executable are out of date; the next release corrects them:
+- `anemone help axes` gives PP5's `--concurrency=multiple` row "5 at 1M", v0.0.3-alpha's count, and so do
+  `tools/cli/AXES.md`, `tools/cli/KNOBS.md` and `tools/cli/axes.json`. On v0.0.4-alpha PP5 fits
+  6 sessions at 1M ([USAGE.md](docs/USAGE.md)).
+- `anemone help knobs points_per_run` and `tools/cli/KNOBS.md` give `--points_per_run`'s load-stage range as 0..39
+  ("the load stage's grid of 35, then its A D D A's 4"). The load stage takes 0..78: its 35 arms run twice (70
+  points), then its eight-point A D D A D A A D confirmation. The Engram stage's 0..72 is right.
+
+### Release gate
+The release executable ([VALIDATION.md](docs/VALIDATION.md)) was gated on the reference machine before the tag, on
+17 Nov 2026.
+- **Cards:** `backend_cuda_card_test` passed in debug and release under `CUDA_DEVICE_ORDER` unset, `FASTEST_FIRST` and
+  `PCI_BUS_ID`, and the EXL3 rotation, EXL3 TCP forms and top-k card tests passed. The plain PP5 serve fitted the same
+  sessions under the three orders, and the 2.68 bpw map was refused without `--exl3_unrated_map=1` and served with it.
+- **Identity:** on PP5, TP4_PRO and TP4_EXL3, one user and 15 streams a route, with each serve's given copies kept
+  (`--turbo_load=0`), its outputs matched v0.0.3-alpha (source `f57d813`): PP5 15/15, TP4_PRO
+  15/15, TP4_EXL3 15/15; and the earlier production build (source `84858e7`): PP5
+  15/15, TP4_PRO 15/15, TP4_EXL3 15/15. On PP5 with the replica search
+  beside the same given copies (the default, no `--turbo_load=0`), its outputs matched v0.0.3-alpha's with the copies
+  kept: 15/15.
+- **1M sessions:** on a PP5 serve with `--session_slots=max`, `--context_tokens=1048576`, `--generated_tokens=1048576`,
+  `--temperature=1` and `--top_p=1` (the requests at T=0), the startup fit admitted 6 session slots of
+  1,048,576 tokens each. Served: one fresh 1M-token session, HTTP 200, the needle found, prefill 3076 tok/s (1,022,969 prompt tokens in 332.6 s), decode 12.8 ms/token; four at once,
+  HTTP 200 for all 8 requests, all 4 needles found, prefill about 766 tok/s each (1333.4 to 1336.8 s), decode 238.8 tok/s in all (4.19 ms/token).
+- **Fraser:** the same serve with `--context_tokens=524288` and `--generated_tokens=524288`, T=0, thinking off, 2,048
+  tokens, 1 user, 10 repetitions: median 171.1 tok/s
+  (5.84 ms/token), best 182.0 tok/s (5.49 ms/token).
+
 ## v0.0.3-alpha
 
 Anemone v0.0.3-alpha is a C11/CUDA engine for DeepSeek-V4.1-Flash-1017, on four CMP 170HX cards for EXL3, and on four
@@ -61,7 +200,7 @@ CMP 170HX plus an RTX PRO 6000 Blackwell for the original weights. The [README](
   against it.
 - **Proven changes:** the lint and cleanup merges kept objects or outputs identical; every merge ran under
   sanitizers with an adversarial review; the default and feature changes are in their own sections above. The
-  [release gate](#release-gate)'s identity check compares the release with the last GPU-gated build (source
+  [release gate](#release-gate-1)'s identity check compares the release with the last GPU-gated build (source
   `288fa1e`) on the three GPU splits' gated routes (PP5, TP4_PRO and TP4_EXL3; one user, 15 streams each).
 - [CONTRIBUTING.md](CONTRIBUTING.md) sets the bar for pull requests and issues.
 

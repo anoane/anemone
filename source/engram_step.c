@@ -105,6 +105,8 @@ struct engram_steps {
 	pthread_mutex_t recovery_lock;
 	struct copy_recovery recovery[STORAGE_MAXIMUM_COPIES];
 	uint64_t backoff_first_ns, probe_count;
+	_Atomic uint64_t
+		failed_reads; /* step reads whose block failed (its read or its digest), since the open */
 	_Atomic uint32_t probations, /* copies put on probation since the open */
 		recovering, /* copies whose phase is not RECOVERY_LIVE */
 		probation, /* copies that take no step's read */
@@ -303,6 +305,8 @@ static void block_completed(void *context, struct storage_flight_read *read)
 		return;
 	}
 	block->tried |= 1u << read->copy;
+	(void)atomic_fetch_add_explicit(&steps->failed_reads, 1u,
+					memory_order_relaxed);
 	if (quarantined) { /* the slot is lost: its lane goes on through the waiters */
 		chain_add(step, &chain, index_of(step, block), true);
 		chain_hand_over(step, &chain);
@@ -358,6 +362,13 @@ uint32_t engram_steps_probation(const struct engram_steps *steps)
 uint32_t engram_steps_probations(const struct engram_steps *steps)
 {
 	return steps != NULL ? atomic_load(&steps->probations) : 0u;
+}
+
+uint64_t engram_steps_failed_reads(const struct engram_steps *steps)
+{
+	return steps != NULL ? atomic_load_explicit(&steps->failed_reads,
+						    memory_order_relaxed) :
+			       0u;
 }
 
 uint64_t engram_steps_backoff(struct engram_steps *steps, uint32_t copy)

@@ -7,28 +7,28 @@ tunes the two actions and atomically saves a profile for later automatic reload.
 Serving never invokes this command or starts a benchmark itself.
 
 ```sh
-anemone autotune /srv/model.anemone --tokens=/srv/prompt_ids.u32 --prompt=1024 --profile=/srv/runtime/storage-profile.json --seconds=1650
+anemone autotune /srv/model.anemone --tokens=/srv/prompt1_ids.u32 --tokens=/srv/prompt2_ids.u32 --profile=/srv/runtime/storage-profile.json --seconds=1650
 ```
 
-Loading the model and looking up n-gram rows are separate operations, so autotune is being split into separate
-stages: replica preparation (copy), the load stage and the Engram stage. Each stage has its own parameters,
-mechanism, state and profile section. `--stage=copy` runs the copy stage alone:
+Loading the model and looking up n-gram rows are separate operations, so autotune runs in separate stages: replica
+preparation (copy), the load stage and the Engram stage. Each stage has its own parameters, mechanism, state and
+profile section. Without `--stage` the command runs the three in that order ([the run without
+--stage](#the-run-without-stage)). `--stage=copy` runs the copy stage alone:
 
 ```sh
 anemone autotune /srv/model.anemone --stage=copy --target=/srv/anemone_engram_rnd/replicas/<identity>.anemone --profile=/srv/runtime/storage-profile.json
 ```
 
 It prepares and verifies the replicas exactly as below, writes their verification and replica-search receipts, and
-records its decisions beside the profile (`.copy.json`). It runs no tuning and writes no profile. The copy stage takes
-no `--tokens` or `--prompt`; those belong to the lookup tuning. Without `--stage`, the copy is followed by the
-combined tuning described below, until the load and Engram stages replace it.
+records its decisions beside the profile (`.copy.json`). It runs no tuning and writes no profile. The copy stage
+refuses `--tokens` (the Engram stage's) and `--retune` by name.
 
 `--copy_workers=N` (1 to 32, default 24) is the copy stage's own parameter: N worker threads, each taking one 64 MiB
 chunk at a time through the source read, its SHA-256, the writes, the flush, the readback and the compare. The N
 workers are one pool shared by all targets: with k targets a chunk costs 1 read + 1 hash + k writes + k readbacks. A
 copy therefore runs at about N chunks over the sum of those stage times, until a drive's rate binds. The default of 24
 measured fastest on the 9100 PRO host: 4.99 GB/s to one target against 3.62 with the earlier 4, and 4.55 against 2.77
-to two (request 25b, 15 Nov 2026). The bytes and digests are the same at any count, and `--copy_workers=4` keeps the
+to two (15 Nov 2026). The bytes and digests are the same at any count, and `--copy_workers=4` keeps the
 earlier pace. The decisions record it (`"copy_workers"`), and each stage's `storage: copy stage` line reports its busy
 seconds and its bytes per busy second.
 
@@ -36,7 +36,7 @@ seconds and its bytes per busy second.
 matched until it has a second of the same length, then computes both SHA-256 digests in one interleaved pass (the
 x86-64 SHA extensions run two streams in about the time of one). The digests, and so the manifest, are the same; the
 copy keeps one more 64 MiB buffer a worker. It measured faster on the 9100 PRO host: 96 GiB to one target at 24
-workers copied at 4.93 and 5.02 GB/s paired against 4.84 and 5.00 with one hash a chunk (request 27, 15 Nov 2026).
+workers copied at 4.93 and 5.02 GB/s paired against 4.84 and 5.00 with one hash a chunk (15 Nov 2026).
 `--copy_hash_pairs=0` hashes one chunk at a time, the earlier default. The load stage refuses it by name.
 
 `--stage=load` runs the load stage alone. It tunes the TP host arena's read, the part of a TP load that fills the
@@ -58,41 +58,60 @@ anemone autotune /srv/model.anemone --stage=load --profile=/srv/runtime/storage-
   serving maps its own, so each point pays the first touch.
   - A point reads a window of the host-only extents, `--window_gib` (default 64) of whole extents. The window's
     start moves on by one window each point, so successive points read different regions.
-  - The grid crosses readers 0, 1, 2, 3, 4, 6 and 8 with pieces of 4, 8, 16, 32 and 64 MiB.
-- **Choice.** After the grid, the fastest arm other than serving's default (no cap, 16 MiB) runs A D D A against the
-  default at twice the window.
-  - Before its first point, one unmeasured arena of the A D D A's window is mapped and touched page by page, so that
-    point is not the first touch of an arena that size (R26: a cold first point read 8.9 GB/s against 35 to 48). The
-    warm-up's bytes, wall and CPU times are recorded as `"warmup"`, never ranked.
+  - The grid crosses readers 0, 1, 2, 3, 4, 6 and 8 with pieces of 4, 8, 16, 32 and 64 MiB: 35 arms, run twice.
+  - **Order (17 Nov 2026).** Pass 1 runs the arms in a fixed balanced order: no two consecutive points share readers
+    or piece, and every readers value and every piece value sits at the same mean position. Pass 2 runs them in the
+    reverse order, so each arm's two points average the same position and a linear drift in time cancels in every arm's
+    mean.
+    The earlier order ran every piece in turn, small to large, so the piece was confounded with time.
+  - Each arm ranks by the mean of its two points.
+- **Warm-ups.** Before the first grid point and before the first confirmation point a process measures (a resume
+  too), two unmeasured arenas of that point's size are mapped and touched page by page over its extents, so the point
+  is not the first touch of an arena that size (15 Nov 2026: a cold first A D D A point read 8.9 GB/s against 35 to
+  48; the first grid point without a warm-up, 4.41 GB/s at 360.8 s of CPU). Their bytes, wall and CPU times are
+  recorded as `"grid_warmup"` and `"warmup"`, never ranked.
+- **Cool wait.** Before each point the stage waits until every NVMe drive's composite temperature is below 60 °C, at
+  most 180 s and never past the lease. The wait is recorded with the point, and a point that starts above the bound is
+  flagged (`"hot_start":1` and `(started hot)` on its line).
+- **Choice.** After the grid, the fastest arm other than serving's default (no cap, 16 MiB) runs A D D A D A A D
+  against the default at twice the window: four points an arm, both at the same mean position.
   - The higher mean wins, even inside the noise: a faster option that reads the same bytes becomes the default.
   - Only means that are equal at the reported precision (GB/s to three decimals) go to the arm with fewer readers
     (no cap counts as the most), then to the smaller piece.
   - The spread (the larger arm's A D D A range over its mean) and the margin over the default are recorded beside the
     choice. When the default wins, the section holds the default's values. A spread over 25 % is flagged
     (`"spread_over_bound":1` and the selection line), not refused: look at the points before `--qualify`.
-- **Temperatures.** Every point records each NVMe drive's composite temperature before and after it.
+- **Temperatures and counters.** Every point records each NVMe drive's composite temperature before and after it, its
+  user and system CPU time apart, and the kernel's counters of its arena's first touch over the point
+  (`/proc/vmstat`: `thp_fault_alloc`, `thp_fault_fallback`, `compact_stall`, `compact_success`, `compact_fail`; a
+  counter the kernel lacks is `null`).
 
 Progress is kept in `<profile>.load-state` after every point. A lease (`--seconds`) or `--points_per_run=N` that
-ends first exits 75, and the same command resumes. `--plan` prints the copies, the host bytes and the points without
+ends first exits 75, and the same command resumes. A stop signal (SIGTERM, SIGINT) or the lease's end during a warm-up
+or a cool wait leaves that point unmeasured (`storage: load stopped before point N/78 was measured`): the run exits 75
+and the same command measures it, so a lease is overrun by at most the point being read when it ends. A state written by the earlier stage (schema 3: the earlier order
+and points) is named on one line and not resumed: the stage starts again. `--plan` prints the copies, the host bytes and the points without
 reading. The stage refuses the copy stage's options (`--target`, `--copy_workers`, `--copy_hash_pairs`, `--manifest`,
-`--verify`, `--replica_floor_percent`) and the lookup tuning's (`--tokens`, `--prompt`) by name.
+`--verify`, `--replica_floor_percent`) and the Engram stage's (`--tokens`) by name.
 
 **The load section.** The stage writes a schema 3 profile: `{"schema":3,"source":...,"load":{...}}`.
 - **Other members stay.** A later stage's member, such as `"engram"`, stays byte for byte; writing the section again
   replaces only `"load"`.
-- **Refusals.** A schema 2 profile (the combined tuning's) or another source's profile is refused by name before
-  any point is measured (`--plan` prints `"valid":false` for it), and again when the section is written. While the
-  combined tuning's schema 2 profile exists (at the default path too), give the stage its own `--profile`.
+- **Refusals.** A schema 2 profile (the retired combined tuning's) or another source's profile is refused by name
+  before any point is measured (`--plan` prints `"valid":false` for it), and again when the section is written. While
+  a schema 2 profile exists (at the default path too), give the stage its own `--profile` or move the schema 2 file
+  aside.
 - **Contents.**
   - The pack's header digest and size.
   - The copies' device keys, paths and filesystems.
   - `"tp"`: `readers_per_copy` and `piece_bytes`.
-  - Every point, with its rate, CPU time, per-copy bytes and temperatures.
-  - The A D D A's warm-up: its bytes, wall and CPU times.
-  - The selection: the winner, the challenger, the default, the A D D A rates, the spread with its bound and flag, the
+  - Every point, with its phase and pass, rate, CPU times, per-copy bytes, page counters, cool wait and temperatures.
+  - The grid's and the confirmation's warm-ups: their bytes, wall and CPU times.
+  - The selection: the winner, the challenger, the default, the eight confirmation rates in their order (A D D A D A A
+    D), the spread with its bound and flag, the
     margin, whether it was an exact tie and whether the default holds.
   - `"pp"`: the PP loader's values are measured by real loads on the cards, not by this stage, so its defaults hold.
-    R24 (15 Nov 2026, PP5 serve loads A D D A) set its readers a copy to 4: 16.442 and 16.399 s against 16.854 and
+    Real PP5 serve loads (15 Nov 2026, A D D A) set its readers a copy to 4: 16.442 and 16.399 s against 16.854 and
     17.207 s with 2, the earlier default (`--reader_threads_per_copy=2`); its piece stays 16 MiB.
 
 The section is a candidate: `"enabled":0,"qualification":"candidate"`. `anemone autotune PACK --stage=load --qualify`
@@ -109,15 +128,142 @@ applied (`profile = default` when the section's value is the default's), and whe
 `load_section_stale_shape`.
 Without a profile the TP load reads exactly as before.
 
-Token files are little-endian uint32 IDs from the real serving protocols. Repeat
-`--tokens=FILE --prompt=N` for each independent real prompt/continuation; inputs
-are hashed and processed through the production n-gram hash and gather code.
-No uniform/synthetic offset generator is used. Prompt prefixes are replayed table-first in
-chunks of at most1024 tokens, reserving the final prompt token for the first
-decode step, as in the engine. Decode uses at most64 observed single-token steps
-per trace at C1/C2/C4/C8; short continuations stop without wrapping/repeating.
-Rejected DSpark candidate coverage and end-to-end decode impact still require
-native traces/gates. Images/dead-token inputs are outside this initial command.
+`--stage=engram` runs the Engram stage alone. It tunes serving's step I/O, the path that reads the n-gram tables'
+blocks from the drives when the Engram fit puts tables on disk (`--engram_step_io`, the default for disk Engram on
+PP5 and TP4_PRO), through serving's own code (`engram_steps` over the drives' I/O rings):
+
+```sh
+anemone autotune /srv/model.anemone --stage=engram --tokens=/srv/prompt1_ids.u32 --tokens=/srv/prompt2_ids.u32 --profile=/srv/runtime/storage-profile.json
+```
+
+- **Copies.** The copies are the ones serving's disk store reads: the source, then the receipted replicas that the
+  replica search finds and that open beside it, each admitted as serving admits it (its medium, and no second path to
+  one physical drive). An EXL3 map is refused by name: the disk store reads packs.
+- **The store.** It opens as serving opens it with no RAM share and no cache, so every block is read from a drive:
+  the worst case, whose per-read path a store with a RAM share runs for fewer reads. The digest scan it runs at open
+  is timed and recorded (`"scan"`).
+- **Parameters.** Three parameters are tuned, each an existing serving knob: the I/O threads a copy
+  (`--engram_io_threads`, 1 to 4), their busy-poll window after the last read (`--engram_spin_us`, 0, 50, 200 or
+  1000 µs) and pinning (`--engram_io_pin`, 0 or 1): 32 arms, serving's default (2, 200 µs, pinned) among them. The RAM
+  share is never tuned: where the tables go is the RAM fit's decision.
+- **The trace.** `--tokens=FILE` (at most 16 files, 1 MiB together) gives real prompts as little-endian uint32 token
+  ids, a case a file; there is no synthetic input. Make them from public prompts with
+  `tools/measure/engram_trace tokenize TOKENIZER_TABLES MESSAGES_JSON OUTPUT_U32` (`make -f
+  tools/measure/engram_trace.mk`), for example the prompts of the golden dataset
+  ([anoane/anemone-ds41f1017-golden](https://huggingface.co/datasets/anoane/anemone-ds41f1017-golden)), one
+  messages file a prompt. The rows come from the pack's hashing constants, as serving computes them. The profile
+  records the files' digest, cases, tokens, rows and distinct blocks, never a token.
+- **Points.** Each point opens a flight of serving's shape (9 steps of 1024 slots, serving's read limit), with its
+  I/O threads pinned where serving pins them when the arm pins, and replays the trace at seven levels: D1, D2, D4 and
+  D8 (1, 2, 4 and 8 streams of 8-token decode steps), P1 and P2 (1 and 2 streams of 1024-token prefill chunks) and M
+  (4 decode streams beside a prefill stream, the decode recorded). Every stream replays the trace once from its own
+  first case; a level stops after 4 s. A step records the time to its first table's rows (table 0 is read at layer 1,
+  the wait serving exposes) and to every table's: p50, p99 and p99.9, with the rows a second, the process's cores
+  (CPU over wall), each copy's reads, the flight's counts and each NVMe drive's temperature before and after.
+  - Point k reads the trace moved by k × 7919 whole blocks, so no point reads a block an earlier one read, and the
+    real repeats and spread of the prompts stay.
+  - After its levels every point reads the first steps of each level and a prefill chunk again through the per-row
+    path and compares the rows byte for byte; a difference refuses the run, naming the point, level, table and step.
+- **Order.** An unmeasured warm-up of the default arm runs before the first point a process measures and again
+  before its first A D D A point. The grid's 32 arms run in an order seeded by the trace. A point with a retired ring,
+  a failed read, a copy left failed or a drive over 75 °C is disturbed and measured again after the grid; an arm
+  disturbed twice is left out, and the run is refused when it is the default's. A drive over 75 °C before a point
+  ends the run with exit 75.
+- **Choice.** The fastest arm other than the default (the challenger) runs A D D A against the default, a slot at a
+  time: a disturbed A D D A point is measured again in its slot, the order kept, and when a slot is disturbed twice
+  the A D D A ends and the default holds, named in the section (`"adda_disturbed_twice":1`) and on the selection
+  line.
+  - An arm's cost is the geometric mean over the seven levels of the first table's p50, each level the mean of the
+    arm's two A D D A points, so each level counts by its relative change (they range from microseconds to tens of
+    milliseconds).
+  - The lower cost wins, even inside the noise, unless a level of the challenger is slower than the default's by
+    more than that level's own spread (the larger arm's range over its mean): balanced holds no measured loss, so that
+    level blocks it, and the section names it (`"blocked_by"`).
+  - Costs equal at the reported precision (0.1 µs) go to the arm with fewer cores, then to the default.
+  - The margin and spread are recorded beside the choice; a spread over 10 % is flagged, not refused.
+
+Progress is kept in `<profile>.engram-state` after every point. A lease (`--seconds`, 1 to 1650, default 1650) or
+`--points_per_run=N` that ends first exits 75, and the same command resumes; the progress is resumed only for the
+same pack, copies (their device keys in order), trace and flight shape, and is removed once the section is written.
+`--plan` prints the copies, the trace's cases, tokens, rows and distinct blocks, the levels and the points done
+without opening the store, so it reads no table byte. The stage refuses the copy stage's options and the load
+stage's (`--window_gib`) by name, and the retired `--prompt`, and runs only with `--tokens` ("the Engram stage
+replays real prompts"); a `--tokens` file that does not read is refused by its own path, and a host whose io_uring
+refuses the first flight by name ("step I/O cannot start"). The run is a timing measurement: run it while no model
+loads, no GPU job runs and no other copy or tuning reads the drives.
+
+**The engram section.** The stage writes the `"engram"` member of the schema 3 profile, with its own schema 1;
+`"load"` and every other byte of the file stay. A schema 2 profile or another source's is refused by name before any
+point, as for the load stage.
+- The pack's header digest and size; the copies' device keys, paths and filesystems.
+- `"shape"`: the interface (`"uring_step"`), the steps and slots, the read limit, the RAM share (0) and cache (0) it
+  was measured with, the decode and prefill rows and the levels.
+- `"trace"`: its identity, cases, tokens, rows and distinct blocks.
+- `"step_io"`: `threads_per_copy`, `spin_us` and `pin`.
+- `"scan"`: the startup digest scan's readers a copy, bytes and time.
+- Every point (warm-ups, grid, re-measures, A D D A) with each level's numbers, cores, per-copy reads, retirements,
+  fallbacks, its disturbance and temperatures.
+- The selection: the winner, the challenger, the default, the points that held the A D D A's slots and their costs,
+  each level's spread and loss, the costs, margin, spread with its bound and flag, whether it was an exact tie,
+  whether the default holds, whether an A D D A slot was disturbed twice, the level that blocked the challenger and
+  the arms left out.
+
+The section is a candidate: `"enabled":0,"qualification":"candidate"`. `anemone autotune PACK --stage=engram
+--qualify` enables it once it names this pack, these copies and serving's flight shape. When the default holds,
+enabling it changes nothing; when another arm wins, enable it only after a serving check of that arm (PP5 and
+TP4_PRO with `--engram_ram_percent=0`, every stream identical to all-RAM).
+
+Serving applies an enabled section where step I/O starts, only while tables are read from disk (`--engram_ram_percent`
+below 100, by the knob or the fit) and only while it names this pack, exactly the disk store's copies by their device
+keys in their order (`--engram_sources` naming other copies makes it stale) and serving's flight shape. Each
+parameter is taken from its knob when one is given, then from the section, then from the default; the RAM share is
+never the section's. The startup line `engram step io: N copies, T threads a copy (knob|profile|profile =
+default|default), spin S us (...), pin P (...), ...` says which applied, and then `engram section applied` or `engram
+section not applied: REASON`, one of `profile_off`, `missing`, `not_a_stage_profile`, `no_engram_section`,
+`engram_section_malformed`, `engram_section_candidate`, `engram_section_stale_pack`, `engram_section_stale_copies` or
+`engram_section_stale_shape`. With every table in RAM no step I/O starts and the section is not read; on TP4_EXL3 it
+applies only with `--engram_step_io=1`.
+
+The load and Engram stages share only the schema 3 profile's container (a member's splice, the writable check and the
+qualify flip, by the member's name), the pack and copy identity reader and matcher (the pack's header digest and
+size, the copies' device keys in order: they name the pack and the replicas, and are no tuning parameter,
+measurement or decision), the drives' temperature reader and the clock helpers; each stage's parameters, mechanism,
+measurement, state, the schema of its own fields and its selection are its own.
+
+<a id="the-run-without-stage"></a>
+**The run without --stage.** `anemone autotune PACK` without `--stage` runs the copy, then the load stage, then the
+Engram stage, each through its own command line with `--profile`, `--replica_external` and what remains of
+`--seconds` (the Engram stage's at most 1650). It takes the copy stage's options, `--tokens` for the Engram stage and
+`--retune`.
+
+- A stage whose section names this pack and these copies (a candidate or qualified one) is skipped with one line,
+  `storage: autotune stage=load skipped: its section names this pack and these copies (--retune measures it
+  again)`; `--retune` runs it again, and it writes its section again as a candidate. A section that names another
+  pack or other copies is not current: its stage runs, the line naming the reason (`load_section_stale_copies`).
+- Without `--tokens` the Engram stage is skipped with one line (`storage: autotune stage=engram skipped: no
+  --tokens ...`).
+- A stage that runs says why first: `storage: autotune stage=engram runs (no_engram_section)`, or `(--retune)`.
+- The first stage that does not finish ends the run with its exit: 75 when the lease ends or a stop signal arrives,
+  and the same command resumes (a finished stage is then skipped as current). A `--retune` run is a series until a
+  run of it ends with an exit other than 75: `<profile>.retune-series` names each stage that finished in it, so the
+  same `--retune` command repeated after exit 75 skips a finished stage whose section is still current
+  (`storage: autotune stage=load skipped: it finished in this --retune series ...`) and resumes the rest. The last
+  line is `storage: autotune stage=all exit=N resumable=0|1`.
+- `--plan` prints the copy's plan, then one line a later stage: whether it would run, and why, or be skipped.
+- Before any copy, a profile the later stages would refuse (a schema 2 file, another source's) is refused by name.
+
+**The combined tuning (retired in v0.0.4).** The earlier `anemone autotune PACK --tokens=FILE --prompt=N` measured
+the copies' lookups through the per-row path with per-copy weights and wrote a schema 2 profile with both actions in
+one file. It is retired: the load and Engram stages replace it. Its lookup points measured a path serving no longer
+uses from disk tables (step I/O), its `step_io` block was never read by startup, and its `turbo_engram` RAM share
+overrode the RAM fit. `--prompt` is refused by name, by every stage: the Engram stage replays every `--tokens` case
+whole.
+
+**Migration.** There is no automatic conversion.
+- The combined tuning wrote its profiles inactive (`"enabled":0`), so none is active without a hand edit.
+- Serving still reads an existing schema 2 profile exactly as before (its reader goes in a later release).
+- The stages refuse to write into a schema 2 file by name: give them another `--profile`, or move the schema 2 file
+  aside.
 
 `--plan` performs read-only device/argument planning without copying, tuning,
 creating directories or writing a profile. For each selected target it also
@@ -193,45 +339,12 @@ The command checkpoints across bounded leases: exit75 means repeat the SAME
 command with the SAME profile/manifest/targets. Only fully verified files enter
 tuning. A partial stays only with explicit durable resume state; space/policy
 refusals remove its owned partial. Each invocation rechecks identities and floor.
-Progress is stored beside the profile (`.copy.json`, `.tune-state`, and the source
+Progress is stored beside the profile (`.copy.json`, `.load-state`, `.engram-state`, and the source
 manifest) and beside each replica (`.copy-state`, `.copy-lock`). Do not remove
 these during an active or resumable run. Copy time is separate from tuning and
 ordinary startup/lookup measurements. All copies/benchmarks need the operator's
 CPU/disk window with GPU idle and no model load or timed GPU job.
 
-This initial CPU search compares page-locked16MiB sequential reads with1/2/4
-threads per device, production direct/fixed-file io_uring gathers, solo devices
-and, for every set of two or more copies (with more than three copies, the full set
-only), lookup shares that are equal, proportional to each copy's solo speed, or to
-its square. Load points read every copy, so they run on the full set only, and
-their readers steal: each copy's readers take the next 16 MiB chunk from one
-cursor, as the loader's do, so a faster copy reads more. Every load point reads
-the same 8 GiB (less of a smaller pack) and is ranked by time per byte. The
-profile's load shares are the winner's chunks per copy, recorded with
-`"share":"steal"`; the loader applies them only with `--load_tuned_weights=1`
-(a static split, for comparison), and otherwise steals. Each lookup
-point runs with the bounded cache and again uncached (the block cache bypassed;
-rows in the RAM prefix still come from memory); only cached points can win the
-candidate's lookup. It records
-refused points (including memlock limits), per-step p50/p99, prefill chunk costs,
-the rows gathered and wall time per stream level (rows per second),
-all decisions and exact reference-hash agreement. Unique-row ratio and exact
-block LRU reuse-distance histogram on the natural concatenated trace choose a
-bounded conditional-p90 cache budget (64..512MiB). In a profile, a zero load share
-keeps a retained copy for lookup only (it is left out of the load list); this
-tuner's load winner reads every copy, and its lookup may set a slow copy's share
-to 0.
-Broader mechanism/QD/stripe/NUMA search and cross-load/native effects remain gates.
-
-CPU results are saved as an **inactive candidate** (`enabled:0`) with both action
-sections, hardware identities, source manifest and every measured/refused point.
-This protects the unchanged defaults until native startup-to-serving, paired
-TTFT/decode/prefill/concurrency and numerical/state qualification. The runtime
-owner activates/installs only the qualified profile; every later start, including
-after reboot, reloads it automatically. The recommendation does not authorize
-implicit tuning at boot or an unqualified speed claim. The Python storage module
-is retained for tiny host fixtures/qualification helpers; its production copy,
-manifest and tune CLI routes are removed.
 
 Sequential startup loading and random Engram lookup are separate actions. They
 share device discovery, physical identities and verified copies, and have
@@ -343,7 +456,8 @@ hint; an explicit `off` is a choice and prints no hint. Explicit
 replica-policy flags bypass the saved profile. Explicit settings in another
 action's family override that action. No start benchmarks, copies or retunes.
 
-The profile uses schema2; source manifests remain schema1. Required shape:
+The retired combined tuning wrote schema 2 profiles, and serving still reads them; no command writes one any more
+(the stages write schema 3, above). Source manifests remain schema1. Schema 2's required shape:
 
 ```json
 {
@@ -370,9 +484,9 @@ The profile uses schema2; source manifests remain schema1. Required shape:
 }
 ```
 
-The Engram section's `step_io` records the stage's selection and the serving evidence it rests on (step I/O was
-measured in real serving, not by the tuner). Startup does not read it: serving PP5 or TP4_PRO from disk tables uses
-step I/O by default (`--engram_step_io`).
+Schema 2's `turbo_engram.step_io` block recorded serving evidence, not a measurement of the tuner's, and startup
+never read it. The step I/O selection serving applies is the schema 3 profile's `"engram"` section, written by the
+Engram stage.
 
 This inactive example is not a tuned configuration. Weights are relative request
 shares from separately measured aggregate winners, never assumed equal or derived

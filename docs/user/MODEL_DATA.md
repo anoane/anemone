@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Model data for Anemone v0.0.3-alpha
+# Model data for Anemone v0.0.4-alpha
 
 The release can prepare its model data on a CPU machine from two public,
 revision-pinned Hugging Face snapshots. The converters are separate from the
@@ -124,7 +124,7 @@ export CUDA_VISIBLE_DEVICES= PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 TRANSFOR
 "$PYTHON" tools/convert/make_pack.py convert "$OFFICIAL" "$DATA/original.anemone" --reference "$OFFICIAL" --jobs 2
 "$PYTHON" tools/convert/make_pack.py verify "$DATA/original.anemone" --jobs 2
 "$PYTHON" tools/convert/make_hybrid.py "$OFFICIAL" "$EXL3" "$DATA/hybrid"
-"$PYTHON" tools/convert/make_virtual_pack.py --native "$DATA/original.anemone" --hybrid "$DATA/hybrid" --exl3-config "$EXL3/quantization_config.json" --output "$DATA/model.exl3map"
+"$PYTHON" tools/convert/make_virtual_pack.py --native "$DATA/original.anemone" --hybrid "$DATA/hybrid" --exl3-config "$EXL3/quantization_config.json" --quality-established "LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-2.9bpw @ 0be63c33, TP4_EXL3's default map: qualified by the release gates' TP4_EXL3 identity checks (RELEASE_NOTES.md) and its golden metrics (docs/results/GOLDEN_METRICS.md)" --output "$DATA/model.exl3map"
 ```
 
 For these individual commands, set `OFFICIAL`, `EXL3` and `DATA` to your selected
@@ -202,7 +202,40 @@ Beside the map, `model.exl3map.descriptor.json` records:
   - `established`: `--quality-established` names the qualification that established it, by its records;
   - `none`: neither was given. Such a map is for explicit opt-in only.
 
-The descriptor leaves the map's bytes unchanged. The engine does not read it yet.
+`tools/model_data.sh` writes `established`, with the reference the map command above gives: it accepts only the EXL3
+shards that `docs/user/model-data/exl3.sha256` pins, the LibertAI 2.9 bpw checkpoint of TP4_EXL3's default map, and
+the engine lists that map's pack as established (below). A map made by v0.0.3-alpha's `tools/model_data.sh` has a
+`none` descriptor; the [release notes](../../RELEASE_NOTES.md#upgrade-from-v003-alpha) give the command that
+rewrites it.
+
+The descriptor leaves the map's bytes unchanged. The engine reads it once at startup, when the pack holds EXL3
+matrices: beside the map's real file (`<real path>.descriptor.json`, the map's links followed), after the pack opens
+and before anything loads. It refuses a descriptor that disagrees, with one line naming the field:
+- the format version (1) and exactly the members above, those that bind each of its type;
+- the open pack's size and header digest;
+- `architecture.model_type` (`deepseek_v41`), the mul1 codebook and the expert geometry;
+- each (layer, matrix kind)'s width counts, against the pack's own records, and the summary;
+- `front_end.tables`' sha256, when the descriptor names it and the command reads the tables.
+
+`none` is served only with `--exl3_unrated_map=1` (no quality claim) and refused otherwise, naming the map;
+`established` and `recorded` serve by default, and a recorded capture's sha256 is checked against its file. Startup
+prints the descriptor's path and sha256, the quantiser's source, the widths and the quality. With no descriptor beside
+the map (or no room for one: a map name over 239 bytes leaves its descriptor's name over the file system's 255), what
+the open pack carries decides: a pack whose header digest and size the model lists as established
+(`V41_DATA_ESTABLISHED_EXL3_PACKS` in `source/model_v41.h`: TP4_EXL3's 2.9 bpw map, digest 17897322250946657769,
+424522379264 bytes) is served by default, any other only with `--exl3_unrated_map=1`, and refused otherwise, naming
+its digest; startup says which.
+
+The model is the one the pack's header names, in the engine's registry of the models it carries
+(`source/model_registry.c`: DeepSeek-V4.1-Flash, whose expert geometry and established packs these checks read); a pack
+of EXL3 matrices naming another model is refused at the same step, in one line naming the model.
+
+With `--exl3_tc_moe=1` on TP4_EXL3's BF16 wire, the same step also checks the model against the geometry the
+tensor-core MoE's kernels are built for (`include/anemone/exl3_tc.h`): hidden 5120, 6 routes a row, 384 experts, 40
+layers with the decoder's first at 20, and each rank's chunk of the intermediate 512 or 640 columns (with
+`--exl3_expert_rotation`, which moves the chunks between the ranks, chunk c is 512 for an even c and 640 for an odd
+one). A model that differs is refused before anything loads, in one line naming the model and the field;
+DeepSeek-V4.1-Flash passes, and nothing is printed then.
 
 The only external map sources are the original pack and LibertAI shards
 `model-00002-of-00043.safetensors` through `model-00041-of-00043.safetensors`.

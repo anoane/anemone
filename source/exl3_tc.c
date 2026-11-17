@@ -9,7 +9,6 @@
 #include <string.h>
 
 #include "anemone/linear_records.h"
-#include "anemone/model_layout.h"
 #include "anemone/router_records.h"
 #include "anemone/step_records.h"
 
@@ -23,9 +22,6 @@
 #define TC_MOST_ROTATION \
 	(EXL3_TC_THREE_WAY_FIRST + EXL3_TC_THREE_WAY_RANKS - 1u) /* 0 to 5 */
 #define TC_NAME_BYTES 64u
-/* a record's intermediate: the routed chunks' widths (exl3_tc_records.h), the i640 and i512 forms */
-#define TC_WIDE_INTERMEDIATE 640u
-#define TC_NARROW_INTERMEDIATE 512u
 /* a 16 x 16 weight tile's bytes a unit of bits_x2: 256 weights of bits_x2 / 2 bits */
 #define TC_TILE_BYTES_PER_BITS_X2 16u
 #define TC_STEP_K 16u /* a product step's inputs (k16) */
@@ -131,8 +127,8 @@ tc_prepare(const struct exl3_tc_record *record, uint64_t arena_byte_count,
 	if (record == NULL || backend == NULL ||
 	    backend->kernel_prepare == NULL || card == NULL ||
 	    launches_out == NULL || record->row_count == 0 ||
-	    (record->intermediate != TC_WIDE_INTERMEDIATE &&
-	     record->intermediate != TC_NARROW_INTERMEDIATE) ||
+	    (record->intermediate != EXL3_TC_WIDE_INTERMEDIATE &&
+	     record->intermediate != EXL3_TC_NARROW_INTERMEDIATE) ||
 	    exl3_width_name(record->bits_x2) == NULL ||
 	    record->job_capacity == 0 || record->pass != 0 ||
 	    !(record->activation_limit >= 0.0f) ||
@@ -315,8 +311,8 @@ tcp_prepare(const struct exl3_tcp_record *record, uint64_t arena_byte_count,
 	    backend->kernel_prepare == NULL || card == NULL ||
 	    launches_out == NULL || launch_count_out == NULL ||
 	    record->row_count == 0 || record->row_count > EXL3_TCP_CHUNK_ROWS ||
-	    (record->intermediate != TC_WIDE_INTERMEDIATE &&
-	     record->intermediate != TC_NARROW_INTERMEDIATE) ||
+	    (record->intermediate != EXL3_TC_WIDE_INTERMEDIATE &&
+	     record->intermediate != EXL3_TC_NARROW_INTERMEDIATE) ||
 	    exl3_width_name(record->bits_x2) == NULL || record->pass != 0 ||
 	    record->rotation > TC_MOST_ROTATION ||
 	    (record->rotation != 0 &&
@@ -325,8 +321,8 @@ tcp_prepare(const struct exl3_tcp_record *record, uint64_t arena_byte_count,
 	    record->half_rows >= record->row_count || record->part != 0 ||
 	    record->two_blocks > 1u ||
 	    (record->cone_layer != 0 &&
-	     (record->cone_layer < MODEL_DECODER_FIRST_LAYER ||
-	      record->cone_layer >= MODEL_LAYERS)))
+	     (record->cone_layer < EXL3_TC_CONE_FIRST_LAYER ||
+	      record->cone_layer >= EXL3_TC_CONE_LAYERS)))
 		return STATUS_INVALID_ARGUMENT;
 	if (!exl3_tc_width_supported(record->bits_x2))
 		return STATUS_UNSUPPORTED;
@@ -356,7 +352,7 @@ tcp_prepare(const struct exl3_tcp_record *record, uint64_t arena_byte_count,
 	     (record->step_offset > arena_byte_count || step_bytes > arena_byte_count - record->step_offset)))
 		return STATUS_INVALID_ARGUMENT;
 	const bool joint = record->row_count <= EXL3_TCP_JOINT_ROWS;
-	const bool i640 = record->intermediate == TC_WIDE_INTERMEDIATE,
+	const bool i640 = record->intermediate == EXL3_TC_WIDE_INTERMEDIATE,
 		   mixed = record->rotation != 0;
 	const bool h640 = i640 && !mixed &&
 			  (form == TCP_FORM_HYBRID || (form == TCP_FORM_DEFAULT && joint));

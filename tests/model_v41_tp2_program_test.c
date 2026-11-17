@@ -25,6 +25,7 @@
 #include "anemone/site_front_records.h"
 #include "anemone/draft_records.h"
 #include "anemone/sampler_records.h"
+#include "anemone/sampler.h"
 #include "anemone/attention_core_records.h"
 #include "step_driver.h"
 
@@ -1111,6 +1112,21 @@ static void check_mixed_driver(const struct pack_record *pack, uint32_t layout,
 		programs[index] = program;
 		const bool thin = program->kind == PROGRAM_THIN;
 		const bool wide = program->kind == PROGRAM_WIDE;
+		struct sampler_logits_part parts[BACKEND_MAXIMUM_CARDS];
+		uint32_t part_count = 0;
+		expect(!thin ||
+			       (sampler_logits_parts(
+					program, MODEL_VOCABULARY_VALUE, parts,
+					BACKEND_MAXIMUM_CARDS,
+					&part_count) == STATUS_OK &&
+				part_count == 1u &&
+				parts[0].card == program->result_card &&
+				parts[0].offset ==
+					program->cards[program->result_card]
+						.logits_offset &&
+				parts[0].first_token == 0 &&
+				parts[0].token_count == MODEL_VOCABULARY_VALUE),
+		       "the capture's logits parts of a mixed TP program: the result card's whole head");
 		const bool whole_graph = layout == V41_DATA_TP_LAYOUT_QUAD &&
 					 (exact_shards || wire != 0);
 		const uint32_t merged_prefix_savings =

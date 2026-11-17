@@ -11,7 +11,8 @@
  *     byte of the token a row read there, written before the row draws, at TEST_SERVING_STATE_POSITIONS positions a
  *     slot, or as test_serving_set_ring last said (a position beyond takes the slot of its remainder: a ring). Each
  *     step first sleeps the step delay, and is counted. A row that asks for logits draws, with the row's position as
- *     its logit:
+ *     its logit, and writes its row of the head's logits [rows][TEST_SERVING_VOCABULARY] (float32, card 0's
+ *     logits_offset): the draw's the position, every other token t's -(t + 1):
  *       the scripts (the default; one slot): a step that begins at position 0 begins its script again; each row draws
  *       the next token of the script the session's seed names (scripts[seed % count], read up to
  *       TEST_SERVING_END_TOKEN), the end token past its end. The scripts (one at least, whatever the model) must
@@ -62,6 +63,8 @@
 #define TEST_SERVING_REASONING_BEGIN_TOKEN 258u
 #define TEST_SERVING_JOINED_TOKEN 259u
 #define TEST_SERVING_VOCABULARY 260u
+#define TEST_SERVING_LOGITS_OFFSET \
+	16384u /* card 0's head logits: [rows][TEST_SERVING_VOCABULARY] float32 */
 
 MUST_CHECK result_status
 test_serving_open(uint32_t context_tokens, const uint32_t *const *scripts,

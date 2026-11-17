@@ -44,7 +44,9 @@ def main():
             code |= words[word + 1] << (WORD_BITS - shift)
         if code & VALUE_MASK == NEGATIVE_ZERO:
             raise ValueError(f"{source}: noncanonical negative-zero correction at value {index}")
+    # REUSE-IgnoreStart: the tag below is the generated file's, not this program's
     lines = ["/* SPDX-License-Identifier: AGPL-3.0-or-later */",
+             # REUSE-IgnoreEnd
              "/* Generated numeric data; never edit or check in this build product.",
              f" * Input text SHA-256: {hashlib.sha256(payload).hexdigest()}",
              f" * Packed data SHA-256: {hashlib.sha256(struct.pack('<' + 'I' * WORDS, *words)).hexdigest()} */"]

@@ -91,6 +91,23 @@
 #include "model_vision.h"
 
 #define V41_DATA_MODEL_NAME "DeepSeek-V4.1-Flash"
+#define V41_DATA_CONFIG_MODEL_TYPE \
+	"deepseek_v41" /* config.json's model_type: an EXL3 map descriptor's architecture */
+/* The EXL3 packs whose quality is established without a descriptor beside them (exl3_descriptor.h), by what the pack
+ * carries: TP4_EXL3's default 2.9 bpw map, its pack's header digest and size as P1's rebuilt map's descriptor b0612d2f
+ * records them (EXL3_FLEXIBILITY_DESIGN.md 3a') */
+#define V41_DATA_EXL3_29_SOURCE \
+	"LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-2.9bpw @ 0be63c33"
+#define V41_DATA_EXL3_29_HEADER_DIGEST UINT64_C(17897322250946657769)
+#define V41_DATA_EXL3_29_BYTES UINT64_C(424522379264)
+#define V41_DATA_ESTABLISHED_EXL3_PACKS                         \
+	{                                                       \
+		{                                               \
+			V41_DATA_EXL3_29_SOURCE,                \
+				V41_DATA_EXL3_29_HEADER_DIGEST, \
+				V41_DATA_EXL3_29_BYTES          \
+		}                                               \
+	}
 #define V41_DATA_CONTEXT_LIMIT \
 	1048576u /* CFG:29 original_seq_len times CFG:31 rope_factor */
 #define V41_DATA_END_TOKEN 1u /* CKPT:9 eos_token_id (GEN:157) */
@@ -260,7 +277,8 @@ static inline uint32_t v41_span_rows(uint32_t row_capacity)
  * shared expert's gate and up, the n-gram values and projection, the indexer's weights, the compressor's products;
  * model_v41_program.c's chunk walk), and what a full program reads across its slabs: QUERY_NORMED from layer 20's
  * front to the rest of it, CANDIDATES from layer 20 to the candidate readers. The queries and the index queries are a
- * span's. A product's rows lie packed at its output's row: COMPRESSOR_KV of a 1-to-1 source, bfloat16, at half its
+ * span's, the core's scratch a slab's, in a TP plan a chunk's (v41_array_rows). A product's rows lie packed at its
+ * output's row: COMPRESSOR_KV of a 1-to-1 source, bfloat16, at half its
  * row. The draft's (dspark_v1/DESIGN.md 5.2): ROUND, the round record (step_records.h)
  * right behind RESULT, so that one download takes both; DRAFT_EMBEDDING, the copy of embed.weight; DRAFT_TAPS (model
  * layout's draft taps) and what the context makes of them, main_proj's quantized rows (a piece's packed at their
@@ -392,6 +410,24 @@ static inline uint32_t v41_span_rows(uint32_t row_capacity)
 enum v41_array { V41_DATA_ARRAYS(V41_DATA_ENUMERATOR) V41_DATA_ARRAY_COUNT };
 #undef V41_DATA_ENUMERATOR
 
+/* The rows an array has in a plan (enum v41_rows): kind, its V41_DATA_ARRAYS entry's, but in a PP plan (no
+ * chunk_attention_arrays: neither TP's chunk_core nor its queries_piece runs) the attention core's scratch is a slab's,
+ * as each slab's core takes it in turn, and the queries and the index queries are a span's, as the chunk walk writes
+ * each span's ahead of its first slab. The plan sizes an array by it and the programs lay a view's rows into the
+ * array by it. */
+static inline enum v41_rows v41_array_rows(bool chunk_attention_arrays,
+					   enum v41_array array,
+					   enum v41_rows kind)
+{
+	if (chunk_attention_arrays)
+		return kind;
+	if (array == V41_DATA_ARRAY_ATTENTION_SCORES)
+		return V41_SLAB;
+	const bool queries = array == V41_DATA_ARRAY_QUERIES ||
+			     array == V41_DATA_ARRAY_INDEX_QUERIES;
+	return queries ? V41_SPAN : kind;
+}
+
 /* Where a tensor lies: the arena of card, from stored.byte_offset; a vector has input_size 1. All zero for a tensor
  * of a layer that has none. */
 struct v41_tensor {
@@ -499,6 +535,12 @@ struct model_plan_record {
 	uint32_t reserved_zero;
 	struct model_vision vision;
 	struct v41_original_head original_head;
+	/* every TP plan's (its stages', so its canonical's and views'): the arrays v41_array_rows narrows hold a
+	 * chunk's rows, as TP's chunk_core and queries_piece read them; false in a PP plan, where a card's queries and
+	 * core scratch are one span's and one slab's, reused in program order: work that runs two parts of one PP
+	 * chunk at once (as TP's split_overlap halves) must give each part its own, as rows_select checks only the
+	 * bounds */
+	bool chunk_attention_arrays;
 };
 
 /* Plan before card open; initialise after ordinary arena_initialise, which zeros appended ranges too.

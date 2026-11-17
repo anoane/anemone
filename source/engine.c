@@ -45,10 +45,11 @@
 
 #define OK STATUS_OK
 
+/* A forced continuation (engine_submit_forced) ends at its limit alone. */
 static bool token_ends_generation(const struct inference_engine *engine,
 				  uint32_t token_id)
 {
-	return engine->description.ignore_eos == 0 &&
+	return engine->description.ignore_eos == 0 && engine->forced == NULL &&
 	       token_id == engine->description.end_token_id;
 }
 
@@ -723,6 +724,26 @@ static uint32_t session_cost_depth(const struct inference_engine *engine,
 				prices, NULL);
 }
 
+/* A forced continuation's proposals (engine_submit_forced): its next tokens behind an anchor that is a generated
+ * token's row, at most its rows less the anchor, the rows left in the step and its tokens left less the anchor's;
+ * none behind the prompt's last row. Their count. */
+static uint32_t forced_proposals(const struct inference_engine *engine,
+				 const struct command_cursor *cursor,
+				 uint32_t anchor_position, uint32_t rows_left,
+				 uint32_t *proposals_out)
+{
+	const uint32_t left =
+		cursor->command.generated_token_limit - cursor->generated - 1u;
+	uint32_t most = engine->forced->rows - 1u;
+	most = rows_left < most ? rows_left : most;
+	most = left < most ? left : most;
+	if (anchor_position < command_end(&cursor->command))
+		return 0;
+	memcpy(proposals_out, engine->forced->token_ids + cursor->generated,
+	       most * sizeof(*proposals_out));
+	return most;
+}
+
 /* The proposals of an owner whose rows in the step so far end with anchor_position: none unless that row draws; else
  * the drafter's, at most the description's draft positions, the rows left in the step and as many as leave the
  * anchor's draw and theirs within the command's limit and the context (a round never runs past its last token), and
@@ -735,6 +756,9 @@ static uint32_t proposals_taken(struct inference_engine *engine,
 {
 	if (cursor->command.reasoning_budget != 0 && !cursor->reasoning.closed)
 		return 0; /* forced closing must be consumed before any speculative successor */
+	if (engine->forced != NULL)
+		return forced_proposals(engine, cursor, anchor_position,
+					rows_left, proposals_out);
 	cursor->dspark_opportunity = false;
 	cursor->live_probe_planned = false;
 	cursor->needs_dspark_tail = false;
@@ -1012,10 +1036,13 @@ static void cone_planned(struct inference_engine *engine,
 }
 
 /* Worker-private reasoning policy. Control insertion changes only opt-in commands; the
- * next ordinary row consumes the real delimiter, so token events and KV history agree. */
+ * next ordinary row consumes the real delimiter, so token events and KV history agree. A forced continuation's token
+ * replaces the draw (engine_submit_forced). */
 static uint32_t controlled_token(struct inference_engine *engine,
 				 struct command_cursor *cursor, uint32_t token)
 {
+	if (engine->forced != NULL)
+		token = engine->forced->token_ids[cursor->generated];
 	uint32_t controlled = token;
 	cursor->status = reasoning_token(&cursor->command,
 					 engine->description.end_token_id,
@@ -1042,6 +1069,9 @@ static void command_finished(struct inference_engine *engine,
 	const uint32_t session_slot = cursor->command.session_slot;
 	cursor->is_ready = false;
 	(void)pthread_mutex_lock(&engine->lock);
+	/* written only when set: no store on its line otherwise */
+	if (engine->forced != NULL)
+		engine->forced = NULL;
 	engine_live_publish(engine);
 	engine->live.slots[session_slot].finish_kind = kind;
 	engine->live.slots[session_slot].finished_ns = engine_now_ns();
@@ -1191,6 +1221,10 @@ static void command_advanced(struct inference_engine *engine,
 						       held_limit(engine) ?
 				       GENERATION_EVENT_FINISHED_AT_LIMIT :
 				       GENERATION_EVENT_TOKEN;
+			if (engine->forced != NULL)
+				cursor->status = engine->forced->rows_landed(
+					engine->forced->context, rows, results,
+					row_count, row_count - 1u, 1u);
 		}
 	}
 	if (cursor->status != OK) {
@@ -2301,6 +2335,7 @@ static bool flight_taken_off(struct inference_engine *engine,
 				rows_left,
 			step_planned, flight->owner_count == 1u, proposals);
 		drafts = engine->draft_positions != 0 &&
+			 engine->forced == NULL &&
 			 (cursor->needs_dspark_tail ||
 			  (proposed != 0 &&
 			   cursor->draft_source == DRAFT_LOOKUP)) &&
@@ -2711,6 +2746,8 @@ static void round_statistics(struct inference_engine *engine,
  * is in flight. */
 void engine_flight_landed(struct inference_engine *engine)
 {
+	/* read before any final event: once that is queued a forced submit may write it */
+	const struct engine_forced_continuation *const forced = engine->forced;
 	struct step_round round = { .session_slot = STEP_NO_SESSION };
 	struct step_row_result *const results = engine->results;
 	memset(results, 0, engine->row_capacity * sizeof(*results));
@@ -2795,7 +2832,9 @@ void engine_flight_landed(struct inference_engine *engine)
 			continue;
 		}
 		const uint32_t anchor_row = row - 1u - proposed;
-		if ((flight->rows[anchor_row].flags & STEP_ROW_LOGITS) != 0) {
+		const bool draws =
+			(flight->rows[anchor_row].flags & STEP_ROW_LOGITS) != 0;
+		if (draws && forced == NULL) {
 			round_statistics(engine, cursor, flight, anchor_row,
 					 proposed, owner_round);
 		}
@@ -2845,9 +2884,10 @@ void engine_flight_landed(struct inference_engine *engine)
 				       GENERATION_EVENT_TOKEN;
 			goes_on = kind == GENERATION_EVENT_TOKEN &&
 				  index < proposed &&
-				  drawn->token_id ==
-					  flight->rows[anchor_row + index + 1u]
-						  .token_id;
+				  (forced != NULL ||
+				   drawn->token_id ==
+					   flight->rows[anchor_row + index + 1u]
+						   .token_id);
 			accepted += goes_on ? 1u : 0u;
 		}
 		if (!cursor->is_ready) {
@@ -2857,7 +2897,7 @@ void engine_flight_landed(struct inference_engine *engine)
 						      flight->owners[turn] ?
 					      *owner_round :
 					      (struct step_round){ 0 };
-		if (proposed != 0) {
+		if (proposed != 0 && forced == NULL) {
 			const uint32_t doubled = cursor->depth + cursor->depth;
 			cursor->rounds++;
 			cursor->proposals += proposed;
@@ -2889,6 +2929,14 @@ void engine_flight_landed(struct inference_engine *engine)
 			cursor->status = cut;
 			engine_driver_failed(engine, cut);
 			kind = GENERATION_EVENT_FAILED;
+		}
+		if (forced != NULL && draws &&
+		    kind != GENERATION_EVENT_FAILED) {
+			cursor->status = forced->rows_landed(
+				forced->context, flight->rows, results,
+				flight->row_count, anchor_row, accepted + 1u);
+			kind = cursor->status == OK ? kind :
+						      GENERATION_EVENT_FAILED;
 		}
 		if (kind != GENERATION_EVENT_TOKEN) {
 			command_finished(engine, cursor, kind);
@@ -3549,8 +3597,11 @@ result_status engine_describe(const struct inference_engine *engine,
 	return OK;
 }
 
-result_status engine_submit(struct inference_engine *engine,
-			    const struct generation_command_record *command)
+/* engine_submit's, and engine_submit_forced's with forced (its own refusals checked). */
+MUST_CHECK static result_status
+command_submitted(struct inference_engine *engine,
+		  const struct generation_command_record *command,
+		  const struct engine_forced_continuation *forced)
 {
 	if (engine == NULL || command == NULL ||
 	    command->session_slot >= engine->description.session_slot_count ||
@@ -3667,10 +3718,47 @@ result_status engine_submit(struct inference_engine *engine,
 					       slot->reach_count :
 					       0,
 				       0, slot->statistics };
+		if (forced != NULL)
+			engine->forced = forced;
 		(void)pthread_cond_signal(&engine->wake);
 	}
 	(void)pthread_mutex_unlock(&engine->lock);
 	return status;
+}
+
+result_status engine_submit(struct inference_engine *engine,
+			    const struct generation_command_record *command)
+{
+	return command_submitted(engine, command, NULL);
+}
+
+result_status
+engine_submit_forced(struct inference_engine *engine,
+		     const struct generation_command_record *command,
+		     const struct engine_forced_continuation *forced)
+{
+	bool refused =
+		engine == NULL || command == NULL || forced == NULL ||
+		forced->token_ids == NULL || forced->rows_landed == NULL ||
+		engine->description.session_slot_count != 1 ||
+		engine->is_batch || command->kept_token_count != 0 ||
+		command->sampler_temperature != 0.0f ||
+		command->sampler_top_p != 1.0f || command->sampler_top_k != 0 ||
+		command->reasoning_budget != 0 || command->images != NULL ||
+		forced->token_count == 0 ||
+		command->generated_token_limit != forced->token_count ||
+		forced->rows == 0 ||
+		forced->rows > engine->description.speculative_depth + 1u ||
+		forced->token_count > engine->description.context_token_limit ||
+		command->new_token_count >
+			engine->description.context_token_limit + 1u -
+				forced->token_count;
+	for (uint32_t index = 0; !refused && index < forced->token_count;
+	     index++)
+		refused = forced->token_ids[index] >=
+			  engine->description.vocabulary_size;
+	return refused ? STATUS_INVALID_ARGUMENT :
+			 command_submitted(engine, command, forced);
 }
 
 result_status engine_cancel(struct inference_engine *engine,

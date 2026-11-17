@@ -8,6 +8,16 @@
 
 #include "anemone/backend_seam.h"
 #include "anemone/exl3_tc_records.h"
+#include "anemone/model_layout.h"
+
+/* The geometry the kernels are built for, which a model's routed experts must have (exl3_descriptor_tc_check):
+ * EXL3_TC_HIDDEN, EXL3_TC_PAIRS_PER_ROW routes a row and EXL3_TCP_EXPERTS experts (exl3_tc_records.h), a rank's
+ * intermediate of the i640 or i512 forms, and the prefill form's cone layers, from EXL3_TC_CONE_FIRST_LAYER (its
+ * kernels skip a row's cone relative to it) to EXL3_TC_CONE_LAYERS - 1. */
+#define EXL3_TC_WIDE_INTERMEDIATE 640u
+#define EXL3_TC_NARROW_INTERMEDIATE 512u
+#define EXL3_TC_CONE_FIRST_LAYER MODEL_DECODER_FIRST_LAYER
+#define EXL3_TC_CONE_LAYERS MODEL_LAYERS
 
 MUST_CHECK result_status exl3_tc_prepare(
 	const struct exl3_tc_record *record, uint64_t arena_byte_count,

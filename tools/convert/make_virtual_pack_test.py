@@ -147,6 +147,7 @@ class VirtualPackTest(unittest.TestCase):
         self.refused('both', 'recorded or established, not both', '--exl3-source', SOURCE, '--quality-record',
                      str(self.folder / 'capture.json'), '--quality-established', REFERENCE)
         self.refused('empty', 'needs the reference', '--exl3-source', SOURCE, '--quality-established', ' ')
+        self.refused('sourceless', 'needs the checkpoint\'s provenance', '--exl3-source', ' \t')
         self.refused('wide', 'expert geometry', '--exl3-source', SOURCE, config_text={'hidden_size': 2 * HIDDEN})
         self.refused('short', 'not a routed expert', '--exl3-source', SOURCE, config_text={'n_routed_experts': 1})
         self.refused('more', 'layers of 3 experts', '--exl3-source', SOURCE, config_text={'n_routed_experts': 3})

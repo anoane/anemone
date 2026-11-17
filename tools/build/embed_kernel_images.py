@@ -25,7 +25,9 @@ def main():
         print(__doc__, file = sys.stderr)
         return EXIT_STATUS_USAGE
     output_path, module_paths = sys.argv[1], sorted(sys.argv[2:])
+    # REUSE-IgnoreStart: the tag below is the generated file's, not this program's
     lines = ["/* SPDX-License-Identifier: AGPL-3.0-or-later */",
+             # REUSE-IgnoreEnd
              "/* Written by tools/build/embed_kernel_images.py: a build product, never edited. */",
              '#include "backend_cuda_kernel_images.h"', ""]
     entries = []

@@ -2,7 +2,7 @@
 # Axis table
 
 Generated from `tools/cli/axes.json` by `tools/cli/generate_axes.py`.
-Registry SHA256: `3e7af62a7895a006bd23e5aff1fb96b67391dda01fe5024b1fc5d03ddf2196d5`.
+Registry SHA256: `269af6b4c50853d5c249d9045481f893dbefd5267460fdec39cbbf12a5cd416c`.
 
 The four selectors apply to generate and serve. There are no selectable names or aliases.
 
@@ -39,6 +39,7 @@ compatible forms are qualified.
 - The banked PP5/session6 route remains raw-only, with its lower TTFT and numerical scope retained. No axis value enables banking.
 - Each knob belongs to one axis per split (generate_axes.py refuses a second owner), except a recipe's yielded fallback: a yielded knob is set by its recipe and exactly one other axis, whose value wins where it gives one (stage 3 review D3). Session acceptance and the other measured modifiers enter only after their per-split confirmation: focus=decode carries arm 1 (session acceptance 6) on PP5 (r1m) and TP4_PRO (r5s); every other Original non-exact row takes the CLI value 0. No-axis defaults and exact/EXL3 contracts are unchanged.
 - --load_piece_mib (the load's read size: the PP piece and staging slot, the TP host arena's chunk) changes load time only, with the same bits. It belongs to the focus axis on every split with every value empty (balanced, ttft, decode and prefill set nothing): its measured value comes from the storage profile's load section (anemone autotune --stage=load), and the knob wins over the profile, the profile over the default (0: 16 MiB).
+- --engram_io_threads, --engram_spin_us and --engram_io_pin (step I/O's threads a copy, completion spin window and pinning, active only while Engram tables are read from disk) change I/O time and CPU only, with the same bits. They belong to the focus axis on every split with every value empty (balanced, ttft, decode and prefill set nothing): serving A/B found the step-I/O variants within noise in tok/s at C1-C8 and in TTFT, so no value has a measured gain to map. Their measured values come from the storage profile's engram section (anemone autotune --stage=engram), and the knob wins over the profile, the profile over the default (2 threads a copy, 200 us, pinned). A per-value split (single from D1, multiple from D2-D8, ttft from P1 and P2) enters only after a serving gain at that value.
 
 ## GPU split tables
 

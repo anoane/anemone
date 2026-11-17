@@ -36,15 +36,30 @@
 #define EXL3_BITS_X2_K2_5 5u
 #define EXL3_BITS_X2_K3 6u
 #define EXL3_BITS_X2_K4 8u
+/* The widths this build decodes, a row each, in the order every kernel family instantiates them:
+ * ROW(the entries' width part, bits_x2, TC or NO_TC, ...), TC where the tensor-core MoE (kernel_exl3_tc,
+ * kernel_exl3_tcp: SM_80 only, the TP route) has entries for the width: no K4 checkpoint fits the CMPs, so K4 takes the
+ * other families. ROW takes the arguments after the table's as its own (at least one, empty allowed): EXL3_EVERY_WIDTH
+ * and EXL3_TC_WIDTH call X(width part, bits_x2, ...) for each row or each TC row. A width is one row here and its two
+ * named constants; one outside the table is refused at the pack's open (pack.h). */
+#define EXL3_WIDTHS(ROW, ...)                         \
+	ROW(k2, EXL3_BITS_X2_K2, TC, __VA_ARGS__)     \
+	ROW(k2_5, EXL3_BITS_X2_K2_5, TC, __VA_ARGS__) \
+	ROW(k3, EXL3_BITS_X2_K3, TC, __VA_ARGS__)     \
+	ROW(k4, EXL3_BITS_X2_K4, NO_TC, __VA_ARGS__)
+#define EXL3_EVERY_WIDTH(width, bits_x2, tc, X, ...) \
+	X(width, bits_x2, __VA_ARGS__)
+#define EXL3_TC_WIDTH(width, bits_x2, tc, X, ...) \
+	EXL3_TC_WIDTH_##tc(X, width, bits_x2, __VA_ARGS__)
+#define EXL3_TC_WIDTH_TC(X, width, bits_x2, ...) X(width, bits_x2, __VA_ARGS__)
+#define EXL3_TC_WIDTH_NO_TC(X, width, bits_x2, ...)
+#define EXL3_WIDTH_BIT(width, bits_x2, ...) | (1u << (bits_x2))
 /* The widths this build decodes, a bit per bits_x2 */
-#define EXL3_SUPPORTED_BITS_X2                                 \
-	((1u << EXL3_BITS_X2_K2) | (1u << EXL3_BITS_X2_K2_5) | \
-	 (1u << EXL3_BITS_X2_K3) | (1u << EXL3_BITS_X2_K4))
-/* The tensor-core MoE's widths (kernel_exl3_tc, kernel_exl3_tcp: SM_80 only, the TP route): no K4 checkpoint fits
- * the CMPs, so K4 takes the other families */
-#define EXL3_TC_SUPPORTED_BITS_X2                              \
-	((1u << EXL3_BITS_X2_K2) | (1u << EXL3_BITS_X2_K2_5) | \
-	 (1u << EXL3_BITS_X2_K3))
+#define EXL3_SUPPORTED_BITS_X2 \
+	(0u EXL3_WIDTHS(EXL3_EVERY_WIDTH, EXL3_WIDTH_BIT, ))
+/* The tensor-core MoE's widths */
+#define EXL3_TC_SUPPORTED_BITS_X2 \
+	(0u EXL3_WIDTHS(EXL3_TC_WIDTH, EXL3_WIDTH_BIT, ))
 #define EXL3_BITS_PER_BYTE 8u
 #define EXL3_HALF_BYTES 2u
 #define EXL3_WORD_BITS 32u

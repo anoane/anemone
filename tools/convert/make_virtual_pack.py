@@ -45,6 +45,7 @@ EXPERT_MATRICES = 3
 WIDENING_MATRICES = 2  # (intermediate, hidden): gate and up
 GEOMETRY_KEYS = ('hidden_size', 'moe_intermediate_size', 'n_routed_experts', 'num_hidden_layers')
 DESCRIPTOR_FORMAT_VERSION = 1
+SPACES = ' \t\n\v\f\r'  # a text of only these is none, as the engine's descriptor reader holds (exl3_descriptor.c)
 HASH_CHUNK_BYTES = 64 * 1024 * 1024
 HEADER = struct.Struct('<8sQII40s')
 SEGMENT = struct.Struct('<QQQII')
@@ -114,8 +115,10 @@ def main():
     args = parser.parse_args()
     if args.quality_record is not None and args.quality_established is not None:
         parser.error('a map\'s quality is recorded or established, not both')
-    if args.quality_established is not None and not args.quality_established.strip():
+    if args.quality_established is not None and not args.quality_established.strip(SPACES):
         parser.error('--quality-established needs the reference that established the quality')
+    if args.exl3_source is not None and not args.exl3_source.strip(SPACES):
+        parser.error('--exl3-source needs the checkpoint\'s provenance, "repository @ revision"')
     NATIVE, HYBRID, DEST = (path.absolute() for path in (args.native, args.hybrid, args.output))
     if DEST.suffix != '.exl3map':
         parser.error('the runtime requires an .exl3map output suffix')

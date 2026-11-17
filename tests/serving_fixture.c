@@ -48,6 +48,12 @@
 #define BACK_OFFSET 8192u /* card 0's: what card 1 handed back */
 #define STATE_OFFSET \
 	32768u /* a byte a position: the token the model read there */
+#define LOGITS_OFFSET TEST_SERVING_LOGITS_OFFSET
+_Static_assert(LOGITS_OFFSET + (uint64_t)TEST_SERVING_MOST_ROWS *
+				       TEST_SERVING_VOCABULARY *
+				       sizeof(float) <=
+		       STATE_OFFSET,
+	       "the logits fit before the state");
 _Static_assert(SESSION_OFFSET + TEST_SERVING_SLOT_ROOM * STEP_SESSION_BYTES <=
 			       RESULT_OFFSET &&
 		       ROUND_OFFSET + STEP_ROUND_BYTES <= ECHO_OFFSET,
@@ -441,6 +447,18 @@ static bool model_stand_in(const struct kernel_launch *launch,
 			.token_id = draws ? (int32_t)token : STEP_NO_TOKEN,
 			.logit = draws ? (float)step_row.position : 0.0f
 		};
+		for (uint32_t column = 0;
+		     draws && column < TEST_SERVING_VOCABULARY;
+		     column++) { /* the head: the draw's logit the row's position, every other below */
+			const float logit = column == token ?
+						    result.logit :
+						    -(float)(column + 1u);
+			memcpy(arena + LOGITS_OFFSET +
+				       ((size_t)row * TEST_SERVING_VOCABULARY +
+					column) *
+					       sizeof(logit),
+			       &logit, sizeof(logit));
+		}
 		script_cursor += draws ? 1u : 0u;
 		memcpy(arena + RESULT_OFFSET + STEP_RESULT_BYTES +
 			       (size_t)row * STEP_ROW_RESULT_BYTES,
@@ -592,7 +610,9 @@ result_status test_serving_open(uint32_t context_tokens,
 						card == 0 && device_draft ?
 							ROUND_OFFSET :
 							PROGRAM_NOWHERE,
-					.logits_offset = PROGRAM_NOWHERE,
+					.logits_offset =
+						card == 0 ? LOGITS_OFFSET :
+							    PROGRAM_NOWHERE,
 					.streams_offset = PROGRAM_NOWHERE,
 					.carried_pre_offset = PROGRAM_NOWHERE,
 					.engram_rows_offset = PROGRAM_NOWHERE,

@@ -93,5 +93,7 @@ void axis_arguments_free(struct axis_arguments_record *arguments);
 void axis_log(const struct axis_arguments_record *arguments, FILE *stream);
 int help_axes(FILE *stream);
 int help_knobs(const char *prefix, FILE *stream);
+/* Whether the knob catalogue has a row for the option of argument (its name, up to any "="). */
+bool knob_catalogued(const char *argument);
 
 #endif

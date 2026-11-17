@@ -320,6 +320,14 @@
     "commands": "TAKEN_BY_ALL"
   },
   {
+    "name": "exl3_unrated_map",
+    "variable": "&exl3_unrated_map",
+    "least": "0",
+    "most": "1",
+    "count": "1",
+    "commands": "TAKEN_BY_ALL"
+  },
+  {
     "name": "tp_head_mma",
     "variable": "&tp_head_mma",
     "least": "0",

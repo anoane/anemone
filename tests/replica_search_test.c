@@ -2,8 +2,11 @@
 /* The startup replica search over a fixture mount table: which mounts it may open a receipt on. Every fixture mount
  * holds a valid receipt of the source; inotify records each receipt the search opens. An EXL3 source is described by
  * the drive of its largest source, not by its map file's (storage_device_path). A receipt stands for its replica only
- * beside a regular file (no link) of the source's size; turbo load's reader keeps, greedily, the replicas that open
- * with the copies already kept (replicas_reader_open). */
+ * beside a regular file (no link) of the source's size; a replica on the drive of a copy the load was given is refused
+ * as one on the source's (serve's search beside explicit copies), and beside a given copy, the source too, that no
+ * topology describes or whose medium names no drive none is admitted (unknown_physical_topology, the copy named), while
+ * a given copy on tmpfs shares no drive; turbo load's reader keeps the given copies first and, greedily, the replicas
+ * that open with the copies already kept (replicas_reader_open). */
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -28,7 +31,11 @@
 #define TABLE_LINE_BYTES 64u /* a fixture line besides its mount point */
 #define CAPTURE_BYTES 8192u /* the search's stderr */
 #define SKIP_LINE_BYTES 128u /* the btrfs line besides its mount point */
+#define ENDED_LINE_BYTES \
+	256u /* the search's end line besides the copy's path */
 #define REPLICA_LAYOUT "anemone_engram_rnd/replicas"
+#define LEGACY_LAYOUT \
+	"anemone/replicas" /* the search's last layout under a mount point */
 #define MAP_MAGIC_BYTES 8u
 #define MAP_RESERVED_BYTES 40u
 #define MAP_SOURCES 2u /* the map itself and its one shard */
@@ -38,8 +45,16 @@
 #define OUTPUT_BYTES 4096u /* the greedy open's lines */
 #define FULL_SET_OPENS \
 	1u /* the reader over every copy is tried once before any greedy open */
+#define GIVEN_COPIES 2u /* the given copies case's: the source and one more */
+#define ANONYMOUS_DEVICE_FILE \
+	"/sys/fs/cgroup/cgroup.controllers" /* cgroup2: an anonymous st_dev */
+#define NO_DRIVE_FILE \
+	"/proc/version" /* proc: described, its medium naming no drive (as overlay's, a loop device's or FUSE's) */
 #define ADMISSION_FIRST_DEVICE \
 	5u /* the admission case's /dev/fixture numbers follow fixture0..4 */
+#define UNDESCRIBED_SOURCE_DEVICE                    \
+	(ADMISSION_FIRST_DEVICE + ADMISSION_MOUNTS + \
+	 2u) /* after the passed-over and given copies cases' */
 /* One filesystem of the scratch disk listed as vfat, btrfs and ext4, and a tmpfs point listed as ext4. */
 enum fixture_mount {
 	VFAT_MOUNT,
@@ -118,9 +133,9 @@ _Static_assert(sizeof(struct map_record) ==
 /* The bytes of every fixture replica: as many as the receipt's (the search admits only a file of the source's size). */
 static const unsigned char replica_bytes[FIXTURE_BYTES];
 
-/* mount/anemone_engram_rnd/replicas/<digest>.anemone(.receipt) naming the source; the replica directory's watch. */
-static bool receipted_mount(const char *mount, const char *real_source,
-			    int events, int *watch)
+/* mount/layout/<digest>.anemone(.receipt) naming the source; the replica directory's watch. */
+static bool receipted_mount(const char *mount, const char *layout,
+			    const char *real_source, int events, int *watch)
 {
 	char directory[PATH_MAX], path[PATH_MAX], name[PATH_MAX],
 		text[PATH_MAX], receipt[PATH_MAX + FIXTURE_NAME_BYTES];
@@ -131,8 +146,7 @@ static bool receipted_mount(const char *mount, const char *real_source,
 				    "header_digest %016" PRIx64 "\n",
 				    real_source, FIXTURE_BYTES, FIXTURE_DIGEST);
 	if (length <= 0 || (size_t)length >= sizeof(text) ||
-	    !directories(mount, REPLICA_LAYOUT) ||
-	    !joined(directory, mount, REPLICA_LAYOUT) ||
+	    !directories(mount, layout) || !joined(directory, mount, layout) ||
 	    !joined(path, directory, name) ||
 	    !written_bytes(path, replica_bytes, sizeof(replica_bytes)))
 		return false;
@@ -148,22 +162,31 @@ static bool receipted_mount(const char *mount, const char *real_source,
 
 static void remove_mount(const char *mount)
 {
-	char directory[PATH_MAX], path[PATH_MAX + FIXTURE_NAME_BYTES];
-	if (!joined(directory, mount, REPLICA_LAYOUT))
-		return;
+	static const struct {
+		const char *layout,
+			*parent; /* a replica directory and the one above it */
+	} layouts[] = { { REPLICA_LAYOUT, "anemone_engram_rnd" },
+			{ LEGACY_LAYOUT, "anemone" } };
 	static const char *const suffixes[] = { "", ".receipt" };
-	for (size_t index = 0; index < sizeof(suffixes) / sizeof(suffixes[0]);
-	     index++) {
-		const int length = snprintf(path, sizeof(path),
-					    "%s/%016" PRIx64 ".anemone%s",
-					    directory, FIXTURE_DIGEST,
-					    suffixes[index]);
-		if (length > 0 && (size_t)length < sizeof(path))
-			(void)unlink(path);
-	}
-	(void)rmdir(directory);
-	if (joined(directory, mount, "anemone_engram_rnd"))
+	char directory[PATH_MAX], path[PATH_MAX + FIXTURE_NAME_BYTES];
+	for (size_t layout = 0; layout < sizeof(layouts) / sizeof(layouts[0]);
+	     layout++) {
+		if (!joined(directory, mount, layouts[layout].layout))
+			continue;
+		for (size_t index = 0;
+		     index < sizeof(suffixes) / sizeof(suffixes[0]); index++) {
+			const int length = snprintf(path, sizeof(path),
+						    "%s/%016" PRIx64
+						    ".anemone%s",
+						    directory, FIXTURE_DIGEST,
+						    suffixes[index]);
+			if (length > 0 && (size_t)length < sizeof(path))
+				(void)unlink(path);
+		}
 		(void)rmdir(directory);
+		if (joined(directory, mount, layouts[layout].parent))
+			(void)rmdir(directory);
+	}
 	(void)rmdir(mount);
 }
 
@@ -203,7 +226,8 @@ static void exl3_source_case(const char *shared)
 	prepared = prepared && written_bytes(map, &record, sizeof(record)) &&
 		   realpath(map, real_map) != NULL &&
 		   mkdir(mount, FIXTURE_MODE) == 0 &&
-		   receipted_mount(mount, real_map, events, &watch);
+		   receipted_mount(mount, REPLICA_LAYOUT, real_map, events,
+				   &watch);
 	const int length = prepared ? snprintf(line, sizeof(line),
 					       "/dev/fixture4 %s ext4 rw 0 0\n",
 					       mount) :
@@ -224,8 +248,10 @@ static void exl3_source_case(const char *shared)
 		};
 		char found[REPLICAS_MOST][REPLICA_PATH_CAPACITY];
 		FILE *const stream = fopen(table, "re");
-		const uint32_t count = replicas_find_mounts(
-			stream, real_map, &header, found, REPLICAS_MOST, false);
+		const char *const copies[] = { real_map };
+		const uint32_t count =
+			replicas_find_mounts(stream, copies, 1u, &header, found,
+					     REPLICAS_MOST, false);
 		if (stream != NULL)
 			(void)fclose(stream);
 		struct local_device_description internal;
@@ -249,13 +275,15 @@ static void exl3_source_case(const char *shared)
 	(void)rmdir(root);
 }
 
-/* The search over a table of mount points listed as ext4, its stderr captured through the file at capture_path (as
- * main's case captures it) into text. */
+/* The search over a table of mount points listed as ext4 beside the source and, unless NULL, one more given copy, its
+ * stderr captured through the file at capture_path (as main's case captures it) into text. */
 static uint32_t captured_search(const char *table, const char *real_source,
+				const char *given,
 				char (*found)[REPLICA_PATH_CAPACITY],
 				const char *capture_path, char *text,
 				size_t capacity)
 {
+	const char *const copies[] = { real_source, given };
 	const struct pack_header header = { .file_byte_count = FIXTURE_BYTES,
 					    .header_digest = FIXTURE_DIGEST };
 	text[0] = '\0';
@@ -269,7 +297,8 @@ static uint32_t captured_search(const char *table, const char *real_source,
 		redirected = dup2(capture, STDERR_FILENO) >= 0;
 	FILE *const stream = fopen(table, "re");
 	const uint32_t count = replicas_find_mounts(
-		stream, real_source, &header, found, REPLICAS_MOST, false);
+		stream, copies, given != NULL ? GIVEN_COPIES : 1u, &header,
+		found, REPLICAS_MOST, false);
 	if (stream != NULL)
 		(void)fclose(stream);
 	(void)fflush(stderr);
@@ -336,8 +365,8 @@ static void admission_case(const char *shared)
 			   (size_t)length < sizeof(replicas[index]) &&
 			   joined(mounts[index], root, names[index]) &&
 			   mkdir(mounts[index], FIXTURE_MODE) == 0 &&
-			   receipted_mount(mounts[index], real_source, events,
-					   &watch);
+			   receipted_mount(mounts[index], REPLICA_LAYOUT,
+					   real_source, events, &watch);
 	}
 	prepared = prepared && unlink(replicas[MISSING_MOUNT]) == 0 &&
 		   truncate(replicas[SHORT_MOUNT], FIXTURE_BYTES - 1u) == 0 &&
@@ -366,7 +395,7 @@ static void admission_case(const char *shared)
 		char found[REPLICAS_MOST][REPLICA_PATH_CAPACITY];
 		const uint32_t count =
 			listed_one ?
-				captured_search(table, real_source, found,
+				captured_search(table, real_source, NULL, found,
 						capture, text, sizeof(text)) :
 				0;
 		const bool full = index == FULL_MOUNT;
@@ -395,6 +424,270 @@ static void admission_case(const char *shared)
 			remove_mount(mounts[index]);
 	(void)unlink(table);
 	(void)unlink(source);
+	if (events >= 0)
+		(void)close(events);
+	(void)rmdir(root);
+}
+
+/* A stale receipt in the earlier layout of a mount whose later layout (anemone/replicas) holds a valid copy: the
+ * search admits the copy and names the stale receipt, passed over with its reason, once (before, it passed it over
+ * silently); a mount with no layout admitted keeps its one excluded line (admission_case). */
+static void passed_over_case(const char *shared)
+{
+	char root[] = "/var/tmp/anemone-replica-search-passed-XXXXXX";
+	char source[PATH_MAX] = { 0 }, real_source[PATH_MAX], table[PATH_MAX],
+	     capture[PATH_MAX], mount[PATH_MAX] = { 0 },
+	     stale[PATH_MAX + FIXTURE_NAME_BYTES],
+	     legacy[PATH_MAX + FIXTURE_NAME_BYTES],
+	     line[PATH_MAX + TABLE_LINE_BYTES], text[CAPTURE_BYTES];
+	const int events = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+	int stale_watch = -1, legacy_watch = -1;
+	bool prepared =
+		mkdtemp(root) != NULL && events >= 0 &&
+		joined(source, shared, "passed-source.anemone") &&
+		written_bytes(source, replica_bytes, sizeof(replica_bytes)) &&
+		realpath(source, real_source) != NULL &&
+		joined(table, root, "mounts") &&
+		joined(capture, root, "stderr") &&
+		joined(mount, root, "mount") &&
+		mkdir(mount, FIXTURE_MODE) == 0 &&
+		receipted_mount(mount, REPLICA_LAYOUT, real_source, events,
+				&stale_watch) &&
+		receipted_mount(mount, LEGACY_LAYOUT, real_source, events,
+				&legacy_watch);
+	const int stale_length = snprintf(stale, sizeof(stale),
+					  "%s/" REPLICA_LAYOUT "/%016" PRIx64
+					  ".anemone",
+					  mount, FIXTURE_DIGEST);
+	const int legacy_length = snprintf(legacy, sizeof(legacy),
+					   "%s/" LEGACY_LAYOUT "/%016" PRIx64
+					   ".anemone",
+					   mount, FIXTURE_DIGEST);
+	const int line_length =
+		snprintf(line, sizeof(line), "/dev/fixture%u %s ext4 rw 0 0\n",
+			 ADMISSION_FIRST_DEVICE + ADMISSION_MOUNTS, mount);
+	prepared = prepared && stale_length > 0 &&
+		   (size_t)stale_length < sizeof(stale) && legacy_length > 0 &&
+		   (size_t)legacy_length < sizeof(legacy) && line_length > 0 &&
+		   (size_t)line_length < sizeof(line) && unlink(stale) == 0 &&
+		   written(table, line);
+	expect(prepared,
+	       "fixture mount: a receipt beside no file in the first layout, a full copy in the legacy one");
+	struct local_device_description device;
+	const bool admitted =
+		prepared &&
+		local_device_describe(mount, &device) == STATUS_OK &&
+		local_device_media_refusal(&device, false) == NULL;
+	char found[REPLICAS_MOST][REPLICA_PATH_CAPACITY];
+	const uint32_t count = prepared ? captured_search(table, real_source,
+							  NULL, found, capture,
+							  text, sizeof(text)) :
+					  0;
+	expect(!prepared || (count == (admitted ? 1u : 0u) &&
+			     (count == 0 || strcmp(found[0], legacy) == 0)),
+	       "the legacy layout's copy is found behind a stale receipt");
+	expect(!prepared || !admitted ||
+		       (occurrences(
+				text,
+				" passed over: replica_missing_short_or_unverified") ==
+				1 &&
+			strstr(text, stale) != NULL &&
+			occurrences(
+				text,
+				"excluded: replica_missing_short_or_unverified") ==
+				0),
+	       "the stale receipt before the admitted layout is named once, with its reason");
+	if (mount[0] == '/')
+		remove_mount(mount);
+	(void)unlink(table);
+	(void)unlink(source);
+	if (events >= 0)
+		(void)close(events);
+	(void)rmdir(root);
+}
+
+/* Serve given two copies (17 Nov 2026): the source in /dev/shm, a second copy and a receipted replica's mount on one
+ * /var/tmp device. Beside the source alone the replica is found; beside both given copies it is refused by name
+ * (duplicate_physical_device), as a replica on the source's own drive is; beside a given copy no topology describes or
+ * whose medium names no drive the search ends with the copy named (unknown_physical_topology); beside a given copy on
+ * tmpfs, which shares no drive, the replica is found. */
+static void given_copies_case(const char *shared)
+{
+	char root[] = "/var/tmp/anemone-replica-search-given-XXXXXX";
+	char source[PATH_MAX] = { 0 }, real_source[PATH_MAX], table[PATH_MAX],
+	     capture[PATH_MAX], mount[PATH_MAX] = { 0 },
+	     given[PATH_MAX] = { 0 }, line[PATH_MAX + TABLE_LINE_BYTES],
+	     text[CAPTURE_BYTES];
+	const int events = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+	int watch = -1;
+	bool prepared =
+		mkdtemp(root) != NULL && events >= 0 &&
+		joined(source, shared, "given-source.anemone") &&
+		written_bytes(source, replica_bytes, sizeof(replica_bytes)) &&
+		realpath(source, real_source) != NULL &&
+		joined(given, root, "given.anemone") &&
+		written_bytes(given, replica_bytes, sizeof(replica_bytes)) &&
+		joined(table, root, "mounts") &&
+		joined(capture, root, "stderr") &&
+		joined(mount, root, "mount") &&
+		mkdir(mount, FIXTURE_MODE) == 0 &&
+		receipted_mount(mount, REPLICA_LAYOUT, real_source, events,
+				&watch);
+	const int length =
+		snprintf(line, sizeof(line), "/dev/fixture%u %s ext4 rw 0 0\n",
+			 ADMISSION_FIRST_DEVICE + ADMISSION_MOUNTS + 1u, mount);
+	prepared = prepared && length > 0 && (size_t)length < sizeof(line) &&
+		   written(table, line);
+	expect(prepared,
+	       "fixture: a source in /dev/shm, a given copy and a receipted mount on /var/tmp");
+	struct local_device_description device;
+	const bool admitted =
+		prepared &&
+		local_device_describe(mount, &device) == STATUS_OK &&
+		local_device_media_refusal(&device, false) == NULL;
+	char found[REPLICAS_MOST][REPLICA_PATH_CAPACITY];
+	const uint32_t alone = prepared ? captured_search(table, real_source,
+							  NULL, found, capture,
+							  text, sizeof(text)) :
+					  0;
+	expect(!prepared || alone == (admitted ? 1u : 0u),
+	       "beside the source alone the replica on another drive is found");
+	char memory[PATH_MAX] = { 0 };
+	const bool memory_written =
+		prepared && joined(memory, shared, "given-memory.anemone") &&
+		written_bytes(memory, replica_bytes, sizeof(replica_bytes));
+	const uint32_t beside_memory =
+		memory_written ?
+			captured_search(table, real_source, memory, found,
+					capture, text, sizeof(text)) :
+			0;
+	expect(memory_written && beside_memory == (admitted ? 1u : 0u) &&
+		       (!admitted ||
+			(strstr(text, "eligible") != NULL &&
+			 strstr(text, "unknown_physical_topology") == NULL)),
+	       "beside a given copy on tmpfs, which shares no drive, the replica is found");
+	const uint32_t beside =
+		prepared ? captured_search(table, real_source, given, found,
+					   capture, text, sizeof(text)) :
+			   0;
+	expect(!prepared ||
+		       (beside == 0 &&
+			(!admitted ||
+			 strstr(text, "duplicate_physical_device") != NULL)),
+	       "beside two given copies a replica on a given copy's drive is refused by name");
+	/* A given copy no topology describes could share the replica's drive: a file on an anonymous st_dev (cgroup2's,
+	   as a btrfs subvolume's is) where the host has one, a file whose medium is described but names no drive (a
+	   /proc file, as overlay, a loop device or FUSE describe), and a stand-in whose describe fails (no such
+	   file). */
+	char missing[PATH_MAX] = { 0 }, ended[PATH_MAX + SKIP_LINE_BYTES];
+	const char *const undescribed[] = { ANONYMOUS_DEVICE_FILE,
+					    NO_DRIVE_FILE, missing };
+	struct stat anonymous;
+	const bool have_anonymous =
+		stat(ANONYMOUS_DEVICE_FILE, &anonymous) == 0 &&
+		local_device_describe(ANONYMOUS_DEVICE_FILE, &device) !=
+			STATUS_OK;
+	expect(local_device_describe(NO_DRIVE_FILE, &device) == STATUS_OK &&
+		       device.count == 0 &&
+		       strcmp(device.filesystem, "proc") == 0,
+	       "a /proc file is described on a medium that names no drive");
+	prepared = prepared && joined(missing, root, "undescribed.anemone");
+	for (uint32_t variant = have_anonymous ? 0u : 1u;
+	     prepared && variant < sizeof(undescribed) / sizeof(undescribed[0]);
+	     variant++) {
+		const uint32_t ended_search = captured_search(
+			table, real_source, undescribed[variant], found,
+			capture, text, sizeof(text));
+		const int ended_length = snprintf(
+			ended, sizeof(ended),
+			"storage: replica search ends: given copy 1 %s is on no described drive, so no replica is "
+			"admitted beside it: unknown_physical_topology\n",
+			undescribed[variant]);
+		expect(ended_search == 0 &&
+			       (!admitted ||
+				(ended_length > 0 &&
+				 (size_t)ended_length < sizeof(ended) &&
+				 strstr(text, ended) != NULL &&
+				 strstr(text, "eligible") == NULL)),
+		       "beside a given copy no topology describes no replica is admitted, the copy named with "
+		       "unknown_physical_topology");
+	}
+	if (mount[0] == '/')
+		remove_mount(mount);
+	(void)unlink(table);
+	(void)unlink(given);
+	if (memory[0] == '/')
+		(void)unlink(memory);
+	(void)unlink(source);
+	if (events >= 0)
+		(void)close(events);
+	(void)rmdir(root);
+}
+
+/* A source no topology describes, or whose medium names no drive, ends the search as any given copy does, named copy
+ * 0: a file on an anonymous st_dev (cgroup2's) where the host has one, and a /proc file, each beside a mount of its own
+ * on /var/tmp with a receipt naming it. A missing source never reaches the line: the search refuses it first, silently
+ * (its real path). */
+static void undescribed_source_case(void)
+{
+	char root[] = "/var/tmp/anemone-replica-search-source-XXXXXX";
+	char table[PATH_MAX], capture[PATH_MAX],
+		mount[PATH_MAX] = { 0 }, real_source[PATH_MAX],
+		line[PATH_MAX + TABLE_LINE_BYTES], text[CAPTURE_BYTES],
+		ended[PATH_MAX + ENDED_LINE_BYTES];
+	const char *const sources[] = { ANONYMOUS_DEVICE_FILE, NO_DRIVE_FILE };
+	const int events = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+	struct local_device_description device;
+	struct stat anonymous;
+	const bool have_anonymous =
+		stat(ANONYMOUS_DEVICE_FILE, &anonymous) == 0 &&
+		local_device_describe(ANONYMOUS_DEVICE_FILE, &device) !=
+			STATUS_OK;
+	bool prepared = mkdtemp(root) != NULL && events >= 0 &&
+			joined(table, root, "mounts") &&
+			joined(capture, root, "stderr") &&
+			joined(mount, root, "mount");
+	expect(prepared, "fixture: a scratch folder on /var/tmp");
+	for (uint32_t variant = have_anonymous ? 0u : 1u;
+	     prepared && variant < sizeof(sources) / sizeof(sources[0]);
+	     variant++) {
+		int watch = -1;
+		const int length = snprintf(line, sizeof(line),
+					    "/dev/fixture%u %s ext4 rw 0 0\n",
+					    UNDESCRIBED_SOURCE_DEVICE, mount);
+		const bool listed =
+			realpath(sources[variant], real_source) != NULL &&
+			mkdir(mount, FIXTURE_MODE) == 0 &&
+			receipted_mount(mount, REPLICA_LAYOUT, real_source,
+					events, &watch) &&
+			length > 0 && (size_t)length < sizeof(line) &&
+			written(table, line);
+		const bool admitted =
+			listed &&
+			local_device_describe(mount, &device) == STATUS_OK &&
+			local_device_media_refusal(&device, false) == NULL;
+		char found[REPLICAS_MOST][REPLICA_PATH_CAPACITY];
+		const uint32_t count =
+			listed ?
+				captured_search(table, real_source, NULL, found,
+						capture, text, sizeof(text)) :
+				0;
+		const int ended_length = snprintf(
+			ended, sizeof(ended),
+			"storage: replica search ends: given copy 0 %s is on no described drive, so no replica is "
+			"admitted beside it: unknown_physical_topology\n",
+			real_source);
+		expect(listed && count == 0 &&
+			       (!admitted ||
+				(ended_length > 0 &&
+				 (size_t)ended_length < sizeof(ended) &&
+				 strstr(text, ended) != NULL &&
+				 strstr(text, "eligible") == NULL)),
+		       "beside a source no topology describes no replica is admitted, the source named as copy 0 "
+		       "with unknown_physical_topology");
+		remove_mount(mount);
+		(void)unlink(table);
+	}
 	if (events >= 0)
 		(void)close(events);
 	(void)rmdir(root);
@@ -464,6 +757,7 @@ static void reader_cases(void)
 	char source[PATH_MAX] = { 0 }, output[OUTPUT_BYTES] = { 0 };
 	char replicas[READER_REPLICAS][REPLICA_PATH_CAPACITY] = { { 0 } };
 	const char *copies[STORAGE_MAXIMUM_COPIES] = { 0 };
+	const char *const given[] = { source, replicas[GOOD_REPLICA] };
 	bool prepared =
 		mkdtemp(root) != NULL &&
 		joined(source, root, "source.anemone") &&
@@ -486,7 +780,7 @@ static void reader_cases(void)
 		const uint32_t all =
 			silent != NULL ?
 				replicas_reader_open(
-					&counted_storage, source,
+					&counted_storage, given, 1u,
 					(const char (*)[REPLICA_PATH_CAPACITY]) &
 						replicas[GOOD_REPLICA],
 					READER_REPLICAS - GOOD_REPLICA, copies,
@@ -511,7 +805,7 @@ static void reader_cases(void)
 		const uint32_t kept =
 			lines != NULL ?
 				replicas_reader_open(
-					&counted_storage, source,
+					&counted_storage, given, 1u,
 					(const char (*)[REPLICA_PATH_CAPACITY])
 						replicas,
 					OTHER_REPLICA, copies, &reader, lines) :
@@ -541,7 +835,7 @@ static void reader_cases(void)
 		const uint32_t greedy =
 			quiet != NULL ?
 				replicas_reader_open(
-					&stub_storage, source,
+					&stub_storage, given, 1u,
 					(const char (*)[REPLICA_PATH_CAPACITY]) &
 						replicas[GOOD_REPLICA],
 					READER_REPLICAS - GOOD_REPLICA, copies,
@@ -563,6 +857,23 @@ static void reader_cases(void)
 						    sizeof(second[0])),
 					 &alone) == STATUS_OK,
 		       "copies that open alone but not together: the greedy reader keeps a set that opened");
+		/* two given copies: they come first and the replica after them, in one open */
+		reader = NULL;
+		counted_opens = counted_closes = 0;
+		const uint32_t beside = replicas_reader_open(
+			&counted_storage, given, GIVEN_COPIES,
+			(const char (*)[REPLICA_PATH_CAPACITY]) &
+				replicas[OTHER_REPLICA],
+			1u, copies, &reader, stderr);
+		expect(beside == 1u && reader != NULL &&
+			       counted_opens == FULL_SET_OPENS &&
+			       copies[0] == source &&
+			       copies[1] == replicas[GOOD_REPLICA] &&
+			       strcmp(copies[GIVEN_COPIES],
+				      replicas[OTHER_REPLICA]) == 0,
+		       "two given copies are kept first and the replica follows them");
+		if (reader != NULL)
+			storage_direct.reader_close(reader);
 	}
 	for (uint32_t index = 0; index < READER_REPLICAS; index++)
 		if (replicas[index][0] == '/')
@@ -597,7 +908,8 @@ int main(void)
 			joined(mounts[INTERNAL_MOUNT], root, "internal");
 	for (uint32_t index = 0; prepared && index < FIXTURE_MOUNTS; index++)
 		prepared = mkdir(mounts[index], FIXTURE_MODE) == 0 &&
-			   receipted_mount(mounts[index], real_source, events,
+			   receipted_mount(mounts[index], REPLICA_LAYOUT,
+					   real_source, events,
 					   &watches[index]);
 	char lines[FIXTURE_MOUNTS * (PATH_MAX + TABLE_LINE_BYTES)];
 	const int length = prepared ? snprintf(lines, sizeof(lines),
@@ -639,7 +951,8 @@ int main(void)
 		if (capture >= 0 && saved >= 0)
 			redirected = dup2(capture, STDERR_FILENO) >= 0;
 		FILE *const stream = fopen(table, "re");
-		(void)replicas_find_mounts(stream, real_source, &header, found,
+		const char *const copies[] = { real_source };
+		(void)replicas_find_mounts(stream, copies, 1u, &header, found,
 					   REPLICAS_MOST, false);
 		if (stream != NULL)
 			(void)fclose(stream);
@@ -693,7 +1006,10 @@ int main(void)
 	if (have_shared) {
 		exl3_source_case(shared);
 		admission_case(shared);
+		passed_over_case(shared);
+		given_copies_case(shared);
 	}
+	undescribed_source_case();
 	reader_cases();
 	for (uint32_t index = 0; index < FIXTURE_MOUNTS; index++)
 		if (prepared || mounts[index][0] == '/')

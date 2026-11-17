@@ -25,6 +25,11 @@ KINDS = {
     'rank or collective member': ('rank', 'ranks', 'members', 'source', 'arguments->rank', 'arguments->rank_count',
                                   'row->rank_count', 'stage->rank_count'),
     'storage copy': ('copy', 'copies', 'copies[miss]', 'context->copies', 'read->copy'),
+    # a replica layout of one mount (replicas.c's stale receipts, a bit each): below REPLICA_LAYOUTS (3)
+    'replica layout': ('layout',),
+    # a /proc/vmstat counter the load stage reads (storage_autotune_load.c's vmstat_read, a bit each): below
+    # AUTOTUNE_LOAD_VMSTAT_COUNTERS (5)
+    'load stage page counter': ('counter',),
     'model layer or unit': ('layer', 'units[unit].layer_index', 'MODEL_DECODER_FIRST_LAYER'),
     'Engram table': ('table', 'step->blocks[index].table'),
     'row of one step or block': ('row',),
@@ -44,9 +49,8 @@ KINDS = {
                                           # the column's (CLASS_80_COLUMN_MARK, kernel_class_80.cuh)
                                           'OUTPUT_HALVES',
                                           # an EXL3 width's bit in the widths a build decodes, a bit per bits_x2
-                                          # (EXL3_SUPPORTED_BITS_X2, EXL3_TC_SUPPORTED_BITS_X2, exl3_records.h)
-                                          'EXL3_BITS_X2_K2', 'EXL3_BITS_X2_K2_5', 'EXL3_BITS_X2_K3',
-                                          'EXL3_BITS_X2_K4'),
+                                          # (EXL3_WIDTH_BIT of EXL3_WIDTHS' rows, exl3_records.h)
+                                          'bits_x2'),
 }
 SESSION_SLOT = ('slot', 'session_slot', 'row->session_slot', 'owner')
 # The session-slot shifts allowed: BATCH round tables only (slot < STEP_BATCH_MAXIMUM_SESSIONS <= 32), by file.

@@ -132,11 +132,12 @@ int main(void)
 	}
 	struct v41_tp2_model *model = NULL;
 	struct v41_tp2_program_description build = { 0 };
-	if (v41_tp2_model_create(pack, &description, &model) != STATUS_OK ||
-	    v41_tp2_model_program_description(model, &build) != STATUS_OK) {
-		printf("batch_plan_driver_test: the model did not prepare\n");
-		return 1;
-	}
+	/* a failure from here on (a machine without the kernels' builds: the programs do not prepare) still frees what
+	 * is held below */
+	bool prepared =
+		v41_tp2_model_create(pack, &description, &model) == STATUS_OK &&
+		v41_tp2_model_program_description(model, &build) == STATUS_OK;
+	expect(prepared, "the model prepares");
 	/* each layout's BATCH programs (rows, verifiers) and its steps: drafting sessions, rows a session, and the
 	 * program (rows, verifiers) the step takes */
 	static const struct plan_layout layouts[PLAN_LAYOUTS] = {
@@ -175,7 +176,7 @@ int main(void)
 		    { 8u, 3u, 32u, 8u },
 		    { 8u, PLAN_DRAFT_ROWS, 48u, 8u } } }
 	};
-	for (uint32_t layout = 0; layout < PLAN_LAYOUTS; layout++) {
+	for (uint32_t layout = 0; prepared && layout < PLAN_LAYOUTS; layout++) {
 		const struct plan_layout *const own = &layouts[layout];
 		const uint32_t program_count =
 			own->batch_count + PLAN_CHUNK_PROGRAMS;
@@ -189,7 +190,8 @@ int main(void)
 			0
 		};
 		uint32_t verifiers[PLAN_MOST_PROGRAMS] = { 0 };
-		for (uint32_t index = 0; index < program_count; index++) {
+		for (uint32_t index = 0; prepared && index < program_count;
+		     index++) {
 			const bool batch = index < own->batch_count;
 			const uint32_t chunk =
 				batch ? 0 :
@@ -208,7 +210,7 @@ int main(void)
 			build.batch_verifiers = batch ? own->verifiers[index] :
 							0;
 			verifiers[index] = build.batch_verifiers;
-			const result_status prepared = v41_tp_program_prepare(
+			const result_status status = v41_tp_program_prepare(
 				&build, &test_host_memory_backend, cards,
 				reported, kind, rows, &programs[index],
 				&companions[index]);
@@ -216,13 +218,13 @@ int main(void)
 			       " (kind %u, %" PRIu32 " rows, %" PRIu32
 			       " verifiers): %s\n",
 			       layout, index, (unsigned)kind, rows,
-			       verifiers[index], status_text(prepared));
-			expect(prepared == STATUS_OK && programs[index] != NULL,
-			       "every program prepares");
-			if (prepared != STATUS_OK || programs[index] == NULL)
-				return 1;
+			       verifiers[index], status_text(status));
+			prepared = status == STATUS_OK &&
+				   programs[index] != NULL;
+			expect(prepared, "every program prepares");
 			for (uint32_t card = 0;
-			     card < programs[index]->card_count; card++) {
+			     prepared && card < programs[index]->card_count;
+			     card++) {
 				const uint32_t none =
 					0; /* no engram tables on the host backend */
 				memcpy((void *)(uintptr_t)&programs[index]
@@ -232,11 +234,16 @@ int main(void)
 			}
 		}
 		struct step_driver *driver = NULL;
-		const result_status created = step_driver_create(
-			&test_host_memory_backend, cards,
-			(const struct execution_program *const *)programs,
-			program_count, NULL, PLAN_WAIT_NS, &driver);
-		expect(created == STATUS_OK,
+		const result_status created =
+			prepared ?
+				step_driver_create(
+					&test_host_memory_backend, cards,
+					(const struct execution_program *const *)
+						programs,
+					program_count, NULL, PLAN_WAIT_NS,
+					&driver) :
+				STATUS_INVALID_ARGUMENT;
+		expect(!prepared || created == STATUS_OK,
 		       "the driver takes the BATCH, wide and full programs");
 		expect(created != STATUS_OK ||
 			       step_groups_attach(driver, companions,

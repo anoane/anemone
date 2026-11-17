@@ -15,6 +15,7 @@
 #include "model_v41.h"
 #include "model_v41_tp2.h"
 #include "model_v41_tp2_program.h"
+#include "model_registry.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -539,20 +540,30 @@ static void rows_select(struct builder *b, uint32_t view, uint32_t first_row, ui
 	b->view = view;
 	b->first_row = first_row;
 	b->rows = rows;
+	const uint32_t capacity = b->plan->limits.row_capacity;
 	for (uint32_t array = 0; array < V41_DATA_ARRAY_COUNT; array++) {
 		const uint64_t offset = planned->array_offset[array];
-		const uint64_t into = array_bytes[array].rows == V41_CHUNK ?
-					      first_row :
-				      array_bytes[array].rows == V41_SPAN ?
-					      first_row % V41_DATA_SPAN_ROWS :
-					      0;
+		const enum v41_rows kind = v41_array_rows(
+			b->plan->chunk_attention_arrays, (enum v41_array)array,
+			(enum v41_rows)array_bytes[array].rows);
+		const uint64_t into =
+			kind == V41_CHUNK ? first_row :
+			kind == V41_SPAN  ? first_row % V41_DATA_SPAN_ROWS :
+					    0;
 		const uint64_t array_rows =
-			array_bytes[array].rows == V41_DRAFT_ROWS ?
+			kind == V41_DRAFT_ROWS ?
 				b->plan->limits.draft_positions :
 				rows;
+		/* an array v41_array_rows narrows holds no row past its span's or slab's: a view beyond them is no
+		 * range, so that a launch which would take one is refused at its prepare */
+		const bool beyond = kind != array_bytes[array].rows &&
+				    into + array_rows >
+					    (kind == V41_SPAN ?
+						     v41_span_rows(capacity) :
+						     v41_slab_rows(capacity));
 		b->arrays[array] = (struct linear_range){
-			offset == PROGRAM_NOWHERE ?
-				offset :
+			offset == PROGRAM_NOWHERE || beyond ?
+				PROGRAM_NOWHERE :
 				offset + into * array_bytes[array].row_bytes,
 			array_bytes[array].fixed_bytes +
 				array_rows * array_bytes[array].row_bytes
@@ -7632,15 +7643,26 @@ static const struct model_operations model_v41 = {
 	v41_arena_initialise, program_prepare,	program_destroy
 };
 
-const struct model_operations *model_operations_of(const char *model_name)
-{
-	return model_name != NULL &&
-			       memchr(model_name, '\0', MODEL_NAME_CAPACITY) !=
-				       NULL &&
-			       strcmp(model_name, model_v41.name) == 0 ?
-		       &model_v41 :
-		       NULL;
-}
+/* Its routed experts as EXL3 maps and the tensor-core MoE read them (exl3_descriptor.h), its established packs among
+ * them: the registry's entry (model_registry.h) */
+static const struct exl3_established_pack v41_established[] =
+	V41_DATA_ESTABLISHED_EXL3_PACKS;
+static const struct exl3_descriptor_model v41_exl3 = {
+	.model_type = V41_DATA_CONFIG_MODEL_TYPE,
+	.layers = MODEL_LAYERS,
+	.experts_per_layer = MODEL_EXPERTS,
+	.hidden = MODEL_HIDDEN,
+	.intermediate = V41_DATA_EXPERT_INNER,
+	.matrices = { { "w1", V41_DATA_EXPERT_INNER, MODEL_HIDDEN },
+		      { "w2", MODEL_HIDDEN, V41_DATA_EXPERT_INNER },
+		      { "w3", V41_DATA_EXPERT_INNER, MODEL_HIDDEN } },
+	.established = v41_established,
+	.established_count =
+		sizeof(v41_established) / sizeof(v41_established[0]),
+	.routes_per_row = MODEL_EXPERTS_PER_ROW,
+	.cone_first_layer = MODEL_DECODER_FIRST_LAYER
+};
+const struct model_entry model_v41_entry = { &model_v41, &v41_exl3 };
 
 /* Full text-only TP2 composition is separate from every default PP factory above. */
 #define TP2_PROGRAM_CHECKPOINTS \

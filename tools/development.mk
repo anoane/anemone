@@ -26,6 +26,7 @@ check_generated:
 python_tests:
 	$(PYTHON) tools/cli/axes_registry_test.py
 	$(PYTHON) tools/golden_score_test.py
+	$(PYTHON) tools/golden/golden_capture_score_test.py
 	$(PYTHON) tools/convert/make_virtual_pack_test.py
 	$(PYTHON) -m unittest discover -s tools/oracle -p 'test_*.py'
 	$(PYTHON) $(CASES)/quality/structural_test.py
@@ -34,14 +35,12 @@ python_tests:
 # Failure-injection fixtures include the implementation under test. Omit that implementation's ordinary object
 # and link every other object with the address/undefined-behaviour sanitizer build, including test support.
 QUALITY_CASE_NAMES := snapshot_size snapshot_paths tp_load_null tp_load_callback exl3_allocation \
-                      engine_descriptor router_failure tune_weighted_copy replica_receipt_binding \
-                      replica_lag_choice
+                      engine_descriptor router_failure replica_receipt_binding replica_lag_choice
 QUALITY_CASE_PROGRAMS := $(addprefix build/debug/check_cases/quality/,$(QUALITY_CASE_NAMES))
 QUALITY_OMIT_snapshot_size := build/debug/source/server_sessions.o
 QUALITY_OMIT_snapshot_paths := build/debug/source/server_sessions.o
 QUALITY_OMIT_tp_load_null := build/debug/source/tp_load.o
 QUALITY_OMIT_tp_load_callback := build/debug/source/tp_load.o
-QUALITY_OMIT_tune_weighted_copy := build/debug/source/storage_tune.o
 QUALITY_OMIT_replica_receipt_binding := build/debug/source/replica_prepare.o
 QUALITY_OMIT_replica_lag_choice := build/debug/source/replica_prepare.o
 define QUALITY_CASE_RULE

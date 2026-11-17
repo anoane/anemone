@@ -6,8 +6,7 @@ import tempfile
 
 PROGRAMS = Path('build/debug/check_cases/quality')
 CASES = ('snapshot_size', 'tp_load_null', 'tp_load_callback', 'exl3_allocation',
-         'engine_descriptor', 'router_failure', 'tune_weighted_copy', 'replica_receipt_binding',
-         'replica_lag_choice')
+         'engine_descriptor', 'router_failure', 'replica_receipt_binding', 'replica_lag_choice')
 PATH_CASES = ('fifo_read', 'fifo_load', 'symlink_read', 'symlink_load',
               'nonregular_read', 'nonregular_match', 'partial_regular', 'partial_symlink',
               'directory_safe', 'directory_group', 'directory_other', 'directory_owner',

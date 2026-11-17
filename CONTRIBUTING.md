@@ -78,7 +78,9 @@ must bring. [docs/STYLE.md](docs/STYLE.md) is the rulebook for the code; where t
 - The subject says what changed. The body says why, and what evidence shows it works.
 - No tool or assistant names in code or commit messages, no private machine details, no generated code and no
   binaries.
-- Every contribution must be licensed under the project's licence, AGPL-3.0-or-later.
+- Every contribution must be licensed under the project's licence, AGPL-3.0-or-later. A new file starts with its
+  `SPDX-License-Identifier` line, or `REUSE.toml` covers it where a header would change its format, and `reuse lint`
+  must pass.
 - Fill in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md) completely. A box left unticked needs a
   reason.
 

@@ -374,6 +374,36 @@ MUST_CHECK result_status engine_prefix_boundary(
 MUST_CHECK result_status
 engine_submit(struct inference_engine *engine,
 	      const struct generation_command_record *command);
+/* A forced continuation (teacher forcing, anemone capture): the command's generated tokens are token_ids, committed
+ * in place of the draws, which the TOKEN events carry (an event's logit is the draw's where the draw is the token,
+ * else 0). Only the limit ends it: the end token never does. With rows above 1, a row that draws behind a generated
+ * token goes in one step with the next forced tokens as its proposals, at most rows - 1 of them (none behind the
+ * prompt's last row), every one accepted. No drafter proposes, no draft runs (no DRAFTS row) and no draft statistic
+ * counts. After every landed step that drew rows of it, rows_landed gets them on the stepping thread, with no step in
+ * flight, before any later step and before the command's final event: the step's rows and results, its row count,
+ * the first drawing row of the command and how many drew; the driver's cards still hold that step's arrays. Its
+ * failure fails the command with its status. The record, the tokens and the context are borrowed until the final
+ * event is taken. submit refuses (STATUS_INVALID_ARGUMENT, nothing queued) what engine_submit refuses, an engine of
+ * more than one session slot or a BATCH one, a kept count other than 0, a temperature other than 0, a top_p other than
+ * 1, a top_k, a reasoning budget, images, a limit other than token_count, no tokens or callback, a token outside the
+ * vocabulary, rows of 0 or above speculative_depth + 1, and new tokens and token_count - 1 beyond the context; a
+ * command still live on the single slot (forced or not) is STATUS_BUSY_VALUE, as for engine_submit. */
+struct step_row_record;
+struct step_row_result;
+struct engine_forced_continuation {
+	const uint32_t *token_ids;
+	uint32_t token_count;
+	uint32_t rows; /* drawing rows a step at most: 1, or 2 to speculative_depth + 1 */
+	MUST_CHECK result_status (*rows_landed)(
+		void *context, const struct step_row_record *rows,
+		const struct step_row_result *results, uint32_t step_row_count,
+		uint32_t first_row, uint32_t row_count);
+	void *context;
+};
+MUST_CHECK result_status
+engine_submit_forced(struct inference_engine *engine,
+		     const struct generation_command_record *command,
+		     const struct engine_forced_continuation *forced);
 /* A session command: refused as submit refuses (a busy slot, a full queue, a tag in use), and for an operation or
  * descriptor that is none, a save of more tokens than the session ran or of none, or with a reach, a load beyond the
  * context or off the kept granule (serving_cursor.h) or whose reach is below its count or beyond the context, and a

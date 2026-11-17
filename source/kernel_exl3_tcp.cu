@@ -289,10 +289,8 @@ tcp_gemm_hybrid_launch(const struct exl3_tcp_record &record,
 			two, blocks)                                         \
 	TCP_GEMM_HYBRID(exl3_tcp_gemm_up_h640_##width##suffix, 1, 1, bits,   \
 			two, blocks)
-#define TCP_GEMM_FORMS(suffix, two, blocks)                          \
-	TCP_GEMM_WIDTH(k2, EXL3_BITS_X2_K2, suffix, two, blocks)     \
-	TCP_GEMM_WIDTH(k2_5, EXL3_BITS_X2_K2_5, suffix, two, blocks) \
-	TCP_GEMM_WIDTH(k3, EXL3_BITS_X2_K3, suffix, two, blocks)
+#define TCP_GEMM_FORMS(suffix, two, blocks) \
+	EXL3_WIDTHS(EXL3_TC_WIDTH, TCP_GEMM_WIDTH, suffix, two, blocks)
 TCP_GEMM_FORMS(, false, 1)
 TCP_GEMM_FORMS(_b2, true, TCP_GEMM_TWO_BLOCKS)
 #undef TCP_GEMM_WIDTH

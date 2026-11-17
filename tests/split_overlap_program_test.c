@@ -169,6 +169,7 @@ static bool programs_prepare(uint32_t split, uint32_t exchange, bool chunk_core,
 				    card, SPLIT_CARD_BYTES, &cards[card]) !=
 			    STATUS_OK) {
 				printf("split_overlap_program_test: card %" PRIu32 " did not open\n", card);
+				pack_close(pack);
 				return false;
 			}
 		}
@@ -186,6 +187,8 @@ static bool programs_prepare(uint32_t split, uint32_t exchange, bool chunk_core,
 		printf("split_overlap_program_test: the model (split %" PRIu32
 		       "): %s / %s\n",
 		       split, status_text(created), status_text(described));
+		v41_tp2_model_destroy(model);
+		pack_close(pack);
 		return false;
 	}
 	const enum program_kind kinds[SPLIT_PROGRAMS] = { PROGRAM_THIN,
@@ -202,6 +205,13 @@ static bool programs_prepare(uint32_t split, uint32_t exchange, bool chunk_core,
 			printf("split_overlap_program_test: program %" PRIu32
 			       " (split %" PRIu32 "): %s\n",
 			       index, split, status_text(prepared));
+			/* a machine without the kernels' builds: what this call holds is freed before the refusal */
+			for (uint32_t earlier = 0; earlier < index; earlier++) {
+				free(programs[earlier]);
+				programs[earlier] = NULL;
+			}
+			v41_tp2_model_destroy(model);
+			pack_close(pack);
 			return false;
 		}
 		for (uint32_t card = 0; card < programs[index]->card_count; card++) {

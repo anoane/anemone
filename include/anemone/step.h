@@ -282,6 +282,15 @@ MUST_CHECK result_status step_session_load(struct step_driver *driver,
 					   uint32_t token_count,
 					   step_bytes_function read,
 					   void *context);
+/* Reads byte_count bytes of a card's arena from offset into bytes_out (host memory), in pieces through the session
+ * block, for the submitter's thread with no step in flight (a pipeline's: every submitted step finished): what a
+ * landed step left there, such as the head's logits (anemone capture). A NULL argument, a card the programs do not
+ * have or open, a range beyond its arena (the first program's arena_byte_count) and a step in flight are
+ * STATUS_INVALID_ARGUMENT, logged, nothing read; a failed driver answers its failure; a card's error fails the driver
+ * as a step's does. */
+MUST_CHECK result_status step_arena_read(struct step_driver *driver,
+					 uint32_t card, uint64_t offset,
+					 uint64_t byte_count, void *bytes_out);
 /* Quiescent same-card copies into independent destination ranges on every holding card. The caller owns the
  * source read lease and canonical-prefix proof. A checkpoint source additionally requires an actually captured
  * checkpoint at token_count; its window is copied separately, never manufactured from ordinary state.
