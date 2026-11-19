@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Score every case of an `anemone capture` root against its golden dataset and aggregate the scores into a quality
-record (B3: the quality record B1's EXL3 map descriptors cite).
+record (the quality record an EXL3 map's descriptor cites).
 
     golden_capture_score.py GOLDEN_ROOT CAPTURE_ROOT --output RECORD_JSON [--compact] [--scores FOLDER]
                             [--certain-margin MARGIN]
@@ -16,7 +16,7 @@ each case's complete score JSON (FOLDER/<set>/<id>.json, create-only).
 The record weights every position equally (token weight): NLL is the mean of the positions' NLL, perplexity its exp, and
 top-1 agreement and the certain bucket are position counts; in full mode the KL, the RMS logit delta (pooled) and the
 largest |logit delta| too. Beside them it names the capture: the golden MANIFEST.json's SHA-256 and the executable's,
-the plan and argv digests, placement, weights, map, the EXL3 map's descriptor digest (B1), rows and context (CAPTURE_MANIFEST.json and the cases'
+the plan and argv digests, placement, weights, map, the EXL3 map's descriptor digest, rows and context (CAPTURE_MANIFEST.json and the cases'
 metadata.json), the cases and positions, and the scorer's own SHA-256. The output is create-only.
 
 Measurement tool: not part of the engine. It needs NumPy, as golden_score.py does.

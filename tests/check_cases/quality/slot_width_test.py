@@ -5,7 +5,7 @@ indexes, and every bit read of a right shift by a session-slot amount.
 A server takes up to SERVING_SLOTS_MOST session slots, far above a 32- or 64-bit word, so no mask may be indexed by
 session slot except the BATCH round tables, whose engine takes at most STEP_BATCH_MAXIMUM_SESSIONS slots. Each shift
 amount is classified below; a shift whose amount is not classified, a session-slot shift outside the BATCH sites, or a
-bit read `(mask >> slot) & 1` by a session-slot amount anywhere (stage 3 review D7: none exists) fails. Run from
+bit read `(mask >> slot) & 1` by a session-slot amount anywhere (none exists) fails. Run from
 the repository root. This lexical check reads the amount's text, not its type.
 """
 from collections import Counter

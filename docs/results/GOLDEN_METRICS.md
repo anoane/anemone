@@ -1,39 +1,101 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Golden quality at the v0.0.2-alpha snapshot cutoff
+# Golden quality: all 435 cases
 
-Current engine/help source is `1b0731a36b7482477b96d7a28b27c93e4dd49e3f`, release binary SHA256
-`acdf429da22ae7a39504b897106e8cd56a22c3661bf086f60b5458ba5313f2af`.
-The current GPU capture is **0/435 cases and 0/66,409 logical positions per
-balanced format**. Current NLL, perplexity, KL, agreement and certain-agreement
-metrics are unmeasured. No prior score is relabelled as a new measurement.
+All 435 cases of the [golden dataset](https://huggingface.co/datasets/anoane/anemone-ds41f1017-golden) (66,409 positions in
+15 sets) were captured on 18 Nov 2026 with `anemone capture` ([USAGE.md](../USAGE.md#101-teacher-forced-logits-anemone-capture))
+on the v0.0.4-alpha release executable (source `6ecf1bb`, SHA-256 `15abb30da13582cd5a9b004014654b02b2da4d508001d049a932667f55458e49`)
+and scored with the formulas of [tools/golden/golden_capture_score.py](../../tools/golden/golden_capture_score.py) (full mode).
+Each GPU split ran its default route: `--placement=pp5`, `--placement=tp4_pro` or `--placement=tp4_exl3` with the balanced
+axes, one session, the default 1,048,576-token context.
 
-The current observer/capture producer passes 13 CPU parser/loop controls and all
-117 embedded CUDA-payload comparisons. That qualifies CPU-side preparation,
-not GPU replay, alignment or quality. The full 45-job plan (19 EXL3 and 26 PP5)
-is deferred beyond this snapshot under the owner's 6 November deadline. It
-covers the full 435-case target, including the 381 cases absent from the earlier
-54-case subset. Additional teacher/cache/projection ablations are separate gates.
+## Method
+- **Teacher forced.** Each case is one forced continuation: its prompt, then the golden tokens committed in place of the
+  draws. At every step the full F32 head rows the sampler read (129,280 logits a position) are kept and checked: every
+  logit finite, the draw the lowest-ID argmax, the draw's logit bits the witness's, and the committed history the prompt
+  and the golden tokens.
+- **Step shape.** R = 6 (verify steps of six rows, the shape most decode steps take) is each split's number; R = 1 (one row
+  a step) is measured beside it. On TP4_EXL3 the two shapes take different head kernels (the MMA form for 2-8 rows, the
+  dense stream for one), so their bits differ from position 1 on.
+- **Metrics.** NLL is the golden token's negative log-probability under the candidate head (nats, F64 log-softmax of the
+  full head), perplexity its exponential; top-1 is agreement with the golden head's argmax; a position is *certain* when
+  the golden head's top-1 margin is above 1 logit; KL is KL(golden || candidate); RMS and max are over every logit's
+  difference. Every position weighs the same (token weight), the 10 alias cases (requests that repeat another case's)
+  included.
+- **The golden scored by itself:** NLL 0.074156, perplexity 1.076975, 61,643 certain and
+  4,766 uncertain positions. The judge recomputed these from the golden rows in the window and matched the
+  dataset's index to a relative of 0 (to the last bit).
 
-The complete prior dated metrics, methods, conditional-head denominator and
-per-set tables remain in the historical measured tables below.
-Those measurements cover 54/435 cases and 7,878/66,409 logical positions per
-balanced format; exact is a sealed reference self-comparison, not a newly paired
-current sample. Neither sampled SPARK success nor one-token Q restoration adds
-a full-logit quality score. Full-context task quality remains unmeasured.
+## Results (R = 6)
+| Split | Weights | Cases | Positions | NLL | PPL | ΔNLL | Top-1 | Certain | Uncertain | KL mean | RMS Δlogit | Max \|Δlogit\| |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| PP5 | original | 435 | 66,409 | 0.086738 | 1.090611 | +0.012582 | 65,085 / 66,409 (98.01 %) | 61,443 / 61,643 (99.68 %) | 3,642 / 4,766 (76.42 %) | 0.01297 | 0.4486 | 77.91 |
+| TP4_PRO | original | 435 | 66,409 | 0.086738 | 1.090611 | +0.012582 | 65,085 / 66,409 (98.01 %) | 61,443 / 61,643 (99.68 %) | 3,642 / 4,766 (76.42 %) | 0.01297 | 0.4486 | 77.91 |
+| TP4_EXL3 | 2.9 bpw map | 435 | 66,409 | 0.117827 | 1.125049 | +0.043671 | 63,887 / 66,409 (96.20 %) | 60,753 / 61,643 (98.56 %) | 3,134 / 4,766 (65.76 %) | 0.04045 | 0.7234 | 73.59 |
+| TP4_EXL3 | 2.68 bpw map (opt-in, recorded only) | 435 | 66,409 | 0.118366 | 1.125656 | +0.044210 | 63,860 / 66,409 (96.16 %) | 60,689 / 61,643 (98.45 %) | 3,171 / 4,766 (66.53 %) | 0.04568 | 0.7488 | 105.85 |
 
-The serve-only TP4 prompt-chunk guard passes its separate 96/96 mixed identity
-protocol and has **no independent full-logit golden score**. No baseline score
-is relabelled as a guard score. Original balanced uses native PRO arithmetic,
-so results depend on layer placement. Fast-axis tuples remain refused. Exact
-runtime admission remains one session and 512 total tokens; long and concurrent
-standard quality inputs are outside that admission.
+## R = 1 beside R = 6
+| Split | Weights | Cases | Positions | NLL | PPL | ΔNLL | Top-1 | Certain | Uncertain | KL mean | RMS Δlogit | Max \|Δlogit\| |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| PP5 | original | 435 | 66,409 | 0.086738 | 1.090611 | +0.012582 | 65,085 / 66,409 (98.01 %) | 61,443 / 61,643 (99.68 %) | 3,642 / 4,766 (76.42 %) | 0.01297 | 0.4486 | 77.91 |
+| TP4_PRO | original | 435 | 66,409 | 0.086738 | 1.090611 | +0.012582 | 65,085 / 66,409 (98.01 %) | 61,443 / 61,643 (99.68 %) | 3,642 / 4,766 (76.42 %) | 0.01297 | 0.4486 | 77.91 |
+| TP4_EXL3 | 2.9 bpw map | 435 | 66,409 | 0.117827 | 1.125049 | +0.043671 | 63,887 / 66,409 (96.20 %) | 60,753 / 61,643 (98.56 %) | 3,134 / 4,766 (65.76 %) | 0.04045 | 0.7234 | 73.59 |
+| TP4_EXL3 | 2.68 bpw map (opt-in, recorded only) | 435 | 66,409 | 0.118366 | 1.125656 | +0.044210 | 63,860 / 66,409 (96.16 %) | 60,689 / 61,643 (98.45 %) | 3,171 / 4,766 (66.53 %) | 0.04568 | 0.7488 | 105.85 |
 
-See [the cutoff evidence](BENCHMARKS.md), the [remaining matrix
-rows](COMPARISON_MATRIX.md), and [the scorer manual](../../tools/golden_score.md).
+- PP5, original: R = 1 gives R = 6's bytes on 435 of 435 cases; 66,409 of 66,409 rows have the same bits and the argmax is equal on 66,409.
+- TP4_PRO, original: R = 1 gives R = 6's bytes on 435 of 435 cases; 66,409 of 66,409 rows have the same bits and the argmax is equal on 66,409.
+- TP4_EXL3, 2.9 bpw map: R = 1 gives R = 6's bytes on 4 of 435 cases; 618 of 66,409 rows have the same bits and the argmax is equal on 66,409.
+- TP4_EXL3, 2.68 bpw map: R = 1 gives R = 6's bytes on 4 of 435 cases; 618 of 66,409 rows have the same bits and the argmax is equal on 66,409.
 
-## Historical measured subset — dated evidence
+## Per set (R = 6)
+| Set | Cases | Positions | Golden NLL | PP5 NLL / top-1 | TP4_PRO NLL / top-1 | TP4_EXL3 2.9 NLL / top-1 | TP4_EXL3 2.68 NLL / top-1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| calibration | 1 | 1 | 2.89e-08 | 2.83e-08 / 100.00 % | 2.83e-08 / 100.00 % | 4.51e-08 / 100.00 % | 6.89e-08 / 100.00 % |
+| curtis_teacher | 12 | 138 | 0.021593 | 0.034201 / 98.55 % | 0.034201 / 98.55 % | 0.060805 / 97.10 % | 0.047360 / 100.00 % |
+| donor_coherence | 3 | 63 | 0.081102 | 0.084760 / 100.00 % | 0.084760 / 100.00 % | 0.143752 / 93.65 % | 0.155418 / 95.24 % |
+| donor_decode | 3 | 895 | 0.083007 | 0.086304 / 98.10 % | 0.086304 / 98.10 % | 0.094334 / 97.65 % | 0.092418 / 98.10 % |
+| donor_health | 1 | 8 | 0.002790 | 0.002702 / 100.00 % | 0.002702 / 100.00 % | 0.005608 / 100.00 % | 0.001351 / 100.00 % |
+| donor_warmup | 3 | 96 | 0.029327 | 0.031362 / 98.96 % | 0.031362 / 98.96 % | 0.037540 / 98.96 % | 0.032432 / 98.96 % |
+| miaai | 3 | 1,200 | 0.064760 | 0.067319 / 98.50 % | 0.067319 / 98.50 % | 0.074477 / 98.17 % | 0.071868 / 98.50 % |
+| miaai_warmup | 3 | 96 | 0.041120 | 0.044395 / 98.96 % | 0.044395 / 98.96 % | 0.042819 / 100.00 % | 0.045659 / 98.96 % |
+| mixed16 | 2 | 245 | 0.048679 | 0.053514 / 97.55 % | 0.053514 / 97.55 % | 0.101653 / 95.10 % | 0.071915 / 97.96 % |
+| mixed_calibration | 1 | 1 | 7.99e-07 | 1.03e-06 / 100.00 % | 1.03e-06 / 100.00 % | 1.18e-06 / 100.00 % | 1.40e-06 / 100.00 % |
+| q_harness | 1 | 1 | 0.559203 | 2.498597 / 0.00 % | 2.498597 / 0.00 % | 0.748308 / 100.00 % | 1.111333 / 0.00 % |
+| r_reference | 3 | 408 | 0.143146 | 0.211821 / 95.34 % | 0.211821 / 95.34 % | 0.207381 / 92.89 % | 0.356579 / 89.46 % |
+| spark | 198 | 31,877 | 0.072137 | 0.084184 / 98.16 % | 0.084184 / 98.16 % | 0.115199 / 96.24 % | 0.117300 / 96.19 % |
+| spark_greedy_proposals | 198 | 31,188 | 0.076175 | 0.089196 / 97.85 % | 0.089196 / 97.85 % | 0.122557 / 96.09 % | 0.119845 / 96.03 % |
+| spark_warmup | 3 | 192 | 0.060447 | 0.090320 / 97.40 % | 0.090320 / 97.40 % | 0.109361 / 95.31 % | 0.138741 / 96.35 % |
 
-# Golden metrics, 6 November 2026, tcb82
+## Reproducibility
+- **The exact route:** PP5's exact route (`--exactness=exact`: context 512, one row a step, no speculation) reproduces the golden's own heads byte for byte on 435 of 435 cases (66,409 positions), its draws the golden tokens.
+- **Across builds:** on TP4_EXL3 (both maps, both shapes) the 54 cases' heads equal, byte for byte, the 17 November 2026 capture of the same cases by source `62b4757`: 216 of 216 case files.
+- **Within a run:** each of the 10 alias cases' heads equals its canonical case's byte for byte on 8 of the 8 captures (four splits and maps, two shapes).
+- **The free run** (the production `generate` path, T = 0, on TP4_EXL3 2.9 at R = 6): 334 of 435 cases diverge from the golden continuation (the first divergence of each is recorded) and 101 reproduce it in full; where its tokens are still the golden's, its drawn logits equal the teacher-forced R = 6 rows on 24,180 of 24,309 positions.
+
+## The 54-case subset
+The same 54 cases (7,878 positions) as the 6 November 2026 measurement below. That one used another harness (a cold
+complete golden prefix and one native draw a position, context 16,384, source `69d4d96`); the 17 November rows are the
+same capture tool on source `62b4757`.
+
+| Capture | NLL | Top-1 | KL mean | RMS Δlogit | Max \|Δlogit\| |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| TP4 EXL3 balanced, 6 Nov 2026 (`69d4d96`) | 0.114618 | 7,627 / 7,878 (96.81 %) | 0.03292 | 0.7091 | 60.43 |
+| Original PP5 balanced, 6 Nov 2026 (`69d4d96`) | 0.091271 | 7,737 / 7,878 (98.21 %) | 0.01035 | 0.4415 | 59.28 |
+| TP4_EXL3 2.9 bpw, R = 6, 17 Nov 2026 (`62b4757`) | 0.115053 | 7,625 / 7,878 (96.79 %) | 0.03298 | 0.7065 | 59.07 |
+| TP4_EXL3 2.68 bpw, R = 6, 17 Nov 2026 (`62b4757`) | 0.116775 | 7,615 / 7,878 (96.66 %) | 0.03893 | 0.7285 | 81.71 |
+| PP5 original, R = 6, 18 Nov 2026 (`6ecf1bb`) | 0.091271 | 7,737 / 7,878 (98.21 %) | 0.01035 | 0.4415 | 59.28 |
+| TP4_PRO original, R = 6, 18 Nov 2026 (`6ecf1bb`) | 0.091271 | 7,737 / 7,878 (98.21 %) | 0.01035 | 0.4415 | 59.28 |
+| TP4_EXL3 2.9 bpw map, R = 6, 18 Nov 2026 (`6ecf1bb`) | 0.115053 | 7,625 / 7,878 (96.79 %) | 0.03298 | 0.7065 | 59.07 |
+| TP4_EXL3 2.68 bpw map, R = 6, 18 Nov 2026 (`6ecf1bb`) | 0.116775 | 7,615 / 7,878 (96.66 %) | 0.03893 | 0.7285 | 81.71 |
+
+The golden scored by itself on the 54: NLL 0.080001, 7,277 certain and 601 uncertain.
+
+## Scope
+One session, cold prompts, T = 0, teacher-forced heads. Not BATCH heads, not free-running task quality, not a speed
+measurement. The 2.68 bpw map is opt-in (`--exl3_unrated_map=1`) and these numbers are recorded only: it carries no
+quality claim.
+
+## Historical: the 54-case subset, 6 November 2026
+### Golden metrics, 6 November 2026, tcb82
 
 Release selection: **54 / 435 cases, 7878 / 66,409 logical positions, all 15 sets**. Select ceil(10% × set size), minimum one, using the lowest SHA256 of `matrix_6nov_v1/release_v1/` + case key. The fixed selection was saved before its new GPU jobs. Both balanced formats use exactly the same cases and all positions within each selected case. 381 unselected case pairs are the post-release queue; supplemental EXL3 captures from the intact first lease are retained outside the paired headline denominator.
 

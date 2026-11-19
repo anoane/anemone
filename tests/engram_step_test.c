@@ -390,7 +390,7 @@ static bool round_once(struct fixture *fixture, struct engram_step *step,
 	return right;
 }
 
-/* Two cards wait on the same step at once, each for its own tables (review finding 10: the issued mask is cleared
+/* Two cards wait on the same step at once, each for its own tables (the issued mask is cleared
  * atomically; the thread build's sanitizer sees a plain update race). */
 static void concurrent_waits(struct fixture *fixture)
 {
@@ -580,7 +580,7 @@ static void retirement_cases(struct fixture *fixture)
 	}
 	uint64_t state = SEED_RETIREMENT;
 	/* a read the kernel never answers, while the thread completes the step's others: its own deadline retires the
-	 * ring in time (finding 4), its slot is quarantined (finding 6) and the waiter reads its block from another
+	 * ring in time, its slot is quarantined and the waiter reads its block from another
 	 * copy */
 	struct timespec start;
 	(void)clock_gettime(CLOCK_MONOTONIC, &start);
@@ -611,7 +611,7 @@ static void retirement_cases(struct fixture *fixture)
 		       slots_quarantined(steps) == quarantined,
 	       "the copy stays retired and the slot stays out");
 	/* retire the other two: the last held read's block has every copy tried or retired, so it goes to the waiter
-	 * (finding 5: no tried copy is chosen again) */
+	 * (no tried copy is chosen again) */
 	for (uint32_t more = 0; more < COPIES - 1u; more++) {
 		expect(fault_arm("storage_flight_hold", 1),
 		       "the hold fault arms again");
@@ -932,7 +932,7 @@ static void damping_case(struct fixture *fixture)
 /* One copy, rings retired again and again. A read whose completion lands after its ring retired gives its slot back
  * and lets the ring close, so a copy comes back more often than the rings a thread keeps (before, every retired ring
  * stayed, and the fifth retirement was the last). Rings whose reads never return fill the graveyard; the refused
- * reinstatement is then asked again only after the backoff, not at every issue (review N2). */
+ * reinstatement is then asked again only after the backoff, not at every issue. */
 static void ring_cap_cases(struct fixture *fixture)
 {
 	struct store store;
@@ -1002,7 +1002,7 @@ static void flight_cases(struct fixture *fixture)
 	options.read_limit_nanoseconds = SHORT_READ_LIMIT_NANOSECONDS;
 	options.reinstate_backoff_nanoseconds = LONG_BACKOFF_NANOSECONDS;
 	uint64_t state = SEED_FLIGHT;
-	/* a refused buffer registration: the ring reads with plain addresses (finding 2) */
+	/* a refused buffer registration: the ring reads with plain addresses */
 	expect(fault_arm("storage_flight_register", 1),
 	       "the registration fault arms");
 	bool opened = engram_steps_open(fixture->disk, &options, &steps) ==
@@ -1016,7 +1016,7 @@ static void flight_cases(struct fixture *fixture)
 	for (uint32_t round = 0; opened && round < ROUNDS / STEPS; round++)
 		expect(round_once(fixture, step, &state, 1),
 		       "plain reads: every row right");
-	/* a submit the kernel refused with EAGAIN is retried on the thread's next turn (finding 8) */
+	/* a submit the kernel refused with EAGAIN is retried on the thread's next turn */
 	struct timespec start;
 	(void)clock_gettime(CLOCK_MONOTONIC, &start);
 	expect(fault_arm("storage_flight_enter_busy", 1),
@@ -1026,7 +1026,7 @@ static void flight_cases(struct fixture *fixture)
 	expect(fault_disarm() != 0, "the busy fault point is reached");
 	expect(elapsed_since(&start) < SHORT_READ_LIMIT_NANOSECONDS,
 	       "the refused reads go in before any deadline");
-	/* a ring retired with reads still in its inbox completes them, unquarantined (finding 7) */
+	/* a ring retired with reads still in its inbox completes them, unquarantined */
 	expect(fault_arm("storage_flight_retire", 1), "the retire fault arms");
 	expect(opened && round_once(fixture, step, &state, 1),
 	       "the inbox of a retired ring is completed: every row right");
@@ -1036,7 +1036,7 @@ static void flight_cases(struct fixture *fixture)
 	       "the copy is retired and no inbox slot is quarantined");
 	expect(!opened || engram_step_destroy(step), "the step is destroyed");
 	engram_steps_close(steps);
-	/* finding 9 and review N3: a destroy whose waiter gives up keeps a step whose one block's read is held, still
+	/* A destroy whose waiter gives up keeps a step whose one block's read is held, still
 	 * in flight; the close drains it first (its deadline retires the ring), stops the threads, then frees the
 	 * kept step */
 	struct engram_step *kept = NULL;

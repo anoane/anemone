@@ -32,8 +32,8 @@ struct session_fit_cards {
 
 /* STATUS_OK when limits' session_capacity sessions fit (the header comment), STATUS_OUT_OF_MEMORY when they do not: a
  * placement pass misses a budget, a state needs host memory, or an arena passes its card's budget. Any other status
- * is a refusal of the placement, the limits or the plan (a layout text, a DSpark card rule), which no count changes
- * (stage 3 review D2). */
+ * is a refusal of the placement, the limits or the plan (a layout text, a DSpark card rule), which no count
+ * changes. */
 MUST_CHECK result_status session_fit(const struct session_fit_cards *cards,
 				     const struct model_limits *limits);
 

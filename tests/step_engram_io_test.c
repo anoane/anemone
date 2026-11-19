@@ -2,8 +2,8 @@
 /* step_engram_io_test: a step driver whose n-gram rows come through step I/O (a disk store over three real copies of
  * the test pack, engram_step.h) destroys every step record before it frees or retires any staging, without a pipeline
  * and with one: step I/O's threads write rows into that staging. The backend's staging release counts the step records
- * still alive (review finding 1). With checking hooks: a pipeline step whose n-gram read never returns lands within
- * the driver's wait limit, its read deadline sized from that limit (review N1); and a driver torn down while a read of
+ * still alive. With checking hooks: a pipeline step whose n-gram read never returns lands within
+ * the driver's wait limit, its read deadline sized from that limit; and a driver torn down while a read of
  * its record never returned keeps that staging, neither freed nor retired, until the close joins the I/O threads:
  * without a pipeline, and with one (a pipeline slot's record, issued through the checking-only slot hook). */
 #define TEST_STEP_FIXTURE_IMPLEMENTATION
@@ -309,7 +309,7 @@ static void pipeline_hold_case(struct disk_fixture *disk)
 	cards_close();
 }
 
-/* The kept branch of the teardown (review findings 1 and the CUDA retire), for a driver without a pipeline: one copy,
+/* The kept branch of the teardown (and the CUDA retire), for a driver without a pipeline: one copy,
  * table 0's block corrupt after the store took its digests, and table 1's read held. The step fails on table
  * 0, so no card waits for table 1; the destroy's drain gives up, and the record is kept. At teardown a card's upload
  * wait fails, so the driver takes its staging as still read: the staging the record writes into is neither freed nor

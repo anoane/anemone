@@ -27,7 +27,10 @@
  *   - Printed: per card its free memory, budget, weights, state, arena and what is left, its layers; host memory and
  *     the routed experts in it; the on-demand units each stage unit keeps (the fill's); the segments and expert pauses
  *     of the program of one row and, above one, of --rows rows; per card the teacher-forced arena against its room; a
- *     VERDICT.
+ *     VERDICT, which names a card over its budget in every build (the engine's own line is an error log, which release
+ *     compiles out): "over budget: card C holds W bytes of weights in placement pass P of N, X above its budget of B"
+ *     where a layout text's pass overfills a card, else "over budget: card C's arena is A bytes, X above its budget of
+ *     B" for the first card whose arena passes its budget.
  *   - Exit 0 only where every routed expert is on a card (no on-demand unit in host memory, no page-locked expert
  *     bytes, no layer of the plan with experts in host memory, no expert pause or paused segment in either program,
  *     every arena within its budget) and the teacher-forced placement of every layer fits; with --layout, where the
@@ -49,7 +52,9 @@
  *     layout D (the PRO third, the draft head on the first card, the head on the last) is refused with the draft, in
  *     one line that names --layout and --card_order, and fits without it. Then serve's --session_slots=max on the
  *     same budgets, through the engine's own fit (session_fit.h): its count fits, one more does not, half the PRO's
- *     budget holds no more, cards of a MiB hold none. Then the refusals of the options.
+ *     budget holds no more, cards of a MiB hold none. Then a layout text over a card's budget, its weights alone in the
+ *     first placement pass and under many sessions' state in a later one: the check names the card, its weights and
+ *     its pass's budget, the numbers the engine's own line gives in a checking build. Then the refusals of the options.
  * A failure is one line on the standard output: the case, and what was expected of it.
  */
 #include <errno.h>
@@ -107,6 +112,13 @@
 	5u /* PP5's multi-session pipeline depth: a head flight bank each */
 #define LAYOUT_D_PRO_CARD 2u                        /* --card_order=1,2,0,3,4: the PRO third */
 #define MOST_SESSIONS 64u                           /* of --session_slots: far above a serving engine's */
+/* the VERDICT's words for a card over its budget */
+#define OVER_TEXT_BYTES 256u
+/* every unit on card 0: the weights alone pass a CMP 170HX's budget in the first placement pass */
+#define OVERFILLED_TEXT "embedding: card 0; layers 0..39: card 0; head: card 0"
+#define OVERFILLED_CARD 0u
+/* layout D's first card, under the state of MOST_SESSIONS sessions of the most context */
+#define OVERFILLED_STATE_CARD 0u
 #define COUNT_OF(table) ((uint32_t)(sizeof(table) / sizeof((table)[0])))
 
 enum test_status { TEST_PASSED = 0, TEST_FAILED = 1, TEST_WRONG_USAGE = 2 };
@@ -166,6 +178,11 @@ struct findings {
 	uint32_t paused_layers; /* layers of the plan with experts in host memory */
 	uint32_t pauses; /* expert pauses and paused segments of both programs */
 	uint32_t over_budget; /* cards whose arena passes their budget */
+	/* the first card a layout text's placement pass overfills: its weights, that pass's weight budget, the pass
+	 * (1 to PLACEMENT_STATE_PASSES, N in the VERDICT) */
+	uint32_t overfilled_card, overfilled_pass;
+	uint64_t overfilled_weights, overfilled_budget;
+	bool is_overfilled;
 	uint32_t teacher_forced_over_room;
 	uint32_t layer_card[MODEL_LAYERS]; /* the plan's */
 	uint32_t host_experts
@@ -335,6 +352,29 @@ static bool options_parse(int argument_count, const char *const *arguments, stru
 	   options->copy_count <= STORAGE_MAXIMUM_COPIES;
 }
 
+/* A layout text's pass that the placement refuses for memory: the first card whose weights, the units the text gives
+ * it summed as placement_from_layout_text sums them, pass the pass's weight budget. */
+static void overfilled_find(const struct pack_record *pack,
+			    const uint32_t *card_of_unit,
+			    const uint64_t *weight_budget, uint32_t card_count,
+			    uint32_t pass, struct findings *found)
+{
+	const struct pack_unit_record_2 *const units = pack_units_of(pack);
+	uint64_t weights[BACKEND_MAXIMUM_CARDS] = { 0 };
+	for (uint32_t unit = 0; unit < pack_header_of(pack)->unit_count; unit++)
+		if (card_of_unit[unit] < card_count)
+			weights[card_of_unit[unit]] += units[unit].byte_count;
+	for (uint32_t card = 0; card < card_count && !found->is_overfilled;
+	     card++)
+		if (weights[card] > weight_budget[card]) {
+			found->is_overfilled = true;
+			found->overfilled_card = card;
+			found->overfilled_pass = pass + 1u;
+			found->overfilled_weights = weights[card];
+			found->overfilled_budget = weight_budget[card];
+		}
+}
+
 /* commands.c's placement, or the layout text's: the budgets less what each card's state takes under the placement of
  * the pass before. */
 MUST_CHECK static result_status default_place(const struct pack_record *pack,
@@ -371,6 +411,9 @@ MUST_CHECK static result_status default_place(const struct pack_record *pack,
 							 unit_count,
 							 card_of_unit,
 							 &found->kept_units);
+		if (status == STATUS_OUT_OF_MEMORY && options->layout != NULL)
+			overfilled_find(pack, card_of_unit, weight_budget,
+					options->card_count, pass, found);
 		for (uint32_t card = 0;
 		     card < options->card_count && status == STATUS_OK;
 		     card++) {
@@ -696,6 +739,36 @@ static bool layout_fits(const struct findings *found)
 	       found->pinned_bytes <= STEP_MOST_PINNED_EXPERT_BYTES;
 }
 
+/* The VERDICT's words for a card over its budget (the header comment), "" for none. */
+static void over_text(const struct options *options,
+		      const struct findings *found, char text[OVER_TEXT_BYTES])
+{
+	text[0] = '\0';
+	if (found->is_overfilled) {
+		(void)snprintf(
+			text, OVER_TEXT_BYTES,
+			"; over budget: card %" PRIu32 " holds %" PRIu64
+			" bytes of weights in placement pass %" PRIu32
+			" of %u, %" PRIu64 " above its budget of %" PRIu64,
+			found->overfilled_card, found->overfilled_weights,
+			found->overfilled_pass, PLACEMENT_STATE_PASSES,
+			found->overfilled_weights - found->overfilled_budget,
+			found->overfilled_budget);
+		return;
+	}
+	for (uint32_t card = 0; card < options->card_count; card++)
+		if (found->arena[card] > found->budget[card]) {
+			(void)snprintf(text, OVER_TEXT_BYTES,
+				       "; over budget: card %" PRIu32
+				       "'s arena is %" PRIu64 " bytes, %" PRIu64
+				       " above its budget of %" PRIu64,
+				       card, found->arena[card],
+				       found->arena[card] - found->budget[card],
+				       found->budget[card]);
+			return;
+		}
+}
+
 /* With a pack: the check of the header comment on it. */
 static int pack_check(const struct options *options)
 {
@@ -716,14 +789,16 @@ static int pack_check(const struct options *options)
 				teacher_forced_fits(&found);
 	const bool is_layout_fitting = options->layout != NULL &&
 				       layout_fits(&found);
+	char over[OVER_TEXT_BYTES];
+	over_text(options, &found, over);
 	(void)printf(
-		"VERDICT every routed expert on a card: %s; the teacher-forced 40 layers fit: %s%s%s (%s)\n",
+		"VERDICT every routed expert on a card: %s; the teacher-forced 40 layers fit: %s%s%s (%s)%s\n",
 		is_on_cards ? "yes" : "no", is_fitting ? "yes" : "no",
 		options->layout != NULL ? "; the layout text fits: " : "",
 		options->layout == NULL ? "" :
 		is_layout_fitting	? "yes" :
 					  "no",
-		status_text(status));
+		status_text(status), over);
 	pack_close(pack);
 	storage_direct.reader_close(reader);
 	return (options->layout != NULL ? is_layout_fitting :
@@ -765,6 +840,41 @@ static void test_measured_cards(const struct pack_record *pack)
 		   found.paused_layers != 0 && found.pauses != 0 &&
 		   found.over_budget == 0 && found.kept_units < MODEL_EXPERTS,
 	   "the check says that experts stay in host memory");
+}
+
+/* A layout text's placement pass overfills a card: out of memory, the placement unmade, and the check's own words
+ * name the card, its weights and that pass's weight budget, the numbers of the engine's line in a checking build
+ * (release logs none). */
+static void overfilled_expect(const struct pack_record *pack,
+			      const struct options *options, uint32_t card,
+			      bool is_first_pass)
+{
+	struct findings found;
+	char words[CAPTURE_CAPACITY], text[OVER_TEXT_BYTES];
+	capture_begin();
+	const result_status status =
+		placement_check(pack, options, false, &found);
+	(void)snprintf(words, sizeof(words),
+		       "layout text: card %" PRIu32 " holds %" PRIu64
+		       " bytes of weights, %" PRIu64 " above its budget",
+		       found.overfilled_card, found.overfilled_weights,
+		       found.overfilled_weights - found.overfilled_budget);
+	capture_end_expecting(words);
+	over_text(options, &found, text);
+	expect(status == STATUS_OUT_OF_MEMORY && !found.is_placed &&
+		       found.is_overfilled && found.overfilled_card == card &&
+		       found.overfilled_weights > found.overfilled_budget &&
+		       (is_first_pass ? found.overfilled_pass == 1u &&
+						found.overfilled_budget ==
+							found.budget[card] :
+					found.overfilled_pass > 1u &&
+						found.overfilled_weights <=
+							found.budget[card]),
+	       "the placement is refused for memory, and the check finds the card its pass overfills");
+	expect(strstr(text, "; over budget: card ") == text &&
+		       strstr(text, " bytes of weights in placement pass ") !=
+			       NULL,
+	       "the verdict's words name the card, its weights and its pass");
 }
 
 /* The plan of a layout text holds every layer, the embedding and the head on the cards of its table, and the routed
@@ -857,6 +967,11 @@ static void test_layout_texts(const struct pack_record *pack)
     expect(found.pinned_bytes > STEP_MOST_PINNED_EXPERT_BYTES &&
 		   !layout_fits(&found),
 	   "more experts in host memory than may be page-locked: the text does not fit");
+
+    context_text = "every unit on card 0 of five";
+    options.card_count = FIVE_CARDS;
+    options.layout = OVERFILLED_TEXT;
+    overfilled_expect(pack, &options, OVERFILLED_CARD, true);
 }
 
 /* Production's budgets and limits on five cards in stage order, the PRO at pro_card: a CMP 170HX's free memory and
@@ -927,13 +1042,16 @@ static void test_draft_placement(const struct pack_record *pack)
 		   found.result_card == FIVE_CARDS - 1u &&
 		   found.embedding_card == 0,
 	   "layout D fits without the draft");
+    context_text = "layout D under the state of the most sessions";
+    options.sessions = MOST_SESSIONS;
+    overfilled_expect(pack, &options, OVERFILLED_STATE_CARD, false);
 }
 
 /* serve's --session_slots=max (session_fit.h), the engine's own fit, on production's budgets with the draft: the
  * most sessions of the full context the five cards hold is at least production's four; that count fits and one
  * more does not fit for memory (STATUS_OUT_OF_MEMORY); half the PRO's budget holds no more; cards of a MiB hold none
  * (the fill refuses with one line, for memory); a layout text the placement refuses is that refusal, found at one
- * session with one line, not "no session fits" (stage 3 review D2). */
+ * session with one line, not "no session fits". */
 static void test_session_fit(const struct pack_record *pack)
 {
 	const uint32_t pro_card = FIVE_CARDS - 1u;
@@ -1030,7 +1148,7 @@ static void test_session_fit(const struct pack_record *pack)
 	free(card_of_unit);
 }
 
-/* Stage 3 review D3: the original head offload grows every card's arena after plan_create (its shard, hidden
+/* The original head offload grows every card's arena after plan_create (its shard, hidden
  * rows, logits and controls on each CMP, and a flight bank per pipeline step), and the fit grows its probe plans the
  * same way (session_fit's plan_grown). On production's budgets at 64K in PP5's 8/7/7/7/11 layout (the head
  * offload's), the most sessions max finds is a count whose grown arenas open, one more is out of memory, and it is

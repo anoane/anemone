@@ -943,7 +943,7 @@ int main(void)
 	captured_held(GOLDEN);
 	free_run_held();
 	free_option = 0;
-	/* B1's descriptor: the kept capture's map has one beside it, the free run's capture no map */
+	/* The map descriptor: the kept capture's map has one beside it, the free run's capture no map */
 	char descriptor_hex[DIGEST_HEX];
 	hex_of_text(DESCRIPTOR_TEXT, descriptor_hex);
 	expect(file_holds("set/c0", "metadata.json",

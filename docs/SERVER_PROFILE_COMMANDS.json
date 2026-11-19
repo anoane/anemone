@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "source_commit": "6ecf1bb3e8b5e2abc57d8de3a90d9d6b064f8584",
-  "release": "v0.0.4-alpha",
-  "binary_sha256": "15abb30da13582cd5a9b004014654b02b2da4d508001d049a932667f55458e49",
-  "parser_helper_sha256": "15abb30da13582cd5a9b004014654b02b2da4d508001d049a932667f55458e49",
+  "source_commit": "d208e0150c639f4412e0b508618a073ccef29383",
+  "release": "v0.0.5-alpha",
+  "binary_sha256": "ff47580be4694b7050964c4c57e2df1d0882be345b6b93ca3b700671784793b0",
+  "parser_helper_sha256": "ff47580be4694b7050964c4c57e2df1d0882be345b6b93ca3b700671784793b0",
   "scope": "Real axis resolver/parser checks only. At source_commit, the release executable itself ran them (binary_sha256; parser_helper_sha256 names the same file, as no separate helper was used): each profile's argv, with its environment, argv[0] replaced and both data paths nonexistent, and the two EXL3 arrays again with a prepared 2.9 bpw map, parsed (parser_exit 0; a refused parse exits 2) and stopped with exit 1 at the first front-end step, \"open the tables and the socket\", before any model, GPU backend, socket or server start. The smoke_requests last ran against servers at source 6b9e276 (SERVER_PROFILES.md); GPU health/request execution is recorded separately in the comparison matrix.",
   "transport_adaptation": "Replace argv[0] and the two trailing data paths for the chosen install; the map's embedded absolute source paths must remain valid. Record transport substitutions, preserve numerical flags, and validate target backend card ordering before launching. No authentication/key-file input is included.",
   "base_url": "http://127.0.0.1:8321",

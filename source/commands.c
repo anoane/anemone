@@ -56,7 +56,7 @@
 #include "golden_capture.h"
 /* REUSE-IgnoreStart: the tag below is the printed notice's, not this file's */
 #define PROGRAM_ATTRIBUTION_NOTICE                                                               \
-	"Anemone v0.0.4-alpha\nCopyright (C) 2026 Fabiano Anemone <fabiano.anemone@gmail.com>\n" \
+	"Anemone v0.0.5-alpha\nCopyright (C) 2026 Fabiano Anemone <fabiano.anemone@gmail.com>\n" \
 	"SPDX-License-Identifier: AGPL-3.0-or-later\n" /* REUSE-IgnoreEnd */
 #define NANOSECONDS_PER_SECOND 1e9
 #define BYTES_PER_GIB 1073741824.0
@@ -92,14 +92,10 @@
 	1099511628211ull /* FNV-1a 64: mixes a layer's tensor digests in order */
 #define PIPE_ENDS 2 /* of a pipe: read, write */
 #define STOP_SIGNALS 3 /* of serve: SIGINT, SIGTERM, SIGHUP */
-#define MOST_THIN_PROGRAMS \
-	3 /* four-owner capacity4: programs1/2/4; single-session retains1/max */
 #define CHUNK_LADDER_TOP \
 	1024u /* above it, wide_rows then 512, 256 and 64 rows (engine.c's exact plan: whole multiples of 256) */
 #define CHUNK_ROWS_DIVISOR \
 	4u /* wide and full programs of wide_rows, a quarter of it, ..., down to the least wide rows */
-#define MOST_CHUNK_PROGRAMS \
-	4 /* of each kind: 1,024, 256 and 64 rows; 2,048, 512, 128 and 64 */
 #define DEFAULT_BATCH_GROUPED_ROWS 16u /* --batch_grouped_rows */
 #define DEFAULT_BATCH_CORE_ONCE \
 	3u /* step-wide pools, then deferred compressor slot retention */
@@ -109,9 +105,6 @@
 #define DEFAULT_BATCH_DRAFT_WIDE \
 	3u /* target-independent draft walk over complete verifier blocks */
 #define MOST_BATCH_GROUPED_ROWS 48u
-#define MOST_PROGRAMS                                                         \
-	(MOST_THIN_PROGRAMS + MOST_BATCH_PROGRAMS + 2 * MOST_CHUNK_PROGRAMS + \
-	 EXTRA_CHUNK_PROGRAMS) /* and wide and full ones, the knobs' */
 #define DEFAULT_GENERATED 64u /* tokens */
 /* --prefill_tail_rows: a full program of two of the exact plan's 64-row tail chunks, beside the ladder's (BATCH
  * programs take the thin ones' place, so MOST_PROGRAMS holds it), with a ladder of no 128-row program of its own */
@@ -121,10 +114,6 @@
 #define TAIL_WIDEST_ROWS \
 	448u /* --prefill_tail_rows=448: and one of seven beside the 320-row one */
 #define TAIL_LEAST_WIDE_ROWS 1024u
-#define EXTRA_CHUNK_PROGRAMS \
-	26u /* --prefill_ladder_1024's two, --prefill_ladder_1536's two, --prefill_ladder_fine's
-				   six, --prefill_front_tail's three, the two long tails' and --prefill_thin_tail's six
-				   and twelve past the slack */
 #define FRONT_TAIL_ALL \
 	2u /* --prefill_front_tail=2: the front region's tail takes the full region's tail programs */
 #define THIN_TAIL_KINDS \
@@ -1132,7 +1121,7 @@ bool prefix_cold_plan_is_qualified(void)
 		prefill_order != 0);
 }
 
-/* Stage 3 review D4: the knob given that serves one session (--official_reference always; the stable prefix,
+/* The knob given that serves one session (--official_reference always; the stable prefix,
  * exact prefix reuse and session forks unless the prompts are reserved by --prefill_first or --prefill_order), or
  * NULL. A serve without --session_slots then takes one session, named; a given count above one, or max, is refused,
  * named. */
@@ -1149,7 +1138,7 @@ static const char *one_session_knob(void)
 
 static bool tensor_placement_selected(void);
 
-/* Every parse-time default that reads the session count, for sessions of them (stage 3 review D1: the same count
+/* Every parse-time default that reads the session count, for sessions of them (the same count
  * runs the same configuration, however it was reached); an explicit --pipeline_steps or --draft_policy is kept:
  * - a serve's pipeline depth with a device draft (DSpark or hybrid) and without BATCH: PP5
  *   ORIGINAL_PP5_MULTI_PIPELINE_STEPS and the TP splits TP_MULTI_PIPELINE_STEPS (one flight is refused there) for
@@ -1801,7 +1790,7 @@ bool parse_arguments(int argument_count, char **arguments)
 				STEP_BATCH_MAXIMUM_SESSIONS, session_slots);
 		return false;
 	}
-	/* Stage 3 review D2: a context the model refuses at any count is refused here, by name, not as a fit */
+	/* A context the model refuses at any count is refused here, by name, not as a fit */
 	if (context_tokens % MODEL_CONTEXT_GRANULE != 0u) {
 		const uint32_t below =
 			context_tokens - context_tokens % MODEL_CONTEXT_GRANULE;
@@ -2607,13 +2596,15 @@ static bool tensor_placement_selected(void)
 }
 
 /* Select descriptions only: a PRO is skipped without opening its CUDA arena. */
-MUST_CHECK static result_status exl3_card_order_prepare(uint32_t found)
+MUST_CHECK static result_status
+exl3_card_order_prepare(const struct backend_operations *backend,
+			uint32_t found)
 {
 	uint32_t selected[TP4_RANKS], count = 0;
 	for (uint32_t ordinal = 0; ordinal < found; ordinal++) {
 		struct card_description_record description = { 0 };
 		const result_status status =
-			backend_cuda_value.card_describe(ordinal, &description);
+			backend->card_describe(ordinal, &description);
 		if (status != STATUS_OK)
 			return status;
 		if (description.arithmetic_class != ARITHMETIC_CLASS_SM_80 ||
@@ -2628,6 +2619,71 @@ MUST_CHECK static result_status exl3_card_order_prepare(uint32_t found)
 	(void)memcpy(card_order, selected, sizeof(selected));
 	card_count = count;
 	return STATUS_OK;
+}
+
+/* The cards a serve takes, as backend numbers and describes them (run_program's backend_cuda_value; a test's
+ * stand-in of the workstation): with no --card_order every card in the backend's order, TP4_EXL3 its four CMPs
+ * (exl3_card_order_prepare), each described into descriptions; refused for no card, more than BACKEND_MAXIMUM_CARDS or
+ * a --card_order card the backend does not have. */
+MUST_CHECK result_status
+serve_cards_describe(const struct backend_operations *backend)
+{
+	const bool every_card_is_taken = card_count == 0;
+	uint32_t cards_found = 0;
+	result_status status = backend->card_count(&cards_found);
+	if (status == STATUS_OK &&
+	    (cards_found == 0 || cards_found > BACKEND_MAXIMUM_CARDS)) {
+		/* No card to load onto, or more cards than these arrays hold. */
+		status = STATUS_UNSUPPORTED;
+	}
+	if (status == STATUS_OK && every_card_is_taken &&
+	    execution_placement == EXECUTION_TP4_EXL3)
+		status = exl3_card_order_prepare(backend, cards_found);
+	for (; status == STATUS_OK && every_card_is_taken &&
+	       execution_placement != EXECUTION_TP4_EXL3 &&
+	       card_count < cards_found;
+	     card_count++) {
+		card_order[card_count] = card_count;
+	}
+	for (uint32_t card = 0; card < card_count && status == STATUS_OK;
+	     card++) {
+		status = card_order[card] >= cards_found ?
+				 STATUS_INVALID_ARGUMENT /* no such card */
+				 :
+				 backend->card_describe(card_order[card],
+							&descriptions[card]);
+	}
+	return status;
+}
+
+/* Each card's arithmetic as the serve takes it, a line where it is not the reference's: the PRO's own unless
+ * --pro_emulation=1 (the plan, programs and kernels follow the class), a CMP's relaxed order */
+void serve_cards_arithmetic(void)
+{
+	for (uint32_t card = 0; card < card_count; card++) {
+		if (descriptions[card].arithmetic_class ==
+			    ARITHMETIC_CLASS_SM_80 &&
+		    cmp_order == CMP_ORDER_RELAXED) {
+			(void)printf(
+				"card %" PRIu32
+				": relaxed CMP trunk/expert order:"
+				" sums and state bits change;"
+				" --cmp_order=reference restores the reference order\n",
+				card);
+		}
+		if (descriptions[card].arithmetic_class ==
+			    ARITHMETIC_CLASS_SM_120 &&
+		    pro_emulation == 0) {
+			descriptions[card].arithmetic_class =
+				ARITHMETIC_CLASS_SM_120_NATIVE;
+			(void)printf(
+				"card %" PRIu32
+				": native arithmetic (its own tensor cores): outputs depend"
+				" on the layers it holds; --pro_emulation=1: the same bits on every card,"
+				" 2-4x slower\n",
+				card);
+		}
+	}
 }
 
 /* Cold TP bootstrap. The ordinary unit map records canonical homes for identity/statistics only: selected
@@ -2782,7 +2838,7 @@ struct model_limits options_limits(void)
 	};
 }
 
-/* What the open adds to the plan's arenas after plan_create (stage 3 review D3: session_fit's plan_grown, so
+/* What the open adds to the plan's arenas after plan_create (session_fit's plan_grown, so
  * the fit sees the arenas that are opened): the original head offload's shards on every card, and with banked heads a
  * bank for each pipeline step. Nothing else grows an arena between the plan and the open (run_program). */
 MUST_CHECK static result_status plan_grown(struct model_plan_record *grown)
@@ -2825,7 +2881,7 @@ bool batch_serving(void)
 /* The most sessions of limits' context that fit, 1 to SERVING_SLOTS_MOST by bisection (the arena grows with the count;
  * a trial count's refusal is taken as not fitting); a BATCH serve tries only its STEP_BATCH_MAXIMUM_SESSIONS. 0 when
  * none does: then *refusal_out is the refusal of the last count tried (one session; BATCH's eight) other than
- * STATUS_OUT_OF_MEMORY, which no count changes, else STATUS_OK (stage 3 review D2). */
+ * STATUS_OUT_OF_MEMORY, which no count changes, else STATUS_OK. */
 uint32_t slots_most(const struct slot_fit *fit,
 		    const struct model_limits *limits,
 		    result_status *refusal_out)
@@ -3431,9 +3487,9 @@ MUST_CHECK static result_status engram_hot_start(void)
 /* Step I/O's default and its guards, once the storage profile was applied: a profile's turbo_engram puts the tables
  * on disk (it sets engram_ram_percent), and --engram_step_io and the hot set are no profile argument, so they keep it.
  * Serving PP5 or TP4_PRO from the disk store reads a step's blocks at submit by default, every stream identical to
- * all-RAM. PP5 (request 7): cold prefill 27.38 against 27.18 s all-RAM at 131k tokens and 1.75x today's per-row
- * path; decode C1 172.2 against 176.0 tok/s, C4 and C8 equal; 0.8 cores, hybrid and pinned. TP4_PRO (requests 9 and
- * 9b): decode C1 4.6-5.9 % over the per-row path; cold prefill 9.87 / 35.18 s at 8180 / 32782 tokens against
+ * all-RAM. PP5 (8-9 Nov 2026): cold prefill 27.38 against 27.18 s all-RAM at 131k tokens and 1.75x today's per-row
+ * path; decode C1 172.2 against 176.0 tok/s, C4 and C8 equal; 0.8 cores, hybrid and pinned. TP4_PRO (9 Nov 2026, two
+ * runs): decode C1 4.6-5.9 % over the per-row path; cold prefill 9.87 / 35.18 s at 8180 / 32782 tokens against
  * 9.74 / 35.08 s all-RAM and 12.63 / 37.98 s per-row. --engram_step_io=0 keeps the per-row path; other GPU splits
  * keep it until measured there. Returns false, with its reason printed, for step I/O or a hot set with every table
  * in RAM. */
@@ -3787,18 +3843,18 @@ MUST_CHECK static result_status engram_sources_prepare(void)
 }
 
 /* The exact reference recipe admits text even when the pack also contains a vision tower. */
-static bool model_images_are_enabled(const struct model_plan_record *model_plan)
+bool model_images_are_enabled(const struct model_plan_record *model_plan)
 {
 	return model_plan != NULL && model_plan->vision.enabled &&
 	       model_plan->limits.official_reference == 0;
 }
 
-/* Once the pack is loaded: the n-gram tables, the state, the programs, the driver and the engine over them. Every
- * step ends as step_failed says; true when one failed. */
-MUST_CHECK static bool
-engine_failed_to_start(const struct engine_description_record *description)
+/* The programs a serve prepares, in engine_failed_to_start's order (the step driver's), of the parsed options alone: on
+ * a TP split with --batch_rows its BATCH programs, else THIN ones of 1, 2 and the most rows; then the chunk ladder's
+ * WIDE ones and with --full_steps its FULL ones; on a TP split the tails and thin tails. */
+void serve_programs_choose(bool tensor, struct serve_programs *chosen)
 {
-	const bool image_programs_enabled = model_images_are_enabled(plan);
+	*chosen = (struct serve_programs){ 0 };
 	uint32_t most_rows = step_rows < LINEAR_MAXIMUM_ROWS ?
 				     step_rows :
 				     LINEAR_MAXIMUM_ROWS;
@@ -3811,141 +3867,35 @@ engine_failed_to_start(const struct engine_description_record *description)
 						     MOST_THIN_PROGRAMS :
 					     most_rows > 1 ? SERVING_PAIR_ROWS :
 							     1;
-	result_status status =
-		engram != NULL ?
-			STATUS_OK :
-			engram_open(storage_operations, reader, pack, &engram);
-	status = status == STATUS_UNSUPPORTED ?
-			 STATUS_OK :
-			 status; /* a model without n-grams */
-	const struct engram_description *const tables =
-		engram != NULL ? engram_description_of(engram) : NULL;
-	const void *const host_arena = tensor_model != NULL ?
-					       tensor_model->host_arena :
-					       result.host_arena;
-	const uint64_t *const host_offsets =
-		tensor_model != NULL ? tensor_model->host_offsets :
-				       layout->byte_offset_of_extent;
-	for (uint32_t table = 0;
-	     engram_disk == NULL && tables != NULL &&
-	     table < tables->table_count && status == STATUS_OK;
-	     table++) {
-		const uint32_t extent =
-			pack_units_of(pack)[tables->table_unit_index[table]]
-				.first_extent_index;
-		status = host_arena == NULL ?
-				 STATUS_INVALID_ARGUMENT :
-				 engram_attach_entry(
-					 engram, table,
-					 (const unsigned char *)host_arena +
-						 host_offsets[extent]);
-	}
-	bool failed = step_failed("open the n-gram tables", status) ||
-		      (tensor_model == NULL &&
-		       step_failed("initialise the state",
-				   instance.operations->arena_initialise(
-					   plan, &backend_cuda_value, cards,
-					   CARD_WAIT_LIMIT_NANOSECONDS)));
-	failed = failed ||
-		 (original_head_offload != 0 &&
-		  step_failed("load and qualify original target head offload",
-			      v41_original_head_initialise(
-				      plan, pack, storage_operations, reader,
-				      &backend_cuda_value, cards,
-				      CARD_WAIT_LIMIT_NANOSECONDS)));
-	if (!failed && original_head_offload == V41_HEAD_MODE_LEASED)
-		(void)fprintf(
-			stderr,
-			"original target head offload: 4 x %u BF16 rows; CMP dense1/stream148; "
-			"native PRO normalization/sampler/draft; shared planes under PRO visit lease\n",
-			V41_HEAD_SHARD_ROWS);
-	if (!failed && original_head_offload == V41_HEAD_MODE_BANKED)
-		(void)fprintf(
-			stderr,
-			"original target head offload: %u immutable flight banks; CMP dense1/stream148; "
-			"native PRO normalization/sampler/draft; owner-scoped PRO visit ordering\n",
-			plan->original_head.bank_count);
-	struct v41_tp2_program_description tensor_description = { 0 };
-	failed = failed ||
-		 (tensor_model != NULL &&
-		  step_failed("describe TP programs",
-			      v41_tp2_model_program_description(
-				      tensor_model, &tensor_description)));
-	const uint32_t row_capacity = effective_row_capacity();
 	/* --batch_rows: BATCH programs of those rows in place of the thin ones (the engine's decode steps, any
 	 * sessions) */
-	const bool batch = batch_rows[0] != 0 && tensor_model != NULL;
-	program_count = 0;
-	uint32_t verifiers[MOST_PROGRAMS] = {
-		0
-	}; /* --batch_verifiers: each BATCH program's, the others 0 */
-	bool verifiers_given = batch_verifiers[0] != 0, rows_repeat = false;
+	chosen->batch = batch_rows[0] != 0 && tensor;
+	chosen->verifiers_given = batch_verifiers[0] != 0;
 	for (uint32_t index = 0;
 	     index < MOST_BATCH_PROGRAMS && batch_rows[index] != 0; index++)
 		for (uint32_t other = 0; other < index; other++)
-			rows_repeat = rows_repeat ||
-				      batch_rows[other] == batch_rows[index];
-	failed = failed ||
-		 (batch && rows_repeat && !verifiers_given &&
-		  step_failed(
-			  "a repeated BATCH row count needs --batch_verifiers",
-			  STATUS_INVALID_ARGUMENT));
-	for (uint32_t index = 0; batch && index < MOST_BATCH_PROGRAMS &&
-				 batch_rows[index] != 0 && !failed;
+			chosen->rows_repeat = chosen->rows_repeat ||
+					      batch_rows[other] ==
+						      batch_rows[index];
+	for (uint32_t index = 0; chosen->batch && index < MOST_BATCH_PROGRAMS &&
+				 batch_rows[index] != 0;
 	     index++) {
-		tensor_description.batch_verifiers = batch_verifiers[index];
-		verifiers[program_count] = batch_verifiers[index];
-		verifiers_given = verifiers_given &&
-				  batch_verifiers[index] != 0;
-		failed = step_failed(
-			"prepare a BATCH program",
-			v41_tp_program_prepare(
-				&tensor_description, &backend_cuda_value, cards,
-				descriptions, PROGRAM_BATCH, batch_rows[index],
-				&programs[program_count],
-				&tensor_companions[program_count]));
+		chosen->programs[chosen->count++] = (struct serve_program){
+			PROGRAM_BATCH, batch_rows[index],
+			batch_verifiers[index], SERVE_BATCH_ROWS
+		};
+		chosen->verifiers_given = chosen->verifiers_given &&
+					  batch_verifiers[index] != 0;
 		most_rows = batch_rows[index] > most_rows ? batch_rows[index] :
 							    most_rows;
-		program_count += failed ? 0u : 1u;
 	}
-	tensor_description.batch_verifiers = 0;
-	failed = failed || (batch_verifiers[0] != 0 && !verifiers_given &&
-			    step_failed("one verifier count a BATCH program",
-					STATUS_INVALID_ARGUMENT));
-	for (program_count = batch ? program_count : 0;
-	     !batch && program_count < programs_to_prepare && !failed;
-	     program_count++) {
-		failed = step_failed(
-			"prepare a program",
-			tensor_model != NULL ?
-				v41_tp2_program_prepare(
-					&tensor_description,
-					&backend_cuda_value, cards,
-					descriptions,
-					program_rows[program_count],
-					&programs[program_count],
-					&tensor_companions[program_count]) :
-				instance.operations->program_prepare(
-					plan, &backend_cuda_value, cards,
-					descriptions, PROGRAM_THIN,
-					program_rows[program_count],
-					&programs[program_count]));
-		if (!failed &&
-		    !serving_program_matches(
-			    programs[program_count],
-			    program_rows[program_count], row_capacity,
-			    session_slots, description->context_token_limit)) {
-			failed = step_failed(
-				"require admitted row/session programs",
-				STATUS_UNSUPPORTED);
-		}
-		if (!failed &&
-		    (programs[program_count]->host_expert_count != 0 ||
-		     programs[program_count]->expert_pause_count != 0)) {
-			failed = step_failed("require resident experts",
-					     STATUS_UNSUPPORTED);
-		}
-	}
+	for (uint32_t thin = 0; !chosen->batch && thin < programs_to_prepare;
+	     thin++)
+		chosen->programs[chosen->count++] = (struct serve_program){
+			PROGRAM_THIN, program_rows[thin], 0, SERVE_THIN_ROWS
+		};
+	chosen->first_count = chosen->count;
+	chosen->most_rows = most_rows;
 	/* behind the thin programs, chunks of wide_rows, a quarter of it, ..., at least the least wide rows, which ends
 	 * the ladder (a prompt's rows below it go in thin steps): wide ones for the front rows, full ones for the rows
 	 * behind the front (the engine picks a size: engine.c). Above CHUNK_LADDER_TOP: wide_rows, 512, 256, 64 (the
@@ -4020,31 +3970,14 @@ engine_failed_to_start(const struct engine_description_record *description)
 	for (uint32_t kind = 0;
 	     kind < sizeof(chunk_kinds) / sizeof(chunk_kinds[0]) &&
 	     (kind == 0 || chunk_kinds[kind] != chunk_kinds[0]);
-	     kind++) {
-		for (uint32_t step = 0; !failed && step < chunk_count &&
-					program_count < MOST_PROGRAMS;
-		     step++) {
-			const uint32_t rows = chunk_rows[step];
-			failed = step_failed(
-				chunk_kinds[kind] == PROGRAM_WIDE ?
-					"prepare a wide program" :
-					"prepare a full program",
-				tensor_model != NULL ?
-					v41_tp_program_prepare(
-						&tensor_description,
-						&backend_cuda_value, cards,
-						descriptions, chunk_kinds[kind],
-						rows, &programs[program_count],
-						&tensor_companions
-							[program_count]) :
-					instance.operations->program_prepare(
-						plan, &backend_cuda_value,
-						cards, descriptions,
-						chunk_kinds[kind], rows,
-						&programs[program_count]));
-			program_count += failed ? 0u : 1u;
-		}
-	}
+	     kind++)
+		for (uint32_t step = 0;
+		     step < chunk_count && chosen->count < MOST_PROGRAMS;
+		     step++)
+			chosen->programs[chosen->count++] =
+				(struct serve_program){ chunk_kinds[kind],
+							chunk_rows[step], 0,
+							SERVE_CHUNK_LADDER };
 	/* --prefill_tail_rows: a full program of the exact plan's tail, two 64-row chunks a step in their forms (and
 	 * with 320 one of five, with 448 one of five and one of seven); --prefill_front_tail: a wide one of two for the
 	 * front region's tail too */
@@ -4066,21 +3999,14 @@ engine_failed_to_start(const struct engine_description_record *description)
 		      { PROGRAM_WIDE, TAIL_WIDEST_ROWS,
 			prefill_tail_rows == TAIL_WIDEST_ROWS &&
 				prefill_front_tail == FRONT_TAIL_ALL } };
-	for (uint32_t tail = 0;
-	     tail < sizeof(tails) / sizeof(tails[0]) && !failed &&
-	     tensor_model != NULL && program_count < MOST_PROGRAMS;
-	     tail++) {
-		if (!tails[tail].wanted)
-			continue;
-		failed = step_failed(
-			"prepare a tail program",
-			v41_tp_program_prepare(
-				&tensor_description, &backend_cuda_value, cards,
-				descriptions, tails[tail].kind,
-				tails[tail].rows, &programs[program_count],
-				&tensor_companions[program_count]));
-		program_count += failed ? 0u : 1u;
-	}
+	for (uint32_t tail = 0; tail < sizeof(tails) / sizeof(tails[0]) &&
+				tensor && chosen->count < MOST_PROGRAMS;
+	     tail++)
+		if (tails[tail].wanted)
+			chosen->programs[chosen->count++] =
+				(struct serve_program){ tails[tail].kind,
+							tails[tail].rows, 0,
+							SERVE_TAIL };
 	/* --prefill_thin_tail: full programs of 16 to 56 rows, 8 apart: the tail's rows short of a 64-row chunk but its
 	 * row of logits in one step, each row in a thin step's forms; with --prefill_front_tail=2 wide ones too */
 	for (uint32_t kind = 0;
@@ -4089,20 +4015,170 @@ engine_failed_to_start(const struct engine_description_record *description)
 	     kind++)
 		for (uint32_t rows = THIN_TAIL_LEAST_ROWS;
 		     prefill_thin_tail != 0 && rows < MODEL_WIDE_LEAST_ROWS &&
-		     !failed && tensor_model != NULL &&
-		     program_count < MOST_PROGRAMS;
-		     rows += LINEAR_MAXIMUM_ROWS) {
-			failed = step_failed(
-				"prepare a thin-tail program",
-				v41_tp_program_prepare(
-					&tensor_description,
-					&backend_cuda_value, cards,
-					descriptions,
+		     tensor && chosen->count < MOST_PROGRAMS;
+		     rows += LINEAR_MAXIMUM_ROWS)
+			chosen->programs[chosen->count++] =
+				(struct serve_program){
 					kind == 0 ? PROGRAM_FULL : PROGRAM_WIDE,
-					rows, &programs[program_count],
-					&tensor_companions[program_count]));
+					rows, 0, SERVE_THIN_TAIL
+				};
+}
+
+/* The step line of a program of the serve's list */
+static const char *serve_program_step(const struct serve_program *own)
+{
+	static const char *const steps[SERVE_PROGRAM_RULES] = {
+		"prepare a BATCH program", "prepare a program",
+		"prepare a wide program", "prepare a tail program",
+		"prepare a thin-tail program"
+	};
+	return own->rule == SERVE_CHUNK_LADDER && own->kind == PROGRAM_FULL ?
+		       "prepare a full program" :
+		       steps[own->rule];
+}
+
+/* A program of the serve's list as programs[program_count], a TP split's with its companions */
+MUST_CHECK static result_status
+serve_program_prepare(const struct serve_program *own,
+		      struct v41_tp2_program_description *tensor_description)
+{
+	if (tensor_model == NULL)
+		return instance.operations->program_prepare(
+			plan, &backend_cuda_value, cards, descriptions,
+			own->kind, own->rows, &programs[program_count]);
+	tensor_description->batch_verifiers = own->verifiers;
+	return own->kind == PROGRAM_THIN ?
+		       v41_tp2_program_prepare(
+			       tensor_description, &backend_cuda_value, cards,
+			       descriptions, own->rows,
+			       &programs[program_count],
+			       &tensor_companions[program_count]) :
+		       v41_tp_program_prepare(
+			       tensor_description, &backend_cuda_value, cards,
+			       descriptions, own->kind, own->rows,
+			       &programs[program_count],
+			       &tensor_companions[program_count]);
+}
+
+/* Once the pack is loaded: the n-gram tables, the state, the programs, the driver and the engine over them. Every
+ * step ends as step_failed says; true when one failed. */
+MUST_CHECK static bool
+engine_failed_to_start(const struct engine_description_record *description)
+{
+	const bool image_programs_enabled = model_images_are_enabled(plan);
+	struct serve_programs chosen;
+	serve_programs_choose(tensor_model != NULL, &chosen);
+	result_status status =
+		engram != NULL ?
+			STATUS_OK :
+			engram_open(storage_operations, reader, pack, &engram);
+	status = status == STATUS_UNSUPPORTED ?
+			 STATUS_OK :
+			 status; /* a model without n-grams */
+	const struct engram_description *const tables =
+		engram != NULL ? engram_description_of(engram) : NULL;
+	const void *const host_arena = tensor_model != NULL ?
+					       tensor_model->host_arena :
+					       result.host_arena;
+	const uint64_t *const host_offsets =
+		tensor_model != NULL ? tensor_model->host_offsets :
+				       layout->byte_offset_of_extent;
+	for (uint32_t table = 0;
+	     engram_disk == NULL && tables != NULL &&
+	     table < tables->table_count && status == STATUS_OK;
+	     table++) {
+		const uint32_t extent =
+			pack_units_of(pack)[tables->table_unit_index[table]]
+				.first_extent_index;
+		status = host_arena == NULL ?
+				 STATUS_INVALID_ARGUMENT :
+				 engram_attach_entry(
+					 engram, table,
+					 (const unsigned char *)host_arena +
+						 host_offsets[extent]);
+	}
+	bool failed = step_failed("open the n-gram tables", status) ||
+		      (tensor_model == NULL &&
+		       step_failed("initialise the state",
+				   instance.operations->arena_initialise(
+					   plan, &backend_cuda_value, cards,
+					   CARD_WAIT_LIMIT_NANOSECONDS)));
+	failed = failed ||
+		 (original_head_offload != 0 &&
+		  step_failed("load and qualify original target head offload",
+			      v41_original_head_initialise(
+				      plan, pack, storage_operations, reader,
+				      &backend_cuda_value, cards,
+				      CARD_WAIT_LIMIT_NANOSECONDS)));
+	if (!failed && original_head_offload == V41_HEAD_MODE_LEASED)
+		(void)fprintf(
+			stderr,
+			"original target head offload: 4 x %u BF16 rows; CMP dense1/stream148; "
+			"native PRO normalization/sampler/draft; shared planes under PRO visit lease\n",
+			V41_HEAD_SHARD_ROWS);
+	if (!failed && original_head_offload == V41_HEAD_MODE_BANKED)
+		(void)fprintf(
+			stderr,
+			"original target head offload: %u immutable flight banks; CMP dense1/stream148; "
+			"native PRO normalization/sampler/draft; owner-scoped PRO visit ordering\n",
+			plan->original_head.bank_count);
+	struct v41_tp2_program_description tensor_description = { 0 };
+	failed = failed ||
+		 (tensor_model != NULL &&
+		  step_failed("describe TP programs",
+			      v41_tp2_model_program_description(
+				      tensor_model, &tensor_description)));
+	const uint32_t row_capacity = effective_row_capacity();
+	program_count = 0;
+	uint32_t verifiers[MOST_PROGRAMS] = {
+		0
+	}; /* --batch_verifiers: each BATCH program's, the others 0 */
+	failed = failed ||
+		 (chosen.batch && chosen.rows_repeat &&
+		  batch_verifiers[0] == 0 &&
+		  step_failed(
+			  "a repeated BATCH row count needs --batch_verifiers",
+			  STATUS_INVALID_ARGUMENT));
+	/* the BATCH or THIN programs first, each THIN one admitted for the serve's rows and sessions with its experts
+	 * resident; a failed THIN one counts, so the stop destroys what it made */
+	uint32_t entry = 0;
+	for (; entry < chosen.first_count && !failed; entry++) {
+		const struct serve_program *const own = &chosen.programs[entry];
+		verifiers[program_count] = own->verifiers;
+		failed = step_failed(
+			serve_program_step(own),
+			serve_program_prepare(own, &tensor_description));
+		if (own->rule == SERVE_BATCH_ROWS) {
 			program_count += failed ? 0u : 1u;
+			continue;
 		}
+		if (!failed &&
+		    !serving_program_matches(
+			    programs[program_count], own->rows, row_capacity,
+			    session_slots, description->context_token_limit)) {
+			failed = step_failed(
+				"require admitted row/session programs",
+				STATUS_UNSUPPORTED);
+		}
+		if (!failed &&
+		    (programs[program_count]->host_expert_count != 0 ||
+		     programs[program_count]->expert_pause_count != 0)) {
+			failed = step_failed("require resident experts",
+					     STATUS_UNSUPPORTED);
+		}
+		program_count++;
+	}
+	failed = failed ||
+		 (batch_verifiers[0] != 0 && !chosen.verifiers_given &&
+		  step_failed("one verifier count a BATCH program",
+			      STATUS_INVALID_ARGUMENT));
+	for (; entry < chosen.count && !failed; entry++) {
+		failed = step_failed(
+			serve_program_step(&chosen.programs[entry]),
+			serve_program_prepare(&chosen.programs[entry],
+					      &tensor_description));
+		program_count += failed ? 0u : 1u;
+	}
 	for (uint32_t index = 0;
 	     !failed && image_programs_enabled && index < program_count;
 	     index++) {
@@ -4151,7 +4227,7 @@ engine_failed_to_start(const struct engine_description_record *description)
 					       programs,
 			       program_count, engram,
 			       CARD_WAIT_LIMIT_NANOSECONDS, &driver)) ||
-	       (verifiers_given &&
+	       (chosen.verifiers_given &&
 		step_failed("attach BATCH verifiers",
 			    step_batch_verifiers_attach(driver, verifiers,
 							program_count))) ||
@@ -4205,7 +4281,7 @@ engine_failed_to_start(const struct engine_description_record *description)
 							    pipeline_steps) :
 				step_pipeline_start(driver, pipeline_steps))) ||
 	       step_failed("start the engine",
-			   engine_create(driver, description, most_rows,
+			   engine_create(driver, description, chosen.most_rows,
 					 &engine));
 }
 
@@ -4722,7 +4798,7 @@ static void tp_queue_depth_report(void)
 				"");
 }
 
-/* --session_slots=max resolved to one session (stage 3 review D1): the defaults of --session_slots=1
+/* --session_slots=max resolved to one session: the defaults of --session_slots=1
  * (session_defaults), so one session runs what an explicit count of one runs, where one session still fits under them
  * (the PP fit again; the TP plan reads neither the depth nor the draft policy) and they admit the given knobs. NULL
  * then; else the multi-session defaults stay, and the reason. */
@@ -4857,7 +4933,6 @@ int run_program(int argument_count, char **arguments,
 	uint32_t *token_ids = NULL;
 	uint32_t token_count = 0;
 	uint32_t *card_of_unit = NULL;
-	uint32_t cards_found = 0;
 	uint32_t on_demand_units_per_owner = 0;
 	result_status status = STATUS_OK;
 	double first_step_started_seconds = 0.0;
@@ -5556,59 +5631,11 @@ int run_program(int argument_count, char **arguments,
 		const uint64_t bytes_kept_free =
 			(uint64_t)card_memory_kept_free_mib * BYTES_PER_MIB;
 		const uint32_t unit_count = pack_header_of(pack)->unit_count;
-		const bool every_card_is_taken = card_count == 0;
 		card_of_unit = calloc(unit_count, sizeof(*card_of_unit));
-		status = backend_cuda_value.card_count(&cards_found);
-		if (status == STATUS_OK &&
-		    (cards_found == 0 || cards_found > BACKEND_MAXIMUM_CARDS)) {
-			/* No card to load onto, or more cards than these arrays hold. */
-			status = STATUS_UNSUPPORTED;
-		}
-		if (status == STATUS_OK && every_card_is_taken &&
-		    execution_placement == EXECUTION_TP4_EXL3)
-			status = exl3_card_order_prepare(cards_found);
-		for (; status == STATUS_OK && every_card_is_taken &&
-		       execution_placement != EXECUTION_TP4_EXL3 &&
-		       card_count < cards_found;
-		     card_count++) {
-			card_order[card_count] = card_count;
-		}
-		for (uint32_t card = 0;
-		     card < card_count && status == STATUS_OK; card++) {
-			status =
-				card_order[card] >= cards_found ?
-					STATUS_INVALID_ARGUMENT /* no such card */
-					:
-					backend_cuda_value.card_describe(
-						card_order[card],
-						&descriptions[card]);
-		}
+		status = serve_cards_describe(&backend_cuda_value);
 		failed = step_failed("describe the cards", status);
-		/* the PRO's own arithmetic unless --pro_emulation=1: the plan, programs and kernels follow the class */
-		for (uint32_t card = 0; card < card_count && !failed; card++) {
-			if (descriptions[card].arithmetic_class ==
-				    ARITHMETIC_CLASS_SM_80 &&
-			    cmp_order == CMP_ORDER_RELAXED) {
-				(void)printf(
-					"card %" PRIu32
-					": relaxed CMP trunk/expert order:"
-					" sums and state bits change;"
-					" --cmp_order=reference restores the reference order\n",
-					card);
-			}
-			if (descriptions[card].arithmetic_class ==
-				    ARITHMETIC_CLASS_SM_120 &&
-			    pro_emulation == 0) {
-				descriptions[card].arithmetic_class =
-					ARITHMETIC_CLASS_SM_120_NATIVE;
-				(void)printf(
-					"card %" PRIu32
-					": native arithmetic (its own tensor cores): outputs depend"
-					" on the layers it holds; --pro_emulation=1: the same bits on every card,"
-					" 2-4x slower\n",
-					card);
-			}
-		}
+		if (!failed)
+			serve_cards_arithmetic();
 		/* a card's budget: its free memory less what the backend reserves and less what the user keeps free */
 		for (uint32_t card = 0; card < card_count && !failed; card++) {
 			const struct card_description_record *const description =
@@ -5644,7 +5671,7 @@ int run_program(int argument_count, char **arguments,
 		const struct slot_fit fit = { &fit_cards, bytes_kept_free,
 					      card_of_unit };
 		/* An explicit count's fitted most, for the report: searched before its TP plan is made (each trial plan
-		 * is released). A refusal other than memory (stage 3 review D2) is no fit: the placement
+		 * is released). A refusal other than memory is no fit: the placement
 		 * below, or the TP plan, makes it again at one session and names its step. */
 		result_status fit_refusal = STATUS_OK;
 		const uint32_t fitted_most =

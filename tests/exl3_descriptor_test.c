@@ -3,7 +3,8 @@
  * others K3, as the 2.9 bpw map), written as the converter writes it beside a map file in a fresh folder: it holds with
  * each quality (none only with the opt-in), through a link to the map, with the tables or without them; each rule's
  * refusal is seen with its status and its line; with nothing beside the map, a pack the model lists as established is
- * served and any other only on the opt-in, whatever path opened it; and a pack with one
+ * served and any other only on the opt-in, whatever path opened it, while a descriptor beside it decides (none
+ * refused, established served with its own reference, as tools/model_data.sh writes it); and a pack with one
  * matrix of another width in a layer (a synthetic mixed pack) is described as such and refused by the uniform
  * descriptor. */
 #include <inttypes.h>
@@ -65,6 +66,11 @@
 #define ESTABLISHED                                                                 \
 	"{\"status\": \"established\", \"reference\": \"TP4_EXL3's default route, " \
 	"qualified by identity\"}"
+/* the reference tools/model_data.sh gives the 2.9 bpw map's descriptor, the map the model lists as established */
+#define MODEL_DATA_REFERENCE                                                                                     \
+	"LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-2.9bpw @ 0be63c33, TP4_EXL3's default map: qualified by the " \
+	"release gates' TP4_EXL3 identity checks (RELEASE_NOTES.md) and its golden metrics "                     \
+	"(docs/results/GOLDEN_METRICS.md)"
 
 struct text {
 	char bytes[TEST_TEXT_BYTES];
@@ -735,6 +741,15 @@ static void absent_cases(const struct pack_record *pack)
 			 ESTABLISHED);
 	expect("established beside a pack not listed", text, map, pack, &model,
 	       true, false, STATUS_OK, "quality established");
+	/* the descriptor tools/model_data.sh writes, beside a pack the model lists: the sidecar is read and its own
+	 * quality and reference go on the line, not the list's name */
+	descriptor_write(
+		text, header, MODEL_LAYERS, NO_MIXED_LAYER, "null",
+		"{\"status\": \"established\", \"reference\": \"" MODEL_DATA_REFERENCE
+		"\"}");
+	expect("established beside a listed pack", text, map, pack, &listed,
+	       true, false, STATUS_OK,
+	       "quality established (" MODEL_DATA_REFERENCE ")\n");
 	(void)unlink(sidecar);
 	(void)unlink(replica);
 	for (uint32_t index = 0; index < TEST_EDGE_NAMES; index++)

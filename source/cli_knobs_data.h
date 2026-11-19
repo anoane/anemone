@@ -9,7 +9,7 @@ static const struct cli_knob_help cli_knobs[] = {
 	{ "--version",
 	  "  values: standalone flag\n"
 	  "  default: absent\n"
-	  "  meaning: Print v0.0.4-alpha, author attribution and the existing license identifier, then "
+	  "  meaning: Print v0.0.5-alpha, author attribution and the existing license identifier, then "
 	  "exit without loading a model.\n"
 	  "  commands: standalone\n"
 	  "  placement/recipe: no model, weights or cards\n"
@@ -3298,11 +3298,12 @@ static const struct cli_knob_help cli_knobs[] = {
 	  "  measured effect/source: source/storage_autotune_load.c (storage_autotune_load_cli); "
 	  "docs/user/STORAGE_PROFILE.md.\n" },
 	{ "--points_per_run",
-	  "  values: 0..39 (--stage=engram 0..72)\n"
+	  "  values: 0..78 (--stage=engram 0..72)\n"
 	  "  default: 0 (all)\n"
-	  "  meaning: Measure at most this many points before exiting 75 to resume: the load stage's grid "
-	  "of 35, then its A D D A's 4; the Engram stage's grid of 32, each disturbed grid point once "
-	  "more, then its A D D A's 4, each disturbed A D D A point once more in its slot.\n"
+	  "  meaning: Measure at most this many points before exiting 75 to resume: the load stage's 35 "
+	  "arms in a balanced order and then reversed (70 points), then its eight-point A D D A D A A D "
+	  "confirmation; the Engram stage's grid of 32, each disturbed grid point once more, then its A D "
+	  "D A's 4, each disturbed A D D A point once more in its slot.\n"
 	  "  commands: autotune --stage=load, --stage=engram\n"
 	  "  placement/recipe: all placements/recipes\n"
 	  "  exactness: same bits\n"

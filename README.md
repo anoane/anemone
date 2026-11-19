@@ -1,4 +1,4 @@
-# Anemone v0.0.4-alpha
+# Anemone v0.0.5-alpha
 
 SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -35,8 +35,8 @@ recipe is text-only. See the [user manual](docs/USAGE.md) for input and profile 
 - **Exactness by choice.** The exact profile reproduces the pinned original serial reference: over 263 positions all
   34,000,640 full-vocabulary F32 logits match (XR57, the exact recipe's qualification,
   [original_reference_serial_m1](tools/cli/AXES.md#original_reference_serial_m1)). It is the reference the golden
-  scores compare against: on the 6 November subset of 7,878 positions the balanced profiles reach 98.21 % (PP5) and
-  96.81 % (EXL3) top-1 agreement with it ([GOLDEN_METRICS.md](docs/results/GOLDEN_METRICS.md)). Four profile axes
+  scores compare against: over all 435 golden cases (66,409 positions) the default routes reach 98.01 % (PP5),
+  98.01 % (TP4_PRO) and 96.20 % (TP4_EXL3) top-1 agreement with it ([GOLDEN_METRICS.md](docs/results/GOLDEN_METRICS.md)). Four profile axes
   (category, exactness, concurrency, focus) pick the rest.
 - **Lossless, compact state.** FP16 state carriers at about 3,200 bytes per token per card: the smallest lossless
   footprint in the comparison ([H7](docs/results/COMPARISON_MATRIX.md#h-kv-cache-and-state-memory)).
@@ -191,7 +191,7 @@ or API key.
 ## Measured performance and limits
 
 Retained **6 November 2026** measurements. Donor decode permits prefix reuse;
-conditional-head quality covers 54 cases and 7,878 positions, with exact quality
+conditional-head quality covers all 435 cases and 66,409 positions (18 Nov 2026), with exact quality
 reported as reference self-comparison. Current reruns,
 protocols and qualification limits are in the [full matrix](docs/results/COMPARISON_MATRIX.md),
 [benchmark methods](docs/results/BENCHMARKS.md) and [golden metrics](docs/results/GOLDEN_METRICS.md).

@@ -572,7 +572,7 @@ static int autotune_captured(int count, char **arguments,
 	}
 	return status;
 }
-/* r18 (request 33 L01): every autotune refusal names its reason, and --plan checks the profile's folder as the
+/* Every autotune refusal names its reason, and --plan checks the profile's folder as the
  * run does, so a folder another user or group may write refuses in both, never silently. */
 static void autotune_refusal_cases(const char *source, const char *directory)
 {
@@ -1203,7 +1203,7 @@ static void receipt_fault_cases(struct prepare_copy_options *options,
 	options->spot_seed = 0;
 }
 #endif
-/* r18 (request 33 L02): a final's verification receipt. A final that matches it is spot-checked; a changed
+/* A final's verification receipt. A final that matches it is spot-checked; a changed
  * mtime, inode or receipt field forces a full read. The trade-off: a corrupted chunk under an intact receipt passes a
  * spot check that misses it, and fails one that hits it and --verify=full. */
 static void receipt_cases(struct prepare_copy_options *options,
@@ -2051,7 +2051,7 @@ int main(void)
 			       file_matches(targets[0].path, data),
 		       "the next run copies the target afresh, refusing nothing");
 		remove_target(&targets[0]);
-		/* review finding 14: a worker whose ring is poisoned at a readback (as by an io_uring_enter refused
+		/* A worker whose ring is poisoned at a readback (as by an io_uring_enter refused
 		 * mid-batch) trusts nothing more of it. The run fails at once, claims nothing from that ring, and no
 		 * worker waits for a buffer. In a child: a quarantined worker refuses every later run of the
 		 * process. */
@@ -2086,7 +2086,7 @@ int main(void)
 				"replica_prepare_test: io_uring refused here: the poisoned-ring case did not run\n",
 				stderr);
 		remove_target(&targets[0]);
-		/* review finding 15: a first run short of memory for its buffers is refused before its open creates and
+		/* A first run short of memory for its buffers is refused before its open creates and
 		 * preallocates any partial */
 		options.deadline_ns = deadline();
 		expect(fault_arm("prepare_copy_memory_short", 1),
@@ -2103,7 +2103,7 @@ int main(void)
 		expect(access(partial, F_OK) != 0 && access(journal, F_OK) != 0,
 		       "the refused run created no partial and no journal");
 		remove_target(&targets[0]);
-		/* review finding 16 and NF5: one worker and a lag of one chunk, stopped after the second written chunk.
+		/* One worker and a lag of one chunk, stopped after the second written chunk.
 		 * Chunk 0 passed its lag (one more chunk written after it) and is read back and claimed; chunk 1, still
 		 * waiting, is read back at the stop inside the lag, counted and left unclaimed */
 		options.workers = 1;

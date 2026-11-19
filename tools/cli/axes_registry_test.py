@@ -25,6 +25,56 @@ def registry():
     return json.loads((HERE / "axes.json").read_text())
 
 
+def startup_bounds(data):
+    """startup_axes.c's axis_bounds as generate_axes.py writes them, in declared order: a cap one entry a bounded
+    knob, at that knob's parser least; a floor one entry, at its own least."""
+    return [dict(bound, bounded=keys, least=bound["least"] if bound["kind"] == "floor" else
+                 GENERATOR.parser_least(keys[0])) for bound in data["cross_axis_bounds"]
+            for keys in ([bound["bounded"]] if bound["kind"] == "floor" else [[key] for key in bound["bounded"]])]
+
+
+def leading_number(text):
+    """strtoul's decimal value of a knob's text (0 where it starts with no digit)."""
+    digits = re.match(r"\d*", text).group()
+    return int(digits) if digits else 0
+
+
+def bound_value(bound, value, bounding, under):
+    """startup_axes.c bound_value: a cap lowers a value to the bounding knob's less the offset, never below its least;
+    a floor raises it to its least where the bounding knob holds the floor's value and the under knob is not 0."""
+    if bounding is None or not bounding[:1].isdigit():
+        return value
+    limit = leading_number(bounding)
+    if bound["kind"] == "cap":
+        return min(value, max(limit - bound["offset"] if limit >= bound["offset"] else 0, bound["least"]))
+    raises = limit == int(bound["value"]) and under is not None and leading_number(under) != 0
+    return bound["least"] if raises and value < bound["least"] else value
+
+
+def startup_value(row, serving, key, bounds):
+    """The value startup gives an inserted knob of a row without explicit knobs (startup_axes.c bound_setting): the
+    first bound, in declared order, that changes the composition's unclamped value, each bounding knob read after its
+    own first changing bound (bounding_final_value); else that unclamped value."""
+    settings = (row["settings"] + "\n" + row["serve_settings"] if serving else
+                row["generate_settings"] or row["settings"])
+    composed = {GENERATOR.option_key(word): word.split("=", 1)[1] for word in settings.splitlines() if "=" in word}
+    clamps = {GENERATOR.option_key(line.split()[0]): line.split()[1]
+              for line in row["clamps" if serving else "generate_clamps"].splitlines()}
+
+    def first_change(name, value, read):
+        for bound in (bound for bound in bounds if name in bound["bounded"]):
+            changed = bound_value(bound, value, read(bound["bound"]),
+                                  read(bound["under"]) if bound["kind"] == "floor" else None)
+            if changed != value:
+                return changed
+        return value
+
+    def bounding_final(name):
+        text = composed.get(name)
+        return text if text is None or not text[:1].isdigit() else str(first_change(name, int(text), composed.get))
+    return first_change(key, int(clamps.get(key, f"{key}={composed[key]}").split("=", 1)[1]), bounding_final)
+
+
 def agreement(record, metric, value):
     fraction = Fraction(str(value))
     denominator = GENERATOR.METRIC_DENOMINATORS[metric]
@@ -191,7 +241,7 @@ class AxisNumericalContractTest(unittest.TestCase):
             data['splits']['pp5']['sets']['concurrency']['multiple']['yields'].append(word)
             with self.assertRaisesRegex(ValueError, 'yields only knobs it keeps'):
                 GENERATOR.validate_registry(data)
-        # Stage 3 review D3: a yielded knob has its recipe and exactly one other axis: none refuses, and two refuse as
+        # A yielded knob has its recipe and exactly one other axis: none refuses, and two refuse as
         # ever.
         data = registry()
         del data['splits']['pp5']['sets']['category']['code']
@@ -309,7 +359,7 @@ class AxisNumericalContractTest(unittest.TestCase):
         self.assertEqual(row['generate_clamps'], '')
         # One source that exceeds its own bound is a registry error, not a clamp.
         data['splits']['pp5']['sets']['category'] = {}
-        multiple['yields'].remove('--draft_block')  # no other axis sets it now (stage 3 review D3)
+        multiple['yields'].remove('--draft_block')  # no other axis sets it now
         data['splits']['pp5']['sets']['focus']['ttft'] = {'settings': ['--rows=4', '--draft_positions=7'],
                                                           'numerical_class': 'draft_only', 'error_class': 'x',
                                                           'evidence': 'x'}
@@ -337,6 +387,73 @@ class AxisNumericalContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'a cross-axis bound is a cap'):
             GENERATOR.validate_registry(data)
 
+    def test_the_shard_caps_clamp_nothing_at_composition_and_refuse_a_chain(self):
+        """The two shard caps (--tp_head_shards bounds --tp_draft_shards, --tp_draft_shards bounds --tp_draft_layers)
+        act at startup on an explicit 0 alone: every TP4_EXL3 row inserts head and draft shards 1, so no row is clamped
+        by them and the floor's rows stay as they are; startup reads a bounding knob after its own bounds one level
+        deep, so a longer chain, two caps of one knob, and a composition clamp of a knob another bound reads refuse."""
+        rows = GENERATOR.make_choices(GENERATOR.validate_registry(registry()))
+        self.assertFalse([row for row in rows if any('--tp_head_shards=' in note or 'bounded by --tp_draft_shards' in
+                                                     note for note in row['bounds'])])
+        for row in rows:
+            if '--tp_head_shards=1' in row['settings'].splitlines():
+                self.assertIn('--tp_draft_shards=1', row['settings'].splitlines())
+        data = registry()
+        data['cross_axis_bounds'].append({'kind': 'cap', 'bound': '--rows', 'bounded': ['--tp_head_shards'],
+                                          'offset': 7, 'rule': 'x'})
+        with self.assertRaisesRegex(ValueError, 'longer than one through --tp_draft_shards'):
+            GENERATOR.validate_registry(data)
+        data = registry()
+        data['cross_axis_bounds'].append({'kind': 'cap', 'bound': '--rows', 'bounded': ['--tp_draft_shards'],
+                                          'offset': 7, 'rule': 'x'})
+        with self.assertRaisesRegex(ValueError, 'a knob two caps bound'):
+            GENERATOR.validate_registry(data)
+        data = registry()
+        data['cross_axis_bounds'].append({'kind': 'floor', 'bound': '--tp_head_shards', 'value': '1',
+                                          'under': '--tp_head_stream', 'bounded': ['--batch_draft_rows'],
+                                          'least': 2, 'default': 0, 'rule': 'x'})
+        with self.assertRaisesRegex(ValueError, 'clamps --batch_draft_rows, which another bound reads'):
+            GENERATOR.make_choices(GENERATOR.validate_registry(data))
+
+    def test_startup_takes_the_first_bound_that_changes_a_knob_in_any_declared_order(self):
+        """Startup runs every row's composition (startup_value: the first declared bound that changes a knob, else its
+        unclamped value) with the bounds as declared; with the layers' draft-shards cap moved ahead of the BATCH floor,
+        whose rows and clamps are the same and whose raised layers startup keeps; and with draft shards 0 in TP4_EXL3's
+        base, where composition clamps focus=decode's layers to 0 and startup keeps the 0."""
+        declared, reordered, unsharded = registry(), registry(), registry()
+        bounds = reordered["cross_axis_bounds"]
+        floor = next(index for index, bound in enumerate(bounds) if bound["kind"] == "floor")
+        cap = next(index for index, bound in enumerate(bounds) if bound["kind"] == "cap" and
+                   bound["bounded"] == ["--tp_draft_layers"])
+        self.assertLess(floor, cap)
+        bounds.insert(floor, bounds.pop(cap))
+        for field in ("settings", "generate_settings"):
+            strategy = unsharded["strategies"]["thin_fixed"]
+            strategy[field] = strategy[field].replace("--tp_draft_shards=1", "--tp_draft_shards=0")
+        rows = {}
+        for name, data in (("declared", declared), ("reordered", reordered), ("unsharded", unsharded)):
+            rows[name] = GENERATOR.make_choices(GENERATOR.validate_registry(data))
+            startup = startup_bounds(data)
+            for row in rows[name]:
+                for serving in (True, False):
+                    settings = (row["settings"] + "\n" + row["serve_settings"] if serving else
+                                row["generate_settings"] or row["settings"])
+                    for word in settings.splitlines():
+                        key = GENERATOR.option_key(word)
+                        if any(key in bound["bounded"] for bound in startup):
+                            self.assertEqual(startup_value(row, serving, key, startup), int(word.split("=", 1)[1]),
+                                             (name, row["split"], row["values"], serving, word))
+        self.assertEqual(rows["reordered"], rows["declared"])
+        batch = {(row["split"], row["values"]): row for row in rows["reordered"]}[
+            "tp4_exl3", ("prose", "balanced", "multiple", "ttft")]
+        self.assertIn("--tp_draft_layers=1", batch["settings"].splitlines())
+        decode = {(row["split"], row["values"]): row for row in rows["unsharded"]}[
+            "tp4_exl3", ("code", "balanced", "single", "decode")]
+        self.assertIn("--tp_draft_layers=0", decode["settings"].splitlines())
+        for field in ("clamps", "generate_clamps"):
+            self.assertIn("--tp_draft_layers=0 --tp_draft_layers=1 --tp_draft_shards=0 base=tp4_exl3 bounded",
+                          decode[field].splitlines())
+
     def test_a_set_applies_only_with_existing_axis_values_and_is_left_out_elsewhere(self):
         rows = {(row['split'], row['values']): row for row in
                 GENERATOR.make_choices(GENERATOR.validate_registry(registry()))}
@@ -356,7 +473,7 @@ class AxisNumericalContractTest(unittest.TestCase):
 
     def test_draft_sets_without_speculation_are_marked_inactive(self):
         """Stage 3: every base carries DSpark, so no table row is inactive by composition; every line of draft knobs
-        still carries the note, which startup prints only where the final speculation is off (stage 3 review D2). A
+        still carries the note, which startup prints only where the final speculation is off. A
         base without DSpark (synthetic) makes the draft sets of the rows it serves inactive."""
         table = {(row['split'], row['values']): row for row in
                  GENERATOR.make_choices(GENERATOR.validate_registry(registry()))}
@@ -987,8 +1104,8 @@ class AxisNumericalContractTest(unittest.TestCase):
 
 ROOT = HERE.parents[1]
 def keep_owned_yields(data, split):
-    """A synthetic registry that replaces an axis's sets keeps only the yields another axis still sets (stage 3
-    review D3)."""
+    """A synthetic registry that replaces an axis's sets keeps only the yields another axis still
+    sets."""
     sets = data["splits"][split]["sets"]
     owned = {GENERATOR.option_key(word) for axis, values in sets.items() for entry in values.values()
              if "strategy" not in entry for field in ("settings", "serve_settings", "generate_settings")

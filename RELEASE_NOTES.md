@@ -1,6 +1,68 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Release notes
 
+## v0.0.5-alpha
+
+Anemone v0.0.5-alpha corrects v0.0.4-alpha's two out-of-date help texts and one TP4_EXL3 argument refusal, adds a
+program dump that later source changes are checked against, and publishes golden scores for all 435 cases.
+
+### Fixes
+- **The help texts of v0.0.4-alpha's known issues.** `anemone help axes`, `tools/cli/AXES.md`, `tools/cli/KNOBS.md`
+  and `tools/cli/axes.json` give PP5's `--concurrency=multiple` row the 6 sessions at 1M that v0.0.4-alpha measured
+  on 17 Nov 2026 (they said v0.0.3-alpha's 5), and USAGE's section 9.3 dates its counts. `anemone help knobs
+  points_per_run` and KNOBS.md give `--points_per_run`'s load-stage range as 0..78: its 35 arms twice, then its
+  eight-point confirmation (they said 0..39).
+- **An explicit `--tp_head_shards=0` on TP4_EXL3 runs.** The base inserts head and draft shards 1, and the parser
+  refused the composed arguments (`--tp_draft_shards: needs --tp_head_shards=1`). The axes now bound the draft shards
+  by the head shards and the draft layers by the draft shards, so the inserted values follow the explicit one. Only
+  argument sets the parser refused before change.
+- `model_v41_placement_test`'s verdict names the card over its budget, its weights and the bytes above, in every build
+  (the release build compiles the engine's own error line out).
+- `exl3_descriptor_test` also covers an established descriptor beside a pack the model lists as established.
+- Comments and docs name what review and request labels stood for, or give their dates.
+
+### Reorganisation, first part
+- `tools/measure/request_front_end.mk` links again: its source list names `chat_images.c`.
+- The serve start chooses its programs and describes its cards through functions a test can call; the behaviour is
+  unchanged. Over 12,441,600 option sets the programs chosen are the earlier source's in every one.
+- `model_v41_split_program_dump_test` dumps the programs each GPU split prepares (41 cases, 784 programs), so that two
+  source versions can be shown to prepare the same programs.
+
+### Quality
+- **Golden scores for all 435 cases** (66,409 positions), captured with `anemone capture` on the three GPU splits'
+  default routes at R = 6, R = 1 beside it: NLL 0.0867 on PP5, 0.0867 on TP4_PRO and 0.1178 on TP4_EXL3 with the 2.9
+  bpw map, against the golden's own 0.0742; top-1 agreement 98.01 %, 98.01 % and 96.20 %
+  ([GOLDEN_METRICS.md](docs/results/GOLDEN_METRICS.md)). The 2.68 bpw map's numbers are recorded only.
+
+### Upgrade from v0.0.4-alpha
+Replace the executable. The model data, the EXL3 maps and their descriptors, the storage profiles and the serve
+commands of v0.0.4-alpha are unchanged.
+
+### Limits
+- Alpha software. The exact profile stays bounded to one session of 512 tokens. Vision is experimental. The comparison
+  tables in the README keep their 6 November measurements, within the v0.0.2-alpha [measured scope](#measured-scope).
+- The 2.68 bpw EXL3 map serves only on `--exl3_unrated_map=1`; its golden numbers are recorded, not a quality claim.
+- At 256K, PP5's 17th session leaves the first card about 7.7 MiB of its budget: a little less free memory there at
+  startup gives 16.
+
+### Release check
+The release executable ([VALIDATION.md](docs/VALIDATION.md)) was checked on the reference machine before the tag, on
+19 Nov 2026.
+- **CPU:** the full build in release, debug, thread and profile; the lints, cppcheck, clang-tidy and `make analysis`
+  clean; every host suite in the four builds, the header check, the python tests and the release audit; the release
+  objects equal the previous build's but for the two version texts; every resolver dry run equal but for the version.
+- **Identity:** on PP5, TP4_PRO and TP4_EXL3 (the 2.9 bpw map), one user and 15 streams a route, with each serve's
+  given copies kept (`--turbo_load=0`), its outputs matched the previous build (source `73082c9`): PP5
+  15/15, TP4_PRO 15/15, TP4_EXL3 15/15; and v0.0.4-alpha (source
+  `6ecf1bb`): PP5 15/15, TP4_PRO 15/15, TP4_EXL3 15/15.
+- **1M sessions:** on a PP5 serve with `--session_slots=max`, `--context_tokens=1048576`, `--generated_tokens=1048576`,
+  `--temperature=1` and `--top_p=1` (the requests at T=0), the startup fit admitted 6 session slots of
+  1,048,576 tokens each. Served: one fresh 1M-token session, HTTP 200, the needle found, prefill 3089 tok/s (1,022,969 prompt tokens in 331.1 s), decode 12.7 ms/token; four at once,
+  HTTP 200 for all 8 requests, all 4 needles found, prefill about 767 tok/s each (1332.1 to 1335.5 s), decode 241.5 tok/s in all (4.14 ms/token).
+- **Fraser:** the same serve with `--context_tokens=524288` and `--generated_tokens=524288`, T=0, thinking off, 2,048
+  tokens, 1 user, 10 repetitions: median 171.5 tok/s
+  (5.83 ms/token), best 183.7 tok/s (5.44 ms/token).
+
 ## v0.0.4-alpha
 
 Anemone v0.0.4-alpha is a C11/CUDA engine for DeepSeek-V4.1-Flash-1017, on four CMP 170HX cards for EXL3, and on four

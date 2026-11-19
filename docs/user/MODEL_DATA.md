@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Model data for Anemone v0.0.4-alpha
+# Model data for Anemone v0.0.5-alpha
 
 The release can prepare its model data on a CPU machine from two public,
 revision-pinned Hugging Face snapshots. The converters are separate from the

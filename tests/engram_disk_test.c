@@ -307,7 +307,7 @@ static void test_open_refusals(void)
 	       "allocation refusal preserves the output");
 	expect(fault_disarm() == 1, "allocation failure reached");
 	/* a copy's read past the reader's own limit fails only that copy's turn: the per-copy scans that follow verify
-	 * the tables from the others (review finding 12; before, any TIMED_OUT ended the fallback) */
+	 * the tables from the others (before, any TIMED_OUT ended the fallback) */
 	test_memory_storage_fail_reads(0, 0);
 	test_memory_storage_fail_reads(1, 0);
 	expect(fault_arm("engram_disk_scan_timeout", 1),

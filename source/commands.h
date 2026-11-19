@@ -226,4 +226,50 @@ bool sessions_refused(const struct slot_fit *fit,
 int run_program(int argument_count, char **arguments,
 		const struct axis_arguments_record *axis_arguments);
 
+/* The programs a serve's start prepares, in that order (the step driver's), each with the rule that chose it;
+ * serve_programs_choose reads the parsed options alone (tensor: a TP split), so a test lists what a serve prepares. The
+ * image programs mirror the list where model_images_are_enabled, and --original_head_offload=2's flight banks hold
+ * it. */
+#define MOST_THIN_PROGRAMS \
+	3 /* four-owner capacity4: programs1/2/4; single-session retains1/max */
+#define MOST_CHUNK_PROGRAMS \
+	4 /* of each kind: 1,024, 256 and 64 rows; 2,048, 512, 128 and 64 */
+#define EXTRA_CHUNK_PROGRAMS \
+	26u /* --prefill_ladder_1024's two, --prefill_ladder_1536's two, --prefill_ladder_fine's
+	       six, --prefill_front_tail's three, the two long tails' and --prefill_thin_tail's six
+	       and twelve past the slack */
+#define MOST_PROGRAMS                                                         \
+	(MOST_THIN_PROGRAMS + MOST_BATCH_PROGRAMS + 2 * MOST_CHUNK_PROGRAMS + \
+	 EXTRA_CHUNK_PROGRAMS) /* and wide and full ones, the knobs' */
+enum serve_program_rule {
+	SERVE_BATCH_ROWS, /* --batch_rows on a TP split, in place of the thin ones */
+	SERVE_THIN_ROWS, /* 1, 2 and the most rows a step */
+	SERVE_CHUNK_LADDER, /* wide_rows down to the least wide rows and the ladder knobs' sizes: WIDE, FULL too
+			       with --full_steps */
+	SERVE_TAIL, /* a TP split's --prefill_tail_rows and --prefill_front_tail */
+	SERVE_THIN_TAIL, /* a TP split's --prefill_thin_tail */
+	SERVE_PROGRAM_RULES
+};
+struct serve_program {
+	enum program_kind kind;
+	uint32_t rows;
+	uint32_t verifiers; /* a BATCH program's, else 0 */
+	enum serve_program_rule rule;
+};
+struct serve_programs {
+	struct serve_program programs[MOST_PROGRAMS];
+	uint32_t count;
+	uint32_t first_count; /* the BATCH or THIN ones, first */
+	uint32_t most_rows; /* the engine's most rows a step: the THIN ones' or the BATCH ones' */
+	bool batch;
+	bool rows_repeat; /* a BATCH row count given twice: it needs --batch_verifiers */
+	bool verifiers_given; /* --batch_verifiers, each BATCH program's not 0 */
+};
+void serve_programs_choose(bool tensor, struct serve_programs *chosen);
+bool model_images_are_enabled(const struct model_plan_record *model_plan);
+/* The cards a serve takes, numbered and described by backend, and their arithmetic (run_program's card step) */
+MUST_CHECK result_status
+serve_cards_describe(const struct backend_operations *backend);
+void serve_cards_arithmetic(void);
+
 #endif

@@ -31,7 +31,7 @@ paired serving qualification is pending.
 | `--engram_io_threads=1..4`, `--engram_spin_us=0..100000`, `--engram_io_pin=0\|1` | Step I/O threads per copy (default 2), their busy-poll window after the last read before sleeping (default 200 µs), and pinning to each drive's completion CPU and its sibling (default 1). A value not given as a knob comes from the storage profile's enabled engram section when it names this pack, these copies and this flight shape (`anemone autotune PACK --stage=engram`), else from the default. |
 | `--engram_hot_set=FILE --engram_hot_sha256=HEX [--engram_hot_mib=N]` | A static hot set of table blocks held in RAM and served like the RAM prefix (default none, at most 512 MiB). |
 
-Serving PP5 (request 7, every stream identical to all-RAM): with step I/O, a 131k-token cold prefill took 27.4 s
+Serving PP5 (8-9 Nov 2026, every stream identical to all-RAM): with step I/O, a 131k-token cold prefill took 27.4 s
 against 27.2 s with the tables in RAM and 47.9 s with per-row gathers; decode at one session ran 2.2 % slower than
 all-RAM and at four and eight sessions equal, on about 0.8 cores of I/O.
 

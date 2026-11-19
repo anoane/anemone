@@ -305,7 +305,7 @@ int main(void)
 			       reason) != STATUS_OK &&
 		       strstr(reason, "regular file") != NULL,
 	       "a directory is refused");
-	/* a FIFO is refused at once, not waited on for a writer (review finding 13; without O_NONBLOCK the open blocks
+	/* a FIFO is refused at once, not waited on for a writer (without O_NONBLOCK the open blocks
 	 * and the alarm ends the test) */
 	char fifo_path[PATH_BYTES + NAME_BYTES];
 	(void)snprintf(fifo_path, sizeof(fifo_path), "%s/fifo",

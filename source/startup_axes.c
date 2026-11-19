@@ -177,15 +177,83 @@ static bool key_listed(const char *list, const char *key, size_t bytes)
 	return false;
 }
 
-/* What the declared bounds make of one inserted setting (stage 3 review D1): they act on
- * the final values, explicit ones included, and change only inserted knobs. A
- * cap lowers the setting to the bounding knob's value less the offset, never
- * below the knob's parser least (stage 3 review D5), also where the
- * final speculation is off (review D2: an inactive draft set keeps its clamp,
- * noted inactive); a floor raises it to its least where the bounding knob
- * holds the floor's value and the under knob is not 0. The set value is the
+/* What one declared bound makes of a set value, given the bounding knob's final value and, for a floor, the under
+ * knob's (NULL where neither the user nor the row gives it): a cap lowers it to the bounding value less the offset,
+ * never below the knob's parser least; a floor raises it to its least where the bounding knob
+ * holds the floor's value and the under knob is not 0. */
+static unsigned long bound_value(const struct axis_bound *bound,
+				 unsigned long set, const char *bounding,
+				 const char *under)
+{
+	if (bounding == NULL || !isdigit((unsigned char)bounding[0]))
+		return set;
+	const unsigned long value = strtoul(bounding, NULL, AXIS_DECIMAL_BASE);
+	const unsigned long capped =
+		value >= bound->offset ? value - bound->offset : 0u;
+	const unsigned long lowest = capped > bound->least ? capped :
+							     bound->least;
+	if (!bound->floor)
+		return set > lowest ? lowest : set;
+	return value == strtoul(bound->value, NULL, AXIS_DECIMAL_BASE) &&
+			       under != NULL &&
+			       strtoul(under, NULL, AXIS_DECIMAL_BASE) != 0 &&
+			       set < bound->least ?
+		       bound->least :
+		       set;
+}
+
+/* A bounding or under knob's final value: the user's (by_user), else the row's composed value as the first declared
+ * bound of its own that changes it leaves it, written to text (TP4_EXL3: an explicit --tp_head_shards=0 lowers an
+ * inserted --tp_draft_shards, which the draft layers' bounds then read). One level: generate_axes.py refuses a bound
+ * whose bounding or under knob another bound names when that bound's own bounding or under knob is named by a third,
+ * so no chain is longer and nothing recurses. */
+static const char *bounding_final_value(const char *option,
+					const struct axis_choice *choice,
+					bool serving, int count,
+					char *const *values, bool *by_user,
+					char text[AXIS_BOUND_WORD_BYTES])
+{
+	const char *const composed =
+		final_value(option, choice, serving, count, values, by_user);
+	if (*by_user || composed == NULL ||
+	    !isdigit((unsigned char)composed[0]))
+		return composed;
+	const char *key;
+	const size_t key_bytes = option_key(option, &key);
+	const unsigned long set = strtoul(composed, NULL, AXIS_DECIMAL_BASE);
+	for (size_t index = 0;
+	     index < sizeof(axis_bounds) / sizeof(axis_bounds[0]); index++) {
+		const struct axis_bound *const bound = &axis_bounds[index];
+		if (!key_listed(bound->bounded, key, key_bytes))
+			continue;
+		bool ignored = false;
+		const unsigned long value = bound_value(
+			bound, set,
+			final_value(bound->bound, choice, serving, count,
+				    values, &ignored),
+			bound->floor ?
+				final_value(bound->under, choice, serving,
+					    count, values, &ignored) :
+				NULL);
+		const int written =
+			value != set ? snprintf(text, AXIS_BOUND_WORD_BYTES,
+						"%lu", value) :
+				       0;
+		if (written > 0 && written < AXIS_BOUND_WORD_BYTES)
+			return text;
+	}
+	return composed;
+}
+
+/* What the declared bounds make of one inserted setting: they act on
+ * the final values, explicit ones included, and change only inserted knobs; a
+ * bounding knob is read after its own bounds (bounding_final_value), and a knob
+ * several bounds name takes the first, in declared order, that changes it. A
+ * cap holds also where the final speculation is off (an inactive
+ * draft set keeps its clamp, noted inactive). The set value is the
  * composition's unclamped word where it applied the bound, else the setting's
- * own. */
+ * own; where no bound changes it, a composition clamp of its key gives that
+ * unclamped word (an explicit knob took the clamp's cause away), else nothing. */
 struct bound_outcome {
 	char word[AXIS_BOUND_WORD_BYTES];
 	const struct axis_bound *bound; /* the bound that changed it, or NULL */
@@ -206,60 +274,55 @@ static bool bound_setting(const struct axis_choice *choice, bool serving,
 	const char *const set_word = line != NULL ? clamp_field(line) : setting;
 	const char *const equals =
 		memchr(set_word, '=', (size_t)field_bytes(set_word));
+	if (equals == NULL || !isdigit((unsigned char)equals[1]))
+		return false;
+	*out = (struct bound_outcome){ .set = strtoul(equals + 1, NULL,
+						      AXIS_DECIMAL_BASE) };
+	out->value = out->set;
+	bool named = false;
 	for (size_t index = 0;
-	     equals != NULL && isdigit((unsigned char)equals[1]) &&
+	     out->bound == NULL &&
 	     index < sizeof(axis_bounds) / sizeof(axis_bounds[0]);
 	     index++) {
 		const struct axis_bound *const bound = &axis_bounds[index];
 		if (!key_listed(bound->bounded, key, key_bytes))
 			continue;
+		named = true;
 		bool by_user = false, under_by_user = false;
-		const char *const bounding = final_value(
-			bound->bound, choice, serving, count, values, &by_user);
+		char bounding_text[AXIS_BOUND_WORD_BYTES],
+			under_text[AXIS_BOUND_WORD_BYTES];
+		const char *const bounding = bounding_final_value(
+			bound->bound, choice, serving, count, values, &by_user,
+			bounding_text);
 		const char *const under =
 			bound->floor ?
-				final_value(bound->under, choice, serving,
-					    count, values, &under_by_user) :
+				bounding_final_value(bound->under, choice,
+						     serving, count, values,
+						     &under_by_user,
+						     under_text) :
 				NULL;
-		*out = (struct bound_outcome){
-			.set = strtoul(equals + 1, NULL, AXIS_DECIMAL_BASE)
-		};
-		out->value = out->set;
-		if (bounding != NULL && isdigit((unsigned char)bounding[0])) {
-			out->bounding =
-				strtoul(bounding, NULL, AXIS_DECIMAL_BASE);
-			const unsigned long capped =
-				out->bounding >= bound->offset ?
-					out->bounding - bound->offset :
-					0u;
-			const unsigned long lowest =
-				capped > bound->least ? capped : bound->least;
-			if (!bound->floor && out->set > lowest)
-				out->value = lowest;
-			if (bound->floor &&
-			    out->bounding == strtoul(bound->value, NULL,
-						     AXIS_DECIMAL_BASE) &&
-			    under != NULL &&
-			    strtoul(under, NULL, AXIS_DECIMAL_BASE) != 0 &&
-			    out->set < bound->least)
-				out->value = bound->least;
-		}
-		if (out->value != out->set) {
-			out->bound = bound;
-			out->by_user = by_user;
-			out->source = line != NULL ?
-					      clamp_field(clamp_field(
-						      clamp_field(line))) :
-					      "the axes";
-			out->source_bytes = field_bytes(out->source);
-		}
-		const int written = snprintf(out->word, sizeof(out->word),
-					     "%.*s=%lu",
-					     (int)(equals - set_word), set_word,
-					     out->value);
-		return written > 0 && (size_t)written < sizeof(out->word);
+		const unsigned long value =
+			bound_value(bound, out->set, bounding, under);
+		/* a bound that leaves the set value: a later bound of its key may change it */
+		if (value == out->set)
+			continue;
+		out->value = value;
+		out->bound = bound;
+		out->bounding = strtoul(bounding, NULL, AXIS_DECIMAL_BASE);
+		out->by_user = by_user;
+		out->source =
+			line != NULL ?
+				clamp_field(clamp_field(clamp_field(line))) :
+				"the axes";
+		out->source_bytes = line != NULL ? field_bytes(out->source) :
+						   (int)strlen(out->source);
 	}
-	return false;
+	if (out->bound == NULL && (!named || line == NULL))
+		return false;
+	const int written = snprintf(out->word, sizeof(out->word), "%.*s=%lu",
+				     (int)(equals - set_word), set_word,
+				     out->value);
+	return written > 0 && (size_t)written < sizeof(out->word);
 }
 
 /* After a bounded key: " 7 -> 5 (bounded by --rows=6 from focus=decode)" or
@@ -386,7 +449,7 @@ static void sources_log(const struct axis_arguments_record *arguments,
 			}
 			cursor = space != NULL ? space + 1 : note;
 		}
-		/* Stage 3 review D2: the inactive-draft note goes only when the final
+		/* The inactive-draft note goes only when the final
 		 * speculation is on (an explicit --speculative=0 keeps it). */
 		bool by_user = false;
 		const char *const speculation =

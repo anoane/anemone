@@ -98,7 +98,7 @@ def split_base(registry, split):
 
 
 def base_classes(registry, split):
-    """A base's numerical and error class (stage 3 review D6): its route's, since the base runs the route's own
+    """A base's numerical and error class: its route's, since the base runs the route's own
     knobs over the raw engine defaults, naming the arithmetic it changes from them (TP4_EXL3: relaxed numerics and the
     BF16 wire)."""
     route_name = registry["splits"][split]["base"]["route"]
@@ -504,7 +504,7 @@ def validate_splits(registry, domains):
                     for key in keys:
                         if key not in resolved.get("yields", []) and owners.setdefault(key, axis) != axis:
                             raise ValueError(f"{split}: {key} is set by both {owners[key]} and {axis}")
-        # Stage 3 review D3: a yielded knob is set by its recipe and exactly one other axis (two other axes already
+        # A yielded knob is set by its recipe and exactly one other axis (two other axes already
         # refuse).
         for key, axis, label in yielded:
             if owners.get(key, axis) == axis:
@@ -528,6 +528,18 @@ def validate_bounds(registry):
             raise ValueError("a cross-axis bound is a cap (bounding knob, bounded knobs, offset, rule) or a floor "
                              "(bounding knob and value, the knob it applies under, bounded knobs, least, default, "
                              "rule)")
+    # startup reads a bounding (or under) knob after its own bounds, one level and without recursion
+    # (startup_axes.c bounding_final_value): a bound on such a knob must read knobs no bound names
+    bounds = registry.get("cross_axis_bounds", [])
+    bounded = lambda key: [bound for bound in bounds if key in bound["bounded"]]
+    reads = lambda bound: [bound["bound"], *([bound["under"]] if bound["kind"] == "floor" else [])]
+    for bound in bounds:
+        for knob_name in reads(bound):
+            if any(bounded(read) for inner in bounded(knob_name) for read in reads(inner)):
+                raise ValueError(f"a chain of cross-axis bounds longer than one through {knob_name}")
+    capped = [key for bound in bounds if bound["kind"] == "cap" for key in bound["bounded"]]
+    if len(capped) != len(set(capped)):
+        raise ValueError("a knob two caps bound")
 
 
 def parser_least(key):
@@ -635,6 +647,12 @@ def clamp_bounds(registry, used):
                 result[index] = (axis, value, dict(entry, **{field: [
                     raised if option_key(argument) == key and argument.split("=", 1)[1].isdigit() and
                     int(argument.split("=", 1)[1]) < bound["least"] else argument for argument in entry[field]]}))
+    # startup reads a bounding knob's composed value under its own bounds alone (bounding_final_value): no
+    # composition clamp may change a knob another bound reads
+    read = {bound["bound"] for bound in bounds} | {bound["under"] for bound in bounds if bound["kind"] == "floor"}
+    for record in records[True] + records[False]:
+        if option_key(record[1]) in read:
+            raise ValueError(f"a bound clamps {option_key(record[1])}, which another bound reads, at composition")
     return result, records
 
 
@@ -806,7 +824,7 @@ def inactive_sources(used, serving):
 
 def draft_sources(used, serving):
     """The sources whose knobs are all draft knobs. Each carries the inactive-draft note, which startup prints only
-    where the final speculation is off: the route's, or an explicit --speculative=0 (stage 3 review D2)."""
+    where the final speculation is off: the route's, or an explicit --speculative=0."""
     return [f"{axis}={value}" for axis, value, entry in used
             if command_arguments(entry, serving) and
             all(option_key(argument).startswith("--draft_") for argument in command_arguments(entry, serving))]
@@ -959,8 +977,8 @@ def header_text(registry, choices, registry_sha256):
               "/* --placement's engine default (startup_policy.c) and every GPU split with a table. */",
               f'static const char axis_default_split[] = "{SPLITS[0]}";',
               f'static const char axis_split_names[] = "{", ".join(SPLITS)}";', ""]
-    # A cap is one entry per bounded knob, with that knob's parser least: it never lowers a knob below it
-    # (stage 3 review D5). A floor keeps its declared least.
+    # A cap is one entry per bounded knob, with that knob's parser least: it never lowers a knob below
+    # it. A floor keeps its declared least.
     lines.append("static const struct axis_bound axis_bounds[] = {")
     for bound in registry.get("cross_axis_bounds", []):
         floor = bound["kind"] == "floor"
@@ -1136,7 +1154,9 @@ def markdown_text(registry, choices, registry_sha256):
               "serve only at one final `--session_slots` count, and elsewhere the row runs its concurrency=balanced row;",
               "a recipe may yield one of its knobs to the axis that owns it, so the recipe's measured value runs",
               "wherever that axis's set of the row gives none. Startup prints each applied cap or floor after its key",
-              "on the `axes from` line.", "", "Caps and floors:", ""]
+              "on the `axes from` line. A bound reads its bounding knob after that knob's own bounds, one level (the",
+              "generator refuses a longer chain), and a knob several bounds name takes the first, in declared order,",
+              "that changes it.", "", "Caps and floors:", ""]
     for bound in registry.get("cross_axis_bounds", []):
         lines.append(f"- {bound['kind']}: `{bound['bound']}`" +
                      (f"=`{bound['value']}` (under `{bound['under']}`) raises " if bound["kind"] == "floor" else

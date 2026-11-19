@@ -621,8 +621,8 @@ static bool ordinary_tuple_geometry(const struct axis_choice *choice,
 	/* Concurrency single and balanced run the THIN base, multiple BATCH (a serve without exactly 8 slots runs the
 	 * balanced row, so the row here is the one inserted). Every row has 1M context and every serve parses
 	 * --session_slots=max as several sessions; at 1M the TP4_EXL3 fit is one session (U0,
-	 * tp_session_fit_test), which takes --session_slots=1's defaults (single_session_defaults, stage 3
-	 * review D1): the stage-2 single rows' configuration, checked below. */
+	 * tp_session_fit_test), which takes --session_slots=1's defaults (single_session_defaults):
+	 * the stage-2 single rows' configuration, checked below. */
 	const bool multiple = row_value(choice, TEST_CONCURRENCY, "multiple");
 	const bool serving = strcmp(command, "serve") == 0;
 	const bool max_parsed = session_slots_max &&
@@ -1074,7 +1074,7 @@ static bool raw_arguments_case(const char *const *options, size_t option_count,
 			 expanded.storage == NULL && expanded.choice == NULL &&
 			 expanded.inserted_count == 0u;
 	}
-	/* Stage 3 review D5: the no-axis form parses as its all-balanced row expects, as the --axes=off form and
+	/* The no-axis form parses as its all-balanced row expects, as the --axes=off form and
 	 * a flagged run do (a raw --rows=1 --speculative=0 caps the base's inert draft knobs at their parser least). */
 	if (expanded_ok)
 		passed = (parse_arguments(expanded.count, expanded.values) ==
@@ -1508,6 +1508,14 @@ static bool isolated_boundary_case(enum test_selection_boundary boundary)
 	"concurrency=multiple)"
 #define TEST_USER_FLOOR_NOTE \
 	" --tp_draft_layers 0 -> 1 (required by --tp_draft_shards=1 from the user)"
+#define TEST_HEAD_SHARDS_NOTE \
+	" --tp_draft_shards 1 -> 0 (bounded by --tp_head_shards=0 from the user)"
+#define TEST_LAYERS_NOTE(from)                                       \
+	" --tp_draft_layers 1 -> 0 (bounded by --tp_draft_shards=0 " \
+	"from " from ")"
+#define TEST_EXL3_MULTIPLE_DECODE_TUPLE                                       \
+	"--category=prose", "--exactness=balanced", "--concurrency=multiple", \
+		"--focus=decode"
 
 enum test_parse { TEST_PARSES, TEST_REFUSES, TEST_UNPARSED };
 
@@ -1620,7 +1628,7 @@ static bool clamp_cases(void)
 		  "axes set --draft_positions",
 		  0u,
 		  false },
-		/* Bounds act on the final rows (stage 3 review D1): an explicit --rows=8
+		/* Bounds act on the final rows: an explicit --rows=8
 		 * lifts the clamp... */
 		{ { "--placement=tp4_pro", TEST_CODE_DECODE_TUPLE, "--rows=8" },
 		  TEST_PARSES,
@@ -1694,7 +1702,7 @@ static bool clamp_cases(void)
 		  false },
 		/* ...and an explicit --speculative=0 on the stage-3 PP5 row
 		 * keeps the sets and their clamp, which then have no DSpark to
-		 * act on: each draft line is noted inactive (stage 3 review D2). */
+		 * act on: each draft line is noted inactive. */
 		{ { TEST_CODE_DECODE_TUPLE, "--speculative=0" },
 		  TEST_UNPARSED,
 		  0u,
@@ -1733,7 +1741,7 @@ static bool clamp_cases(void)
 		  "required by",
 		  0u,
 		  true },
-		/* Bounds act on the final values (stage 3 review D1): an explicit
+		/* Bounds act on the final values: an explicit
 		 * --tp_draft_shards=0 removes the raise... */
 		{ { "--placement=tp4_exl3", TEST_EXL3_TTFT_TUPLE,
 		    "--tp_draft_shards=0" },
@@ -1769,7 +1777,94 @@ static bool clamp_cases(void)
 		  { "axes set --tp_draft_layers=0\n", NULL, NULL },
 		  "required by",
 		  0u,
-		  true }
+		  true },
+		/* TP4_EXL3's base inserts head and draft shards 1: an explicit
+		 * --tp_head_shards=0 lowers the inserted draft shards to 0, so it
+		 * parses without a second word... */
+		{ { "--placement=tp4_exl3", "--tp_head_shards=0" },
+		  TEST_PARSES,
+		  LINEAR_MAXIMUM_ROWS,
+		  MODEL_DRAFT_BLOCK,
+		  MODEL_DRAFT_BLOCK,
+		  { TEST_HEAD_SHARDS_NOTE, "axes set --tp_draft_shards=0\n",
+		    NULL },
+		  "required by",
+		  0u,
+		  false },
+		/* ...and the draft layers focus=decode inserts follow the draft
+		 * shards the cap lowered (a bound reads its bounding knob after
+		 * that knob's own bounds)... */
+		{ { "--placement=tp4_exl3", TEST_CODE_DECODE_TUPLE,
+		    "--tp_head_shards=0" },
+		  TEST_PARSES,
+		  LINEAR_MAXIMUM_ROWS,
+		  MODEL_DRAFT_BLOCK,
+		  MODEL_DRAFT_BLOCK,
+		  { TEST_HEAD_SHARDS_NOTE, TEST_LAYERS_NOTE("the axes"),
+		    "axes set --tp_draft_layers=0\n" },
+		  "required by",
+		  0u,
+		  false },
+		/* ...on BATCH too, whose floor no longer raises the layers once
+		 * the draft shards are 0... */
+		{ { "--placement=tp4_exl3", TEST_EXL3_TTFT_TUPLE,
+		    "--tp_head_shards=0" },
+		  TEST_PARSES,
+		  LINEAR_MAXIMUM_ROWS,
+		  MODEL_DRAFT_BLOCK,
+		  MODEL_DRAFT_BLOCK,
+		  { TEST_HEAD_SHARDS_NOTE, "axes set --tp_draft_layers=0\n",
+		    NULL },
+		  "required by",
+		  0u,
+		  true },
+		{ { "--placement=tp4_exl3", TEST_EXL3_MULTIPLE_DECODE_TUPLE,
+		    "--tp_head_shards=0" },
+		  TEST_PARSES,
+		  LINEAR_MAXIMUM_ROWS,
+		  MODEL_DRAFT_BLOCK,
+		  MODEL_DRAFT_BLOCK,
+		  { TEST_HEAD_SHARDS_NOTE, TEST_LAYERS_NOTE("the axes"),
+		    "axes set --tp_draft_layers=0\n" },
+		  "required by",
+		  0u,
+		  true },
+		/* ...and an explicit --tp_draft_shards=0 lowers focus=decode's
+		 * layers, naming the user. */
+		{ { "--placement=tp4_exl3", TEST_CODE_DECODE_TUPLE,
+		    "--tp_draft_shards=0" },
+		  TEST_PARSES,
+		  LINEAR_MAXIMUM_ROWS,
+		  MODEL_DRAFT_BLOCK,
+		  MODEL_DRAFT_BLOCK,
+		  { TEST_LAYERS_NOTE("the user"),
+		    "axes set --tp_draft_layers=0\n", NULL },
+		  "--tp_draft_shards 1 -> 0",
+		  0u,
+		  false },
+		/* The form that needed both words parses as before, nothing
+		 * bounded; an explicit --tp_draft_shards=1 is never altered and
+		 * is refused without the head shards. */
+		{ { "--placement=tp4_exl3", "--tp_head_shards=0",
+		    "--tp_draft_shards=0" },
+		  TEST_PARSES,
+		  LINEAR_MAXIMUM_ROWS,
+		  MODEL_DRAFT_BLOCK,
+		  MODEL_DRAFT_BLOCK,
+		  { "axes from base=tp4_exl3:", NULL, NULL },
+		  "bounded by",
+		  0u,
+		  false },
+		{ { "--placement=tp4_exl3", "--tp_head_shards=0",
+		    "--tp_draft_shards=1" },
+		  TEST_REFUSES,
+		  0u,
+		  0u,
+		  0u,
+		  { NULL, NULL, NULL },
+		  "bounded by",
+		  0u,
+		  false }
 	};
 	bool passed = true;
 	for (size_t index = 0; index < sizeof(tests) / sizeof(tests[0]);
@@ -2757,7 +2852,7 @@ static bool loader_readers_cases(void)
 	2u /* a step's whole wait (its read deadline times copies + 1) in half the cards' wait limit */
 #define TEST_PROFILE_RAM_PERCENT \
 	0u /* what storage_profile_apply leaves from a tuned turbo_engram: the tuner writes ram_percent 0 */
-/* A storage profile puts the tables on disk after the parse (review findings 3 and 11): step I/O's default and its
+/* A storage profile puts the tables on disk after the parse: step I/O's default and its
  * guards follow the final ram percent, so profile-driven PP5 and TP4_PRO serving gets the default and takes the
  * explicit knobs, which the parse refused before. */
 static bool engram_profile_cases(void)
@@ -2945,8 +3040,8 @@ static bool raw_default_cases(void)
 	return passed;
 }
 
-/* Default step I/O falls back to per-row gathers when its flight cannot start; an explicit one fails the start
- * (review finding 2). Without a disk store engram_steps_start refuses, as a host that refuses io_uring does. */
+/* Default step I/O falls back to per-row gathers when its flight cannot start; an explicit one fails the
+ * start. Without a disk store engram_steps_start refuses, as a host that refuses io_uring does. */
 static bool engram_fallback_cases(void)
 {
 	const pid_t child = fork();
@@ -3046,9 +3141,9 @@ static bool engram_store_open(char paths[TEST_STEP_COPIES][TEST_PATH_BYTES],
 }
 
 /* Step I/O as serving starts it (engram_steps_start): a read's deadline puts its re-reads on every other copy inside
- * half the cards' wait limit (review N1: before, the storage limit, 180 s a read against the 10 s a pipeline waits
+ * half the cards' wait limit (before, the storage limit, 180 s a read against the 10 s a pipeline waits
  * for progress). With checking hooks, a flight the host refuses (its ring) makes the default fall back to per-row
- * gathers and an explicit --engram_step_io=1 fail, through the real open (review finding 2). */
+ * gathers and an explicit --engram_step_io=1 fail, through the real open. */
 static bool engram_steps_start_cases(void)
 {
 	const pid_t child = fork();
@@ -3339,7 +3434,7 @@ static bool tensor_fit_case(const struct tensor_fit_split *split)
 		 tensor_fit(split, room, SERVING_SLOTS_MOST, card_of_unit,
 			    &ended, arenas) == STATUS_OUT_OF_MEMORY &&
 		 ended == 1u;
-	/* What max resolves to at production's free memory: recorded, not asserted (request 5 boots it). */
+	/* What max resolves to at production's free memory: recorded, not asserted (only a GPU boot measures it). */
 	for (uint32_t card = 0; passed && card < split->cards; card++)
 		room[card] =
 			(uint64_t)(split->pro_last &&
@@ -3463,7 +3558,7 @@ static bool raw_tp_depth_cases(void)
 	return passed;
 }
 
-/* Stage 3 review D1: a serve whose --session_slots=max resolves to one session (TP4_EXL3 at the default 1M)
+/* A serve whose --session_slots=max resolves to one session (TP4_EXL3 at the default 1M)
  * runs what an explicit --session_slots=1 runs. Each split's no-axis serve and its --axes=off serve with the device
  * draft parse at max, take single_session_defaults as the fit does, and give every value these name as the same
  * command with --session_slots=1 does (each parse in a child, through a pipe). */
@@ -3576,7 +3671,7 @@ static bool single_session_cases(void)
 	return passed;
 }
 
-/* Stage 3 review D4: a default never turns a working serve into a refusal. PP5's depth default takes any device
+/* A default never turns a working serve into a refusal. PP5's depth default takes any device
  * draft (--draft=hybrid: five flights at max); a knob that serves one session (one_session_knob) given without
  * --session_slots takes one session; a given count above one, or max, is refused. Each parse in a child. */
 #define TEST_ONE_SESSION_WORDS 40u
@@ -3705,7 +3800,7 @@ static bool one_session_cases(const struct axis_choice *reference)
 	return passed;
 }
 
-/* Stage 3 review D2: a context off the model's granule is refused at parse, by name, on both commands; a
+/* A context off the model's granule is refused at parse, by name, on both commands; a
  * multiple of it parses. */
 static bool context_granule_cases(void)
 {
@@ -3723,7 +3818,7 @@ static bool context_granule_cases(void)
 	return passed;
 }
 
-/* Stage 3 review D2 (F3): a BATCH serve's fit tries only its eight sessions (no bisection over counts BATCH
+/* A BATCH serve's fit tries only its eight sessions (no bisection over counts BATCH
  * refuses), and its refusal gives the longest context of eight but never the --session_slots=max advice: TP4_EXL3's
  * measured BATCH serve (multiple, 64K, eight slots) on cards that hold everything fits eight; on cards of a MiB it
  * fits none, for memory. */
@@ -3999,7 +4094,7 @@ int main(void)
 			test.command = "serve";
 			test.extras_first = true;
 			passed = isolated_tuple_case(&test) && passed;
-			/* Stage 3 review D7: a row whose set applies on serve at one count (TP4_EXL3 multiple's
+			/* A row whose set applies on serve at one count (TP4_EXL3 multiple's
 			 * BATCH at 8) runs it there as measured, with its whole geometry checked */
 			if (available && choice->serve_slots_exactly != 0u) {
 				struct axis_test_case batch = test;
@@ -4479,7 +4574,7 @@ int main(void)
 				   sizeof(common_fast) / sizeof(common_fast[0]),
 				   true, true, false) &&
 		 passed;
-	/* Stage 3 review D5: a cap stops at the knob's parser least: a raw --rows=1 --speculative=0 caps the
+	/* A cap stops at the knob's parser least: a raw --rows=1 --speculative=0 caps the
 	 * base's inert --draft_positions to 1, not 0; code's --draft_block 7 at --rows=4 to 5, not 3 */
 	const char *const raw_serial[] = { "--rows=1", "--speculative=0" };
 	passed = isolated_raw_case(raw_serial,

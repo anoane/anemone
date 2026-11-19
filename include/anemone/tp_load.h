@@ -69,7 +69,7 @@ extern const char *const tp_load_split_names[];
  *   2 STEAL   (the default) each role prefers the same copy as under FIXED, held for it while that role has reads
  *             left to claim and neither role's preferred copy has failed a read; every other copy serves both. Once
  *             a role's run has claimed its last read, its copy serves the other role too, so no drive idles while
- *             the other role still reads (request 16, FIXED: copy 1 idle 9.3 s).
+ *             the other role still reads (9 Nov 2026, FIXED: copy 1 idle 9.3 s).
  * Each run marks its role claimed once, on the copies of one load: a load initialises its own copies. */
 enum tp_load_role { TP_LOAD_ROLE_HOST, TP_LOAD_ROLE_CARDS, TP_LOAD_ROLES };
 enum tp_load_split {
