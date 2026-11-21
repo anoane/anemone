@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Writes the gate file of the linear: what the reference fed to its quantized linears and what they returned, in
-ONE binary file that tests/linear_gate_card_test.c reads without a line of JSON.
+ONE binary file that linear_gate_card_test.c reads without a line of JSON.
 
     make_linear_gate.py <capture folder> <output file>
 
-The capture folder is one that tools/oracle/reference_oracle.py --mode linears wrote: manifest.json and tensors.bin.
+The capture folder is one that tools/models/deepseek_v41_flash/oracle/reference_oracle.py --mode linears wrote:
+manifest.json and tensors.bin.
 It is read with the reader of check_pack_linears.py, imported from beside this file: every rule that tool holds a
 capture to holds here (the capture is complete and of that mode; every record lies in tensors.bin with the shape,
 the dtype and the reference's dtype of its part; a linear has each part once, all of one weight). That reader leaves

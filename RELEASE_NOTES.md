@@ -1,6 +1,82 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Release notes
 
+## v0.0.6-alpha
+
+Anemone v0.0.6-alpha makes the DSML tool-call parser tolerant, so that a tool call the model writes in any spelling
+of DSML reaches the client as a tool call, and reorganises the source into module folders, with the model's code
+under its own folder and prefix. Every reorganisation step builds the same programs as the step before it.
+
+### Fixes
+- **DSML tool calls (DSML-1).** The parser read only the exact reference bytes, so a call written with other spacing,
+  an ASCII `|`, another keyword case or attribute order, or without a closing tag, or not after the blank line the
+  reference writes before the block (for example straight after the reasoning), came back to the client as text. It
+  now reads one grammar for chat completions, Anthropic messages and Responses: any whitespace inside a marker (at
+  most 16 at each place of a head), `｜` or `|`, the keywords in any case, attributes in any order and quoting,
+  closings implied by the next marker or the end. A closing tag written without its `<` is read as the closing
+  (counted). A block opened by the reference's exact head is read by v0.0.5-alpha's rule first. A tool name is
+  matched against the request's declared tools, exactly first, then ignoring case and `-`/`_`, never by its prefix; a
+  name with no match goes out as parsed, so the client's unknown-tool error lets the model try again. At a token
+  limit, a call that was cut off goes out as text, never as an executable call (counted cut_at_limit). Each repair is
+  counted in `anemone_dsml_repairs_total`. Generation, sampling and every token are unchanged.
+  `--dsml_parsing=reference` keeps v0.0.5-alpha's parser byte for byte. Speculative decoding was ruled out as a
+  cause: with it on and off, production's settings give byte-identical output at T=0 and T=1 (254 turns).
+
+### Reorganisation
+- `source/`, `include/anemone/`, `generated/` and `tests/` are in module folders, and the model's tools and docs in
+  `tools/models/` and `docs/models/`. Host files, headers and generated tables are named for what they hold; the
+  model's kernel modules and test programs take its `ds41f_` prefix (two generic modules are renamed as well:
+  `kernel_tp2_join` is `kernel_tp_join`, `kernel_head_offload` is `kernel_peer_row_copy`); the model's macros,
+  enumerators, types and functions take its prefix; dead definitions are deleted; the renamed files are formatted
+  with the Linux clang-format.
+- Each step was checked on x86-64 against the step before it: the release programs, the 238 kernel modules and both
+  kernel tables byte-identical (the module renames through a build with the renames put back, the prefix rename after
+  the symbols are stripped), and the program dumps identical.
+- The serve start prepares its programs, image programs and the head's banks through functions a test can call; the
+  behaviour is unchanged (5,351,055 serve-start runs identical). `ds41f_split_program_dump_test` also covers the
+  prefill caps (44 cases, 844 programs).
+
+### Upgrade from v0.0.5-alpha
+Replace the executable. The model data, the EXL3 maps and their descriptors, the storage profiles and the serve
+commands of v0.0.5-alpha are unchanged. Source paths, test program names and the model's kernel module names have
+changed: a script that builds or names them must follow the new paths.
+
+### Limits
+- Alpha software. The exact profile stays bounded to one session of 512 tokens. Vision is experimental. The comparison
+  tables in the README keep their 6 November measurements, within the v0.0.2-alpha [measured scope](#measured-scope).
+- The 2.68 bpw EXL3 map serves only on `--exl3_unrated_map=1`; its golden numbers are recorded, not a quality claim.
+- Anthropic Messages: replaying a turn whose cut-off call went out as text after a tool_use returns 400 (the
+  adapter's existing rule); replay the tool_use blocks only.
+
+### Release check
+The release executable ([VALIDATION.md](docs/VALIDATION.md)) was checked on the reference machine before the tag, on
+21 Nov 2026.
+- **CPU:** the full build in release, debug, thread and profile; the lints, cppcheck, clang-tidy and `make analysis`
+  clean; every host suite in the four builds, the header check, the python tests and the release audit; the release
+  objects equal the previous build's but for the two version texts; every resolver dry run equal but for the version
+  and the help and usage text that names `--dsml_parsing`. DSML-1: the 525 variant cases in every build and 10,000
+  fuzz cases in release and debug, 0 failures; `--dsml_parsing=reference` byte-identical to v0.0.5-alpha's parser on
+  all of them (1,323,984 runs).
+- **Identity:** on PP5, TP4_PRO and TP4_EXL3 (the 2.9 bpw map), one user and 15 streams a route, with each serve's
+  given copies kept (`--turbo_load=0`), its outputs matched v0.0.5-alpha (source `d208e01`): PP5 15/15,
+  TP4_PRO 15/15, TP4_EXL3 15/15; and v0.0.4-alpha (source `6ecf1bb`): PP5
+  15/15, TP4_PRO 15/15, TP4_EXL3 15/15.
+- **Tool calls:** on PP5 with production's serve options, 12 tool-loop scenarios, thinking off and on. At T=0 their
+  24 first turns were identical with speculative decoding on and off, and under
+  `--dsml_parsing=reference` identical to v0.0.5-alpha's; the tolerant parser's turns equalled the reference's on all
+  24 it did not repair. At T=1, 72 tool loops in each of the three runs (tolerant
+  and reference with speculative decoding, tolerant without) ran to their end with no request refused, and no DSML
+  marker reached the text without a counted repair.
+- **1M sessions:** on a PP5 serve with `--session_slots=max`, `--context_tokens=1048576`, `--generated_tokens=1048576`,
+  `--temperature=1` and `--top_p=1` (the requests at T=0), the startup fit admitted 6 session slots of
+  1,048,576 tokens each. Served: one fresh 1M-token session, HTTP 200, the needle found, prefill 3062 tok/s (1,022,969 prompt tokens in 334.1 s), decode 12.9 ms/token; four at once,
+  HTTP 200 for all 8 requests, all 4 needles found, prefill about 765 tok/s each (1335.2 to 1338.6 s), decode 239.8 tok/s in all (4.17 ms/token).
+- **Fraser:** the same serve with `--context_tokens=524288` and `--generated_tokens=524288`, T=0, thinking off, 2,048
+  tokens, 1 user, 10 repetitions: median 172.8 tok/s
+  (5.79 ms/token), best 183.0 tok/s (5.46 ms/token).
+  v0.0.5-alpha in the same window, with the CPU quiet: median 171.9 tok/s; v0.0.6-alpha runs
+  at 1.00 times its speed.
+
 ## v0.0.5-alpha
 
 Anemone v0.0.5-alpha corrects v0.0.4-alpha's two out-of-date help texts and one TP4_EXL3 argument refusal, adds a
@@ -32,7 +108,7 @@ program dump that later source changes are checked against, and publishes golden
 - **Golden scores for all 435 cases** (66,409 positions), captured with `anemone capture` on the three GPU splits'
   default routes at R = 6, R = 1 beside it: NLL 0.0867 on PP5, 0.0867 on TP4_PRO and 0.1178 on TP4_EXL3 with the 2.9
   bpw map, against the golden's own 0.0742; top-1 agreement 98.01 %, 98.01 % and 96.20 %
-  ([GOLDEN_METRICS.md](docs/results/GOLDEN_METRICS.md)). The 2.68 bpw map's numbers are recorded only.
+  ([GOLDEN_METRICS.md](docs/models/deepseek_v41_flash/results/GOLDEN_METRICS.md)). The 2.68 bpw map's numbers are recorded only.
 
 ### Upgrade from v0.0.4-alpha
 Replace the executable. The model data, the EXL3 maps and their descriptors, the storage profiles and the serve
@@ -146,7 +222,7 @@ fits one more 1M session.
   folder; the map it makes there is the same bytes as yours, and its descriptor then goes beside your map. `DATA` is
   the data folder your map is in, by the absolute path it was made with (the `tools/model_data.sh` destination),
   `EXL3` the EXL3 source folder, `NEW` a folder that does not exist yet and `PYTHON` the model-data environment's
-  Python ([MODEL_DATA.md](docs/user/MODEL_DATA.md)). From the v0.0.4-alpha repository root:
+  Python ([MODEL_DATA.md](docs/models/deepseek_v41_flash/MODEL_DATA.md)). From the v0.0.4-alpha repository root:
 
   ```sh
   mkdir "$NEW"
@@ -293,8 +369,8 @@ The release executable ([VALIDATION.md](docs/VALIDATION.md)) was gated on the re
 Anemone provides a C11/CUDA DeepSeek-V4.1-Flash-1017 engine targeting four CMP
 170HX cards for EXL3, and four CMP 170HX cards plus an RTX PRO 6000 Blackwell
 for original weights. See [README](README.md), [BUILD](BUILD.md),
-[INSTALL](INSTALL.md), [model preparation](docs/user/MODEL_DATA.md) and
-[the complete server recipes](docs/SERVER_PROFILES.md).
+[INSTALL](INSTALL.md), [model preparation](docs/models/deepseek_v41_flash/MODEL_DATA.md) and
+[the complete server recipes](docs/models/deepseek_v41_flash/SERVER_PROFILES.md).
 
 This public layout keeps the full comparison matrix, concise benchmark methods,
 source-review notes and curated machine-readable results. Internal handoffs,
@@ -311,7 +387,7 @@ Required author attribution and the original license terms remain intact.
 
 ### Measured scope
 
-The [full matrix](docs/results/COMPARISON_MATRIX.md) retains all dated comparisons
+The [full matrix](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md) retains all dated comparisons
 and source/binary identities. Current non-golden coverage is 42 attempts from an
 86-job catalogue: 40 passes, one TP4 mixed identity failure and one unqualified
 capacity cleanup attempt, with 44 jobs unattempted. Both failed/unqualified rates

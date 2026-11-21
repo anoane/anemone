@@ -10,7 +10,7 @@ must bring. [docs/STYLE.md](docs/STYLE.md) is the rulebook for the code; where t
 - **One change per pull request.** A behaviour change, a refactor and a formatting change are three pull requests.
   Small, reviewable diffs merge; large mixed ones are sent back.
 - **No option without a measurement.** A new knob needs a measured reason, an entry in the knob catalogue and its
-  profile-axis mapping ([SERVER_PROFILES.md](docs/SERVER_PROFILES.md)).
+  profile-axis mapping ([SERVER_PROFILES.md](docs/models/deepseek_v41_flash/SERVER_PROFILES.md)).
 
 ## The code
 - **Less code.** Write only the code that is needed, in the fewest moving parts. No speculative generality, no
@@ -23,10 +23,10 @@ must bring. [docs/STYLE.md](docs/STYLE.md) is the rulebook for the code; where t
 - **C11 host, CUDA kernels in a C subset.** Formatted with the repository's `.clang-format` (the Linux style), at
   most 120 columns.
 - **Every input checked, every failure returned.** A function that can fail returns `MUST_CHECK result_status`
-  (`include/anemone/status.h`). Bad input is a status, never a crash. External input (sockets, requests, files,
+  (`source/common/status.h`). Bad input is a status, never a crash. External input (sockets, requests, files,
   packs, environment) is hostile: validated against named limits, with every size computation checked for overflow.
 - **No allocation on the token path.** Every wait has a deadline, and every failure path is reachable by a test
-  through a `FAULT_POINT(name)` (`include/anemone/hooks.h`).
+  through a `FAULT_POINT(name)` (`source/common/hooks.h`).
 - **No escape hatches.** `NOLINT`, `cppcheck-suppress`, diagnostic pragmas, `fast-math` and the rest of STYLE.md's
   list are forbidden text, comments included. Fix the finding instead.
 - **No dependencies.** No new linked library and no vendored source. The engine links only libc, libm and the CUDA

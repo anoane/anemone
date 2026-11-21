@@ -4,8 +4,8 @@ beside this file, does about them.
 
 It is not called on its own: make_pack.py's convert, verify and self-test call it, and
 tools/golden/check_pack_linears.py reads the matrices of a pack back through it. The formats are
-include/anemone/weight_format_seam.h, whose two LANE ORDER paragraphs are the specification of every index here; the
-rules of a tensor record are include/anemone/pack.h's.
+weight_format_seam.h, whose two LANE ORDER paragraphs are the specification of every index here; the
+rules of a tensor record are pack.h's.
 
 The layouts. A checkpoint stores a quantized weight as two tensors, "<name>.weight" and "<name>.scale":
   - 4 bits, E2M1_SCALED: I8 [outputs, inputs / 2], two codes to a byte, and F8_E8M0 [outputs, inputs / 32]. The code
@@ -74,7 +74,7 @@ import numpy
 
 import make_pack                                           # used inside functions only: the two files import each other
 
-# ---- The formats: include/anemone/weight_format_seam.h ---------------------------------------------------------------
+# ---- The formats: weight_format_seam.h ---------------------------------------------------------------
 WEIGHT_FORMAT_E2M1_SCALED = 3                              # enum anemone_weight_format, by value
 WEIGHT_FORMAT_E4M3_SCALED = 5
 # The letters of the header: lane = 4 g + t; r and h are the register and the half of the weight operand a nibble

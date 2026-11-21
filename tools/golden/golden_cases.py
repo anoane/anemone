@@ -8,7 +8,7 @@ The keys are the folders ROOT/cases/<set>/<id>/ that hold a metadata.json, sorte
 them in the file's order). A key is refused unless set and id are of [A-Za-z0-9_.-] (the capture's own rule). When
 ROOT/index.json lists its cases (a list of "set/id" strings, or of objects with "key" or "set" and "id", alone or as
 its "cases" member), the keys must be exactly those; any other index.json is reported, not read. The release's 54
-cases are tools/golden/selections/release54.txt. The output is create-only.
+cases are tools/models/deepseek_v41_flash/golden/selections/release54.txt. The output is create-only.
 
 Measurement tool: not part of the engine.
 """

@@ -154,6 +154,7 @@ Native families retain `model_name`, `engine` and their original meanings:
 | `anemone_process_uptime_seconds` | Gauge of monotonic engine uptime; none. |
 | `anemone_build_info` | Gauge 1; `build_id` is the ELF build ID or unavailable. |
 | `anemone_speculation_proposed_tokens_total`, `anemone_speculation_accepted_tokens_total` | Counters when speculation is enabled; none. |
+| `anemone_dsml_repairs_total` | Counter; `kind`: block_start, marker_spelling, attribute, closing_implied, marker_stray, parameter_repeated, name_folded, name_unknown, invoke_unnamed, text_in_block, block_as_text, cut_at_limit (an invoke a request limit cut, given out as text, never a call). What the tolerant DSML reading (`--dsml_parsing=tolerant`) repaired in finished answers, each occurrence once; under `reference` only block_as_text counts (a block given out as text). |
 
 Engine token/speculation counters are engine lifetime; HTTP counters and request
 histograms are server lifetime. The supported lifecycle creates one server per

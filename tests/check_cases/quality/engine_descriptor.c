@@ -3,7 +3,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include "../../serving_fixture.h"
+#include "../../support/serving_fixture.h"
 
 static int test_snapshot_descriptor = -1;
 static int test_mkstemp(char *path)
@@ -27,7 +27,7 @@ int test_embedded_engine_main(void);
 #define mkstemp test_mkstemp
 #define test_serving_open test_open_failure
 #define main test_embedded_engine_main
-#include "../../engine_test.c"
+#include "../../engine/runtime/scheduler/engine_test.c"
 #undef main
 #undef test_serving_open
 #undef mkstemp

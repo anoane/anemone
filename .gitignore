@@ -5,6 +5,7 @@
 /data/
 /logs/
 /tools/measure/build/
+/tools/models/*/measure/build/
 __pycache__/
 *.py[cod]
 .DS_Store

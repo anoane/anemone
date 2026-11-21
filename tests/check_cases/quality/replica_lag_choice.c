@@ -4,7 +4,7 @@
  * retains the lag, and is refused when the memory given does not hold it with the reserve (no host's MemAvailable is
  * read); the lag test passes over a failed target, and with relax it takes a chunk whose lag has passed before the
  * oldest. */
-#include "../../../source/replica_prepare.c"
+#include "../../../source/engine/storage/replicas/replica_prepare.c"
 
 #define TEST_CHUNKS 4u
 #define TEST_CHUNK_BYTES 4096u

@@ -7,7 +7,7 @@
     make_pack.py verify <pack file> [--jobs N]
     make_pack.py self-test
 
-The format is include/anemone/pack.h; the unit kinds are model_seam.h's and the digest is pack_digest.h's. What the
+The format is pack.h; the unit kinds are model_seam.h's and the digest is pack_digest.h's. What the
 three commands do about a model's quantized weights (weight_format_seam.h) is in kernel_layouts.py, beside this
 file, and in its text; what they do about its n-gram tables (engram.h) is in engram_tables.py and in its text.
 
@@ -68,7 +68,7 @@ UINT32_MAXIMUM = 2 ** 32 - 1
 UINT64_MODULUS = 2 ** 64
 EXIT_STATUS_FAILURE = 1
 
-# ---- The format: include/anemone/pack.h, model_seam.h, weight_format_seam.h ----------------------------------------
+# ---- The format: pack.h, model_seam.h, weight_format_seam.h ----------------------------------------
 PACK_MAGIC = b"ANEMONE\0"
 PACK_FORMAT_VERSION = 2
 PACK_BLOCK_BYTES = 4096
@@ -76,7 +76,7 @@ PACK_MAXIMUM_TABLES_BYTES = 2 ** 30
 PACK_MAXIMUM_DIMENSIONS = 4
 PACK_TENSOR_RESERVED_WORDS = 1
 PACK_NO_LAYER = UINT32_MAXIMUM
-MODEL_NAME_CAPACITY = 64
+PACK_MODEL_NAME_CAPACITY = 64
 MATRIX_ALIGNMENT_BYTES = 64
 WEIGHT_FORMAT_NONE = 0                                     # enum anemone_weight_format: a plain tensor
 UNIT_KIND_NAMES = ("stage", "on-demand", "host-only")      # enum anemone_placement_unit_kind, by value
@@ -108,7 +108,7 @@ TENSOR_FIELDS = {"byte_offset_in_extent": (0, 8), "byte_count": (8, 8), "extent_
                  "bits_per_weight": (56, 4), "reserved_zero": (60, 4)}
 HEADER_BYTES, EXTENT_RECORD_BYTES, UNIT_RECORD_BYTES, TENSOR_RECORD_BYTES, DIMENSION_BYTES = 128, 32, 8, 64, 4
 
-# ---- The digest: include/anemone/pack_digest.h ---------------------------------------------------------------------
+# ---- The digest: pack_digest.h ---------------------------------------------------------------------
 DIGEST_WORD_BYTES = 8
 DIGEST_WORD_TYPE = "<u8"
 DIGEST_POSITION_MULTIPLIER = 0x9E3779B97F4A7C15
@@ -532,7 +532,7 @@ def convert(source_directory, output_path, jobs, overwrite, reference_directory 
     if os.path.lexists(output_path) and not overwrite:
         raise PackError(f"{output_path} exists: --overwrite replaces it")
     model_name = MODEL_NAME.encode("ascii")
-    if len(model_name) >= MODEL_NAME_CAPACITY:                 # the header must hold the name and its NUL
+    if len(model_name) >= PACK_MODEL_NAME_CAPACITY:                 # the header must hold the name and its NUL
         raise PackError(f"the model name {MODEL_NAME} does not fit the header")
     sources = read_source_folder(source_directory)
     if os.path.exists(output_path) and any(os.path.samefile(output_path, path)

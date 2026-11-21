@@ -1,0 +1,1 @@
+int in_a_folder_without_a_module_fragment;

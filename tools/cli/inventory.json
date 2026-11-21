@@ -467,7 +467,7 @@
     "name": "original_head_offload",
     "variable": "&original_head_offload",
     "least": "0",
-    "most": "V41_HEAD_MODE_BANKED",
+    "most": "DS41F_HEAD_MODE_BANKED",
     "count": "1",
     "commands": "TAKEN_BY_ALL"
   },
@@ -1306,7 +1306,7 @@
   {
     "name": "draft_block",
     "variable": "&draft_block",
-    "least": "ANEMONE_MODEL_DRAFT_BLOCK",
+    "least": "ANEMONE_DS41F_DRAFT_BLOCK",
     "most": "ANEMONE_STEP_DRAFT_MOST",
     "count": "1",
     "commands": "TAKEN_BY_GENERATE | TAKEN_BY_SERVE"

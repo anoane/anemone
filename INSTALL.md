@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Install and serve Anemone v0.0.5-alpha
+# Install and serve Anemone v0.0.6-alpha
 
 The owner recommends running `anemone autotune` once before serving, and again
 after hardware changes. Engine-native preparation copies replicas, tunes load
@@ -13,28 +13,28 @@ and configuration example on this page is not run in the snapshot test.**
 That test compiles and runs host tests only; it does not load model weights,
 start a model-serving endpoint, install a service or run the HTTP examples below.
 In the v0.0.2-alpha snapshot test, host tests exercised synthetic HTTP fixtures
-inside an isolated network namespace; the v0.0.5-alpha reference build runs the
+inside an isolated network namespace; the v0.0.6-alpha reference build runs the
 [BUILD.md](BUILD.md) commands directly on the host, where they use loopback.
 The listed serving recipes were checked through the real axis resolver/parser;
 that check does not start a model, allocate its memory or install a service.
 
-The [final three-profile results](docs/results/COMPARISON_MATRIX.md) distinguish
+The [final three-profile results](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md) distinguish
 balanced launch recipes from original exact. Exact remains one session with
 capacity 512. Original balanced uses native PRO arithmetic, so its outputs
 depend on assigned layers. The serve-only prompt-chunk identity result is
 separate from the measured solo golden baseline and has no independent golden
 quality score. The [snapshot record](docs/VALIDATION.md) identifies current packaging
 and the versioned build/source identities; previous measurements retain their dates.
-The v0.0.5-alpha release executable is built from source
-`d208e0150c639f4412e0b508618a073ccef29383`; [BUILD.md](BUILD.md) records its expected
-SHA256. The v0.0.4-alpha executable (source `6ecf1bb`), the v0.0.3-alpha executable (source `f57d813`), the v0.0.2-alpha `spdx_04`
+The v0.0.6-alpha release executable is built from source
+`5047a717778210bd09277902b8d2bff895572d9b`; [BUILD.md](BUILD.md) records its expected
+SHA256. The v0.0.5-alpha executable (source `d208e01`), the v0.0.4-alpha executable (source `6ecf1bb`), the v0.0.3-alpha executable (source `f57d813`), the v0.0.2-alpha `spdx_04`
 executable (engine/help source `1b0731a36b7482477b96d7a28b27c93e4dd49e3f`) and the
 earlier parser and benchmark receipts retain their own epochs.
 
 ## Model data
 
 Prepare the public, revision-pinned model data on a CPU machine using
-[MODEL_DATA.md](docs/user/MODEL_DATA.md). It lists the source files, SHA256s,
+[MODEL_DATA.md](docs/models/deepseek_v41_flash/MODEL_DATA.md). It lists the source files, SHA256s,
 Python packages, disk budget, conversion commands and verified output hashes.
 The release's converters preserve the original weights and build a read-only
 EXL3 map from the published LibertAI EXL3 checkpoint.
@@ -43,7 +43,7 @@ After downloading and checking the two pinned snapshots as documented there:
 
 ```sh
 PYTHON=/path/to/model-data-venv/bin/python JOBS=2 \
-  sh tools/model_data.sh /absolute/sources/official /absolute/sources/exl3 /absolute/new-data
+  sh tools/models/deepseek_v41_flash/model_data.sh /absolute/sources/official /absolute/sources/exl3 /absolute/new-data
 ```
 
 This runs the existing tokenizer and original-pack converters, verifies the
@@ -107,24 +107,24 @@ general drop-in TP flag. TP5 remains refused in this main snapshot.
 
 ## Serving commands
 
-Use the canonical [server profile guide](docs/SERVER_PROFILES.md) for the complete
+Use the canonical [server profile guide](docs/models/deepseek_v41_flash/SERVER_PROFILES.md) for the complete
 runnable commands and explanations of every serve option. The commands are also
 provided as exact argument arrays in
-[SERVER_PROFILE_COMMANDS.json](docs/SERVER_PROFILE_COMMANDS.json), with health,
+[SERVER_PROFILE_COMMANDS.json](docs/models/deepseek_v41_flash/SERVER_PROFILE_COMMANDS.json), with health,
 model-listing and tiny deterministic HTTP smoke requests. The release's CPU dry
 runs, which open no models, GPUs or sockets, run them through the real axis
 resolver/parser. All four arrays pass it and reach the front-end read: the two
 original-weight arrays (`original_exact`, `original_balanced`) and, with a
 prepared EXL3 map, the two EXL3 arrays (`exl3_balanced`, `exl3_guard`), which
 give `--pipeline_steps=1` (BATCH requires it) and the other knobs the TP4_EXL3
-base would otherwise fill, as in [the guide](docs/SERVER_PROFILES.md#exl3-balanced).
+base would otherwise fill, as in [the guide](docs/models/deepseek_v41_flash/SERVER_PROFILES.md#exl3-balanced).
 GPU execution and qualification retain separate receipts in the matrix.
 
 | Release recipe | Guide and limits |
 | --- | --- |
-| Original exact | [Bounded reference](docs/SERVER_PROFILES.md#original-exact): original PP THIN serial M1, one session, 512 total tokens. |
-| Original balanced | [Native PRO PP5](docs/SERVER_PROFILES.md#original-balanced): explicit controls use numerics=exact, distinct from strict exactness=exact. |
-| EXL3 balanced | [Four-CMP TP4 BATCH](docs/SERVER_PROFILES.md#exl3-balanced): explicit controls, separate quantized weight family; default mixed identity gate failed. |
+| Original exact | [Bounded reference](docs/models/deepseek_v41_flash/SERVER_PROFILES.md#original-exact): original PP THIN serial M1, one session, 512 total tokens. |
+| Original balanced | [Native PRO PP5](docs/models/deepseek_v41_flash/SERVER_PROFILES.md#original-balanced): explicit controls use numerics=exact, distinct from strict exactness=exact. |
+| EXL3 balanced | [Four-CMP TP4 BATCH](docs/models/deepseek_v41_flash/SERVER_PROFILES.md#exl3-balanced): explicit controls, separate quantized weight family; default mixed identity gate failed. |
 
 The guide explains the separate opt-in EXL3 prompt-chunk guard, capacity versus
 full-context qualification, raw graph default 0 versus recipe graph 1, and T0

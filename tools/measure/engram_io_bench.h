@@ -21,7 +21,7 @@
 #include <stdio.h>
 #include <sys/uio.h>
 
-#include "anemone/engram.h"
+#include "engine/engram/engram.h"
 
 /* Older uapi headers (Debian 13 ships Linux 6.12's) lack these; the values are the upstream uapi's. A kernel without
  * them refuses the mode at run time (EINVAL at setup or in the completion), reported as unsupported on this kernel. */

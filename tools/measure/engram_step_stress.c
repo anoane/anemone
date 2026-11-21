@@ -29,13 +29,13 @@
 #include <string.h>
 #include <time.h>
 
-#include "anemone/engram.h"
-#include "anemone/engram_disk.h"
-#include "anemone/pack.h"
-#include "anemone/step.h"
-#include "anemone/storage_seam.h"
-#include "engram_step.h"
-#include "storage_flight.h"
+#include "engine/engram/engram.h"
+#include "engine/engram/engram_disk.h"
+#include "engine/formats/pack/pack.h"
+#include "engine/runtime/step/step.h"
+#include "engine/storage/storage_seam.h"
+#include "engine/engram/engram_step.h"
+#include "engine/storage/io/storage_flight.h"
 
 #define NANOSECONDS_PER_SECOND ((uint64_t)1000000000u)
 #define NANOSECONDS_PER_MILLISECOND ((uint64_t)1000000u)

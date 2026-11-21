@@ -6,7 +6,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include "server_internal.h"
+#include "engine/server/server_internal.h"
 
 static const char *test_foreign_directory;
 static bool test_nonregular_file;
@@ -55,7 +55,7 @@ test_session_refusal(struct inference_engine *engine,
 #define lstat test_lstat
 #define fstat test_fstat
 #define engine_session_state test_session_state
-#include "../../../source/server_sessions.c"
+#include "../../../source/engine/server/server_sessions.c"
 #undef engine_session
 #undef engine_session_state
 #undef fstat

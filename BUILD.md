@@ -18,26 +18,26 @@ env -i PATH=/usr/local/cuda/bin:/usr/bin:/bin make -j32 header_check
 sha256sum build/release/anemone
 ```
 
-The release executable is `build/release/anemone`. The v0.0.5-alpha reference
-executable SHA256 (source `d208e0150c639f4412e0b508618a073ccef29383`) with the
+The release executable is `build/release/anemone`. The v0.0.6-alpha reference
+executable SHA256 (source `5047a717778210bd09277902b8d2bff895572d9b`) with the
 recorded toolchain and flags is:
 
 ```text
-ff47580be4694b7050964c4c57e2df1d0882be345b6b93ca3b700671784793b0
+ec209bdc264b611fafa3e9c7622260e7a1ceee7ab21dc12a83646aed809d3d6a
 ```
 
 Compilation and native host/header checks need no weights or GPU context.
 Release compilation uses native C/CUDA helpers and pinned inputs, with no Python,
 Git checkout, package download or code-generation overlay prerequisite. It
 compiles 119 CUDA modules for the selected class-80/class-120 targets; host tests
-run 163 programs excluding `_card_test`, and header checks cover 684 compilations.
+run 165 programs excluding `_card_test`, and header checks cover 681 compilations.
 The command above gives `make host_tests` an empty `HOME`, so that no test reads
 or writes the operator's own. The suite also passes without one: `anemone
 autotune` names a missing default profile (no `XDG_CONFIG_HOME` or `HOME`) and its
 own option refusals first, where v0.0.3-alpha printed the usage alone and a case of
 `replica_prepare_test` failed under `env -i`.
-The `v0.0.5-alpha` tag marks the published source snapshot. Its build inputs are
-those of the development source `d208e01` named above, which is not in the
+The `v0.0.6-alpha` tag marks the published source snapshot. Its build inputs are
+those of the development source `5047a71` named above, which is not in the
 published repository; [VALIDATION.md](docs/VALIDATION.md) gives the scope.
 
 `CUDA_DIRECTORY` defaults to `/usr/local/cuda`; override it for another installed
@@ -65,11 +65,11 @@ included in both the public checkout and source archive. They are described in
 [DEVELOPMENT.md](docs/DEVELOPMENT.md) and [the tools index](tools/README.md).
 Optional checks have their own dependencies. `make check` runs lint, header_check,
 analysis, the host suites in all four builds, python_tests, release_audit and
-self_test, and must pass clean. For v0.0.5-alpha every part but self_test was run
+self_test, and must pass clean. For v0.0.6-alpha every part but self_test was run
 on the reference machine and passed: the lints and `make analysis` report nothing,
 and every host suite passes in release, debug, thread and profile.
 
 Models and tokenizer preparation are separate CPU operations documented in
-[MODEL_DATA.md](docs/user/MODEL_DATA.md). Starting inference, deploying services
+[MODEL_DATA.md](docs/models/deepseek_v41_flash/MODEL_DATA.md). Starting inference, deploying services
 and HTTP requests are described in [INSTALL.md](INSTALL.md) and require prepared
 model data. They are not part of a source-only build verification.

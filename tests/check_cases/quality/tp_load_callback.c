@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /* A backend without private staging slots uses the caller's existing buffers. */
-#include "../../../source/tp_load.c"
+#include "../../../source/engine/storage/load/tp_load.c"
 
 int test_embedded_tp_load_main(void);
 #define main test_embedded_tp_load_main
-#include "../../tp_load_test.c"
+#include "../../engine/storage/load/tp_load_test.c"
 #undef main
 
 int main(void)

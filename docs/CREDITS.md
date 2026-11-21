@@ -47,7 +47,7 @@ This inventory records **152 distinct public reference origins**, with repeated 
 combined under each project. Revision links identify the source snapshots present in the reference
 library. Repository contributor pages and original commit pages preserve the wider authorship record.
 The collection includes source research, comparison baselines, related recipes, model cards and earlier
-Anemone projects. The [comparison matrix](results/COMPARISON_MATRIX.md) records feature-specific findings
+Anemone projects. The [comparison matrix](models/deepseek_v41_flash/results/COMPARISON_MATRIX.md) records feature-specific findings
 and measured integration; this inventory records the broader body of work consulted.
 
 Credit extends to contributors whose names are absent from the short lists here, including co-authors,
@@ -499,4 +499,4 @@ Thanks also to the authors of the [CUDA memory-sharing article](https://piyushk5
 the [NVFP4 decode article](https://humansand.ai/blog/faster-than-light-nvfp4-decode),
 and the [HyperQwen performance discussion](https://www.reddit.com/r/LocalLLaMA/comments/1vtup5s/i_pushed_qwen3827b_to_381_tps_for_a_single/).
 Benchmark and recipe authors including Curtis, MiaAI-Lab, Fraser Price and the Pi community are
-acknowledged through the linked projects and [benchmark methods](results/BENCHMARKS.md).
+acknowledged through the linked projects and [benchmark methods](models/deepseek_v41_flash/results/BENCHMARKS.md).

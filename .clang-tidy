@@ -40,7 +40,7 @@ Checks: >
 # over, were half of the million "warnings generated" a `make check` printed.
 WarningsAsErrors: '*'
 # Diagnostics inside the engine's own headers are kept, wherever the build found them (relative or absolute path).
-HeaderFilterRegex: '(^|/)(include/anemone|source|tests)/'
+HeaderFilterRegex: '(^|/)(source|tests)/'
 CheckOptions:
   - { key: readability-identifier-naming.FunctionCase, value: lower_case }
   - { key: readability-identifier-naming.VariableCase, value: lower_case }

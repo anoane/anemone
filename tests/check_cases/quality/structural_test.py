@@ -9,9 +9,9 @@ import sys
 
 LITERALS = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
 problems = []
-for directory in ('source', 'include/anemone', 'tests'):
-    for path in sorted(Path(directory).iterdir()):
-        if path.suffix not in ('.c', '.h'):
+for directory in ('source', 'tests'):
+    for path in sorted(Path(directory).rglob('*')):
+        if path.suffix not in ('.c', '.h') or 'check_cases' in path.parts:
             continue
         source = path.read_text()
         clean = LITERALS.sub(lambda match: ''.join('\n' if c == '\n' else ' ' for c in match[0]), source)

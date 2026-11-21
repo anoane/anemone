@@ -5,7 +5,7 @@
  *     embed_kernel_images <output .c> <build/kernels/<architecture>/<kernel name>.cubin> ...
  *
  * Every module becomes one array of bytes and one entry of cuda_kernel_images, the table declared in
- * source/backend_cuda_kernel_images.h: architecture is the name of the module's directory, kernel_name its file name
+ * backend_cuda_kernel_images.h: architecture is the name of the module's directory, kernel_name its file name
  * without the suffix. Modules are taken in byte order of their paths, as the Python tool sorts them, so both write
  * the same table. The output goes to a temporary file first, so that a failed run leaves no half table.
  *
@@ -110,7 +110,7 @@ int main(int argument_count, char **arguments)
 	int status = 0; /* REUSE-IgnoreStart: a generated tag */
 	fputs("/* SPDX-License-Identifier: AGPL-3.0-or-later */\n" /* REUSE-IgnoreEnd: the output's, not this file's */
 	      "/* Written by tools/build/embed_kernel_images.c: a build product, never edited. */\n"
-	      "#include \"backend_cuda_kernel_images.h\"\n\n",
+	      "#include \"engine/backend/cuda/backend_cuda_kernel_images.h\"\n\n",
 	      output);
 	for (size_t index = 0; index < module_count && status == 0; index++) {
 		if (module_names(modules[index], architecture,

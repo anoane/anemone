@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /* Isolated private-helper regression, linked with section garbage collection. */
-#include "../../../source/tp_load.c"
+#include "../../../source/engine/storage/load/tp_load.c"
 
 #define TEST_TENSOR_BYTES 8u
 

@@ -9,26 +9,35 @@ regenerate_axes:
 	$(PYTHON) tools/cli/generate_axes.py
 regenerate_help: regenerate_axes
 	$(PYTHON) tools/cli/generate_help.py
+VISION_TABLES := generated/models/deepseek_v41_flash/vision
 regenerate_vision:
-	$(PYTHON) tools/build/embed_vision_gemm_policy.py tools/vision/fixtures/gemm_policy.json generated/vision_gemm_policy.h
-	$(PYTHON) tools/build/embed_vision_rope_corrections.py tools/vision/fixtures/rope_correction.hex generated/vision_rope_corrections.h
+	$(PYTHON) tools/models/deepseek_v41_flash/vision/embed_vision_gemm_policy.py \
+		tools/models/deepseek_v41_flash/vision/fixtures/gemm_policy.json \
+	    $(VISION_TABLES)/ds41f_vision_gemm_splits.inc
+	$(PYTHON) tools/models/deepseek_v41_flash/vision/embed_vision_rope_corrections.py \
+		tools/models/deepseek_v41_flash/vision/fixtures/rope_correction.hex \
+	    $(VISION_TABLES)/ds41f_vision_rope_corrections.inc
 regenerate: regenerate_help regenerate_vision
 
 check_generated:
 	$(PYTHON) tools/cli/generate_axes.py --check
 	$(PYTHON) tools/cli/generate_help.py --check
 	@mkdir -p build/regeneration
-	$(PYTHON) tools/build/embed_vision_gemm_policy.py tools/vision/fixtures/gemm_policy.json build/regeneration/vision_gemm_policy.h
-	$(PYTHON) tools/build/embed_vision_rope_corrections.py tools/vision/fixtures/rope_correction.hex build/regeneration/vision_rope_corrections.h
-	cmp generated/vision_gemm_policy.h build/regeneration/vision_gemm_policy.h
-	cmp generated/vision_rope_corrections.h build/regeneration/vision_rope_corrections.h
+	$(PYTHON) tools/models/deepseek_v41_flash/vision/embed_vision_gemm_policy.py \
+		tools/models/deepseek_v41_flash/vision/fixtures/gemm_policy.json \
+	    build/regeneration/ds41f_vision_gemm_splits.inc
+	$(PYTHON) tools/models/deepseek_v41_flash/vision/embed_vision_rope_corrections.py \
+		tools/models/deepseek_v41_flash/vision/fixtures/rope_correction.hex \
+	    build/regeneration/ds41f_vision_rope_corrections.inc
+	cmp $(VISION_TABLES)/ds41f_vision_gemm_splits.inc build/regeneration/ds41f_vision_gemm_splits.inc
+	cmp $(VISION_TABLES)/ds41f_vision_rope_corrections.inc build/regeneration/ds41f_vision_rope_corrections.inc
 
 python_tests:
 	$(PYTHON) tools/cli/axes_registry_test.py
 	$(PYTHON) tools/golden_score_test.py
 	$(PYTHON) tools/golden/golden_capture_score_test.py
-	$(PYTHON) tools/convert/make_virtual_pack_test.py
-	$(PYTHON) -m unittest discover -s tools/oracle -p 'test_*.py'
+	$(PYTHON) tools/models/deepseek_v41_flash/convert/make_virtual_pack_test.py
+	$(PYTHON) -m unittest discover -s tools/models/deepseek_v41_flash/oracle -p 'test_*.py'
 	$(PYTHON) $(CASES)/quality/structural_test.py
 	$(PYTHON) $(CASES)/quality/slot_width_test.py
 
@@ -37,12 +46,12 @@ python_tests:
 QUALITY_CASE_NAMES := snapshot_size snapshot_paths tp_load_null tp_load_callback exl3_allocation \
                       engine_descriptor router_failure replica_receipt_binding replica_lag_choice
 QUALITY_CASE_PROGRAMS := $(addprefix build/debug/check_cases/quality/,$(QUALITY_CASE_NAMES))
-QUALITY_OMIT_snapshot_size := build/debug/source/server_sessions.o
-QUALITY_OMIT_snapshot_paths := build/debug/source/server_sessions.o
-QUALITY_OMIT_tp_load_null := build/debug/source/tp_load.o
-QUALITY_OMIT_tp_load_callback := build/debug/source/tp_load.o
-QUALITY_OMIT_replica_receipt_binding := build/debug/source/replica_prepare.o
-QUALITY_OMIT_replica_lag_choice := build/debug/source/replica_prepare.o
+QUALITY_OMIT_snapshot_size := build/debug/source/engine/server/server_sessions.o
+QUALITY_OMIT_snapshot_paths := build/debug/source/engine/server/server_sessions.o
+QUALITY_OMIT_tp_load_null := build/debug/source/engine/storage/load/tp_load.o
+QUALITY_OMIT_tp_load_callback := build/debug/source/engine/storage/load/tp_load.o
+QUALITY_OMIT_replica_receipt_binding := build/debug/source/engine/storage/replicas/replica_prepare.o
+QUALITY_OMIT_replica_lag_choice := build/debug/source/engine/storage/replicas/replica_prepare.o
 define QUALITY_CASE_RULE
 build/debug/check_cases/quality/$(1): $(CASES)/quality/$(1).c \
     $$(filter-out $$(QUALITY_OMIT_$(1)),$$(ENGINE_OBJECTS_debug)) $$(TEST_SUPPORT_OBJECTS_debug) \
@@ -62,16 +71,22 @@ host_tests_all: $(BUILD_TYPES) host_test_fixtures quality_regressions
 	@set -e; for test_program in $(filter-out %_card_test,$(TEST_PROGRAMS)); do \
 	    echo "HOST_TEST $$test_program"; $$test_program; done
 
+# Each module's required traps (REQUIRED_TRAPS_<module>, its module.mk): the launch and resource guards and the
+# communication deadlines its release functions keep.
+comma := ,
+REQUIRED_TRAP_MODULES = $(sort $(patsubst REQUIRED_TRAPS_%,%,$(filter REQUIRED_TRAPS_%,$(.VARIABLES))))
+REQUIRED_TRAP_ARGUMENTS = $(foreach module,$(REQUIRED_TRAP_MODULES),\
+    --required $(module)=$(subst $(space),$(comma),$(strip $(REQUIRED_TRAPS_$(module)))))
 release_audit: release
-	$(RELEASE_HAS_NO_HOOKS) build/release
-	$(RELEASE_KERNELS_HAVE_NO_HOOKS) $(call KERNEL_MODULES_OF,kernels)
+	$(RELEASE_HAS_NO_HOOKS) $(BUILD)/release
+	$(RELEASE_KERNELS_HAVE_NO_HOOKS) $(REQUIRED_TRAP_ARGUMENTS) $(call KERNEL_MODULES_OF,kernels)
 
 LAYOUT_LINT := $(PYTHON) tools/check/layout_lint.py
 LITERAL_LINT := $(PYTHON) tools/check/literal_lint.py
 RELEASE_HAS_NO_HOOKS := $(PYTHON) tools/check/release_has_no_hooks.py
 RELEASE_KERNELS_HAVE_NO_HOOKS := $(PYTHON) tools/check/release_kernels_have_no_hooks.py
 ANALYSED_FILES := $(HEADERS) $(HOST_SOURCES) $(PROGRAM_SOURCE) $(TEST_PROGRAM_SOURCES) $(TEST_SUPPORT_SOURCES)
-HEADER_ALONE := $(CC) $(COMMON_FLAGS) -fsyntax-only -x c
+HEADER_ALONE := $(CC) $(COMMON_FLAGS) $(TEST_INCLUDE_FLAGS) -fsyntax-only -x c
 # cppcheck is not given the CUDA header: it analyses the engine's code, and what it cannot resolve it leaves alone.
 # It analyses every branch (--check-level=exhaustive): at the normal level it limits them and says so in an
 # information note (normalCheckLevelMaxBranches), which --error-exitcode counts as a finding.
@@ -79,8 +94,9 @@ HEADER_ALONE := $(CC) $(COMMON_FLAGS) -fsyntax-only -x c
 # make -j3 analysis runs side by side (exhaustive, one process took 24 min a combination on the reference workstation).
 CPPCHECK_JOBS ?= $(shell expr $$(nproc) / $(words $(SWITCH_COMBINATIONS)) + 1)
 CPPCHECK_C := $(CPPCHECK) --quiet --language=c --std=c11 --enable=warning,performance,portability \
-              --check-level=exhaustive --error-exitcode=1 -j $(CPPCHECK_JOBS) $(SYSTEM_LEVEL) -Iinclude -Isource
-CLANG_TIDY_FLAGS := -x c -std=c11 $(SYSTEM_LEVEL) $(INCLUDE_FLAGS)
+              --check-level=exhaustive --error-exitcode=1 -j $(CPPCHECK_JOBS) $(SYSTEM_LEVEL) \
+              -Isource -Igenerated -Itests
+CLANG_TIDY_FLAGS := -x c -std=c11 $(SYSTEM_LEVEL) $(INCLUDE_FLAGS) $(TEST_INCLUDE_FLAGS)
 # clang-tidy runs CLANG_TIDY_JOBS processes side by side, a file each (by default as many as cppcheck's); their
 # output keeps no order across files, so a finding is judged by its line.
 CLANG_TIDY_JOBS ?= $(CPPCHECK_JOBS)
@@ -92,7 +108,7 @@ lint:
 	$(PYTHON) tools/cli/generate_help.py --check
 	$(PYTHON) tools/cli/generate_axes.py --check
 	$(LAYOUT_LINT) .
-	$(LITERAL_LINT) include source tests
+	$(LITERAL_LINT) source tests
 
 # analysis proves that cppcheck (which takes no suppression from a source file) and clang-tidy (.clang-tidy: names,
 # magic numbers, bug patterns, the analyzer; diagnostics inside headers are kept) find nothing in any header,
@@ -100,7 +116,6 @@ lint:
 ANALYSIS_TARGETS := $(addprefix analysis_,$(SWITCH_COMBINATIONS))
 .PHONY: $(ANALYSIS_TARGETS)
 analysis: $(ANALYSIS_TARGETS)
-$(ANALYSIS_TARGETS): $(VISION_GEMM_POLICY_INCLUDE)
 # Under -j cppcheck checks across files (ctunullpointer and the like) only with a work folder: each combination
 # has its own, emptied first, so that no run reuses another's results; a caller that runs one combination several
 # times at once gives each run its own CPPCHECK_WORK_FOLDER.
@@ -138,8 +153,8 @@ endef
 layout_case = $(call reports_exactly,$(CASES)/layout/$(1)/expected_problems,$(LAYOUT_LINT) $(CASES)/layout/$(1))
 compile_case = $(CC) $(COMMON_FLAGS) $(COMPILE_debug) -c $(CASES)/compiler/$(1) -o $(SELF_TEST_DIRECTORY)/case.o
 tidy_case = $(CLANG_TIDY) --quiet $(CASES)/clang_tidy/$(1) -- $(CLANG_TIDY_FLAGS) $(HOOKS_debug)
-HOOKS_HEADER_WITHOUT_TIMING_SWITCH := $(HEADER_ALONE) -DCHECKING_HOOKS_ENABLED=1 include/anemone/hooks.h
-HOOKS_HEADER_WITHOUT_CHECKING_SWITCH := $(HEADER_ALONE) -DTIMING_HOOKS_ENABLED=1 include/anemone/hooks.h
+HOOKS_HEADER_WITHOUT_TIMING_SWITCH := $(HEADER_ALONE) -DCHECKING_HOOKS_ENABLED=1 source/common/hooks.h
+HOOKS_HEADER_WITHOUT_CHECKING_SWITCH := $(HEADER_ALONE) -DTIMING_HOOKS_ENABLED=1 source/common/hooks.h
 FUSING_CASE := $(CC) $(COMMON_FLAGS) $(COMPILE_release) $(LINK_release) $(CASES)/contraction/fused_multiply_add.c
 SPILLING_CASE := $(NVCC) $(NVCC_FLAGS) $(KERNEL_HOOKS_kernels) -arch=sm_80 -cubin $(CASES)/kernels/spilling_kernel.cu \
                  -o $(SELF_TEST_DIRECTORY)/spilling_kernel.cubin
@@ -149,8 +164,8 @@ REGISTERS_CASE := $(NVCC) $(NVCC_FLAGS) $(KERNEL_HOOKS_kernels) -arch=sm_80 -cub
                   $(CASES)/kernels/register_hungry_kernel.cu -o $(SELF_TEST_DIRECTORY)/register_hungry_kernel.cubin
 CHECKED_PRODUCT_MODULES := $(foreach architecture,$(KERNEL_ARCHITECTURES),$(foreach file,expert trunk,\
     build/kernels_checked/$(architecture)/kernel_$(file)_linear.cubin))
-CANARY_debug := build/debug/check_cases/sanitizer_canary
-CANARY_thread := build/thread/check_cases/sanitizer_canary
+CANARY_debug := $(BUILD)/debug/check_cases/sanitizer_canary
+CANARY_thread := $(BUILD)/thread/check_cases/sanitizer_canary
 self_test: $(BUILD_TYPES) $(CANARY_debug) $(CANARY_thread)
 	@mkdir -p $(SELF_TEST_DIRECTORY)/stripped
 # the lint: every case of tests/check_cases/literal_lint/ in one run, then nothing it can read

@@ -35,12 +35,12 @@
 #include <sys/sysmacros.h>
 #include <unistd.h>
 
-#include "anemone/engram_disk.h"
-#include "anemone/pack.h"
-#include "anemone/pack_digest.h"
-#include "anemone/storage_seam.h"
-#include "engram_hot.h"
-#include "sha256.h"
+#include "engine/engram/engram_disk.h"
+#include "engine/formats/pack/pack.h"
+#include "engine/formats/digest/pack_digest.h"
+#include "engine/storage/storage_seam.h"
+#include "engine/engram/engram_hot.h"
+#include "common/sha256.h"
 
 #define EXIT_CHECKPOINT 75
 #define DECODE_STEPS 64u

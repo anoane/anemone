@@ -2,7 +2,7 @@
 """The n-gram tables of a model in an Anemone pack: what make_pack.py, beside this file, does about them.
 
 It is not called on its own: make_pack.py's convert, verify and self-test call it, and tools/golden imports the
-reference through it. The format is include/anemone/engram.h.
+reference through it. The format is engram.h.
 
 convert. A folder that stores n-gram tables (each as "<table name>.weight", F8_E4M3 [rows, 256], and
 "<table name>.scale", F8_E8M0 [rows, 8]) gets them into its pack in host-only units behind every other unit, so
@@ -32,7 +32,7 @@ bits, every multiplier odd and positive, no prime below 2, every range of rows i
 host-only unit of its own, with one extent of exactly the blocks its rows need and the one tensor above; the zero
 fill behind the rows of a sample of each table's blocks and of its last block. A pack without "engram.token_map"
 has no tables. That the rows are the ones a token needs is the engine's to prove, against the file
-tools/golden/make_engram_golden.py writes.
+tools/models/deepseek_v41_flash/golden/make_engram_golden.py writes.
 
 self-test. make_pack.py's self-test ends here: two tables of toy sizes are added to its folder and the constants
 are given directly. The reference is NOT imported: no stand-in can prove the import of the real one, which the
@@ -59,7 +59,7 @@ import numpy
 
 import make_pack                                           # used inside functions only: the two files import each other
 
-# ---- The format: include/anemone/engram.h ----------------------------------------------------------------------------
+# ---- The format: engram.h ----------------------------------------------------------------------------
 VALUE_BYTES = 256
 SCALE_BYTES = 8
 ROW_BYTES = VALUE_BYTES + SCALE_BYTES

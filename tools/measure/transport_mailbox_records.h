@@ -3,7 +3,7 @@
 #ifndef TRANSPORT_MAILBOX_RECORDS_H
 #define TRANSPORT_MAILBOX_RECORDS_H
 #include <stdint.h>
-#include "anemone/exchange_records.h"
+#include "engine/backend/copy_records.h"
 
 #define TRANSPORT_PARTICIPANTS 2u
 #define TRANSPORT_THREADS 256u
@@ -96,6 +96,6 @@ struct transport_arguments {
     uint32_t sender;
     uint32_t reserved_zero;
 };
-STEP_RECORD_HAS(transport_status, TRANSPORT_STATUS_BYTES);
-STEP_RECORD_HAS(transport_arguments, TRANSPORT_ARGUMENT_BYTES);
+RECORD_HAS(transport_status, TRANSPORT_STATUS_BYTES);
+RECORD_HAS(transport_arguments, TRANSPORT_ARGUMENT_BYTES);
 #endif

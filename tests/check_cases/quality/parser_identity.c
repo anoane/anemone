@@ -6,10 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "anemone/chat_completions.h"
-#include "anemone/live_stats.h"
-#include "json.h"
-#include "server_responses.h"
+#include "engine/server/api/chat_completions.h"
+#include "engine/server/live_stats.h"
+#include "common/json.h"
+#include "engine/server/api/server_responses.h"
 
 #define TEST_INPUT_BYTES 65536u
 #define TEST_OUTPUT_BYTES 524288u

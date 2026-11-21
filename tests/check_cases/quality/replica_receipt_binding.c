@@ -2,7 +2,7 @@
 /* Isolated private-helper regression (r18 review): a copy journal and a verification receipt name the device by its
  * hardware key, never by its device number, which a reboot may renumber (NVMe partitions take minors in probe
  * order); every other field they bind still changes them. */
-#include "../../../source/replica_prepare.c"
+#include "../../../source/engine/storage/replicas/replica_prepare.c"
 
 #define TEST_CHUNKS 2u
 #define TEST_INODE 4242u

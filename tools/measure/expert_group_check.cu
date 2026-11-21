@@ -18,7 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "../../source/kernel_linear_common.cuh"
+#include "../../source/engine/library/kernel_mma_common.cuh"
 
 #define CHECK_THREADS 256
 #define CHECK_BLOCKS 1504                       /* 8 a multiprocessor of the PRO */

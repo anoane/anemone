@@ -9,7 +9,7 @@ Looks inside every executable under the directory (object files hold no final co
   - a symbol, function or static data, whose name starts with a prefix only the hook layer uses. A prefix, not a
     list of names: a hook added later is covered as long as it keeps the prefix;
   - text only a hook could have left: the hook layer's own messages, and the names and the log text that
-    tests/hooks_test.c passes through every hook macro, so a macro that failed to compile out is seen at its use;
+    hooks_test.c passes through every hook macro, so a macro that failed to compile out is seen at its use;
   - the absence of the symbol every program has. Without it the executable was stripped and proves nothing.
 
 What a binary cannot show, that a compiled-out hook does not evaluate its argument, is the test's own job.
@@ -23,7 +23,7 @@ import sys
 EXPECTED_ARGUMENT_COUNT = 2
 EXIT_STATUS_USAGE = 2
 
-# Functions first, then the static data of source/hooks.c and the totals the timer and counter macros declare.
+# Functions first, then the static data of hooks.c and the totals the timer and counter macros declare.
 # Generic fault_* state also belongs to required runtime failures and synthetic
 # test backends; only the hook layer's fault entry points identify instrumentation.
 FORBIDDEN_SYMBOL_PREFIXES = ("hook_", "hooks_", "assertion_", "fault_arm", "fault_disarm", "fault_point_", "hook_total_",

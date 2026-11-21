@@ -15,27 +15,31 @@ exempt from the lint and the analysers; the rules apply to it by review.
 - At most 120 columns to a line; the layout is the repository's `.clang-format` (the Linux format) wherever a
   file is formatted. No count of lines (the owner, 2026-10-25): write only the code that is needed, in the fewest moving
   parts the architecture allows: no speculative generality, no duplication, no thousand lines where better logic
-  needs a hundred. Less code is easier to keep correct, to maintain and to make fast. Engine files are
-  `include/anemone/<name>` and
-  `source/<name>`, tests are `tests/<name>`, all `.c`, `.h`, `.cu` or `.cuh`; nothing else lies beside them.
-- `source/main.c` holds only the program's `main()`; every other source file, `source/commands.c` (the commands)
+  needs a hundred. Less code is easier to keep correct, to maintain and to make fast. Engine files lie in the module
+  folders below `source/` (`common/`, `engine/<component>/`, `models/` and a model's folder, at most three deep),
+  each with a `module.mk` that says what the layout cannot; generated tables are `generated/<mirror>/<name>.inc`;
+  tests lie below `tests/` in folders that mirror `source/` (`support/` for what every test links). All are `.c`,
+  `.h`, `.cu` or `.cuh`; nothing else lies beside them. A basename is the tree's once: a kernel module and a test
+  program are named by it, and an include is spelled from its root (`engine/runtime/step/step.h`, from
+  `source/`; `support/step_fixture.h`, from `tests/`), or bare beside its includer.
+- `source/main.c` holds only the program's `main()`; every other source file, `commands.c` (the commands)
   among them, is linked into the program and into every test. A test is
-  `tests/<name>_test.c`; one that needs the cards is `tests/<name>_card_test.c`, built with the others and run by
-  `make card_tests`. What tests share (`tests/<name>.c`, `.h`) is prefixed `test_` in its names.
+  `<name>_test.c` below `tests/`; one that needs the cards is `<name>_card_test.c`, built with the others and run by
+  `make card_tests`. What tests share (`tests/support/<name>.c`, `.h`) is prefixed `test_` in its names.
 - No escape hatch: `NOLINT`, `cppcheck-suppress`, `#pragma GCC diagnostic`, `system_header` or `optimize`, the
   `optimize` and `no_sanitize` attributes, `<assert.h>`, `fast-math`, `use_fast_math` and `FP_CONTRACT` are
   forbidden text, in comments too. cppcheck takes no suppression from a source file.
 - One way to do each thing. No option without a measurement behind it. No abstraction beyond the five seams
-  (`include/anemone/*_seam.h`) until it has two users. (by review)
+  (`*_seam.h`) until it has two users. (by review)
 
 ## What every function does
 - It checks every input, size, bound and return value: bad input is a `result_status`, never a crash. (by
   review; a status that nobody looks at does not compile)
-- If it can fail it returns `MUST_CHECK result_status` (`include/anemone/status.h`). On failure it leaves every
+- If it can fail it returns `MUST_CHECK result_status` (`source/common/status.h`). On failure it leaves every
   scalar output untouched; the contents of a caller's buffer it was filling are unspecified and must not be used.
   (by review)
 - It allocates nothing on the token path: what a card holds is placed at load, at fixed offsets. Every wait has a
-  deadline. Its failure paths can be reached by a test: a `FAULT_POINT(name)` (`include/anemone/hooks.h`) stands
+  deadline. Its failure paths can be reached by a test: a `FAULT_POINT(name)` (`source/common/hooks.h`) stands
   where the outside world can fail. (by review)
 
 ## Quality, safety and security bar
@@ -110,7 +114,9 @@ its bounded ownership and default wire behavior are retained.
 - A `.cu` file holds device code only, in a C subset: plain functions and structs; a template only to stamp one
   kernel per shape, architecture or weight format; no classes, exceptions, lambdas or standard containers. It
   includes no engine header except record layouts written to compile as both C11 and CUDA. (by review)
-- A kernel file is `source/kernel_<what it computes>.cu`; what kernel files share is a `.cuh` beside it. Both are
+- A kernel module is a `.cu` named by its owner's prefix: `kernel_<what it computes>.cu` for the engine,
+  `<prefix>_<what>.cu` for a model (its prepare and its kernel share a stem), in the module folder of the
+  host code that prepares its launches; what kernel files share is a `.cuh` beside them. Both are
   pass the lint.
 - Each is compiled once per architecture (`sm_80`, `sm_120a`) into one module under `build/kernels/<architecture>/`
   that the backend loads when it opens a card. The modules are the same in all four builds and are linked into

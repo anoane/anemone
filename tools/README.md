@@ -11,16 +11,16 @@ Hex and JSON fixture inputs are data with their generator source included.
 | `build/` | Native C kernel embedder and host-fixture writer; optional Python regeneration helpers. |
 | `cli/` | Axis/option registries and explicit Python help generators. |
 | `check/` | Optional Python lint and release instrumentation audits. |
-| `convert/`, `model_data.sh` | CPU model/tokenizer/pack preparation; dependencies in MODEL_DATA. |
+| `convert/`, `models/deepseek_v41_flash/model_data.sh` | CPU model/tokenizer/pack preparation; dependencies in MODEL_DATA. |
 | `golden_score.py` | Portable aligned F32 conditional-head scorer; Python and NumPy. |
 | `golden/` | Optional capture/fixture preparation source; caller-supplied models/reference data. |
 | `measure/` | Optional C/CUDA/Python measurement probes, built from their source. |
 | `oracle/` | Optional CPU reference and capture comparisons; Python/NumPy/PyTorch as used by each tool. |
-| `prefill_cone/` | Optional prefill comparison source. |
-| `vision/` | Vision fixture generation/comparison and pinned numeric input data. |
+| `models/deepseek_v41_flash/prefill_cone/` | Optional prefill comparison source. |
+| `models/deepseek_v41_flash/vision/` | Vision fixture generation/comparison and pinned numeric input data. |
 | `development.mk` | Explicit development targets included by the main Makefile. |
 
-Use [MODEL_DATA.md](../docs/user/MODEL_DATA.md) for model preparation and
+Use [MODEL_DATA.md](../docs/models/deepseek_v41_flash/MODEL_DATA.md) for model preparation and
 [golden_score.md](golden_score.md) for score input contracts. For example:
 
 ```sh

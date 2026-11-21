@@ -4,7 +4,8 @@
 
     check_pack_linears.py <pack file> <capture folder>
 
-The capture folder is one that tools/oracle/reference_oracle.py --mode linears wrote: manifest.json and tensors.bin,
+The capture folder is one that tools/models/deepseek_v41_flash/oracle/reference_oracle.py --mode linears wrote:
+manifest.json and tensors.bin,
 which hold for every recorded call of the reference's quantized linear (model.py:181) the input as the reference
 quantized it (E4M3 bytes), the scales of that input (E8M0 bytes, one for every 32 inputs of a row) and what the
 reference's product returned (bfloat16 values, written as float32). The record of each names the weight it ran on.
@@ -66,7 +67,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.p
 import kernel_layouts                                      # the inverse of the conversion
 import make_pack                                           # the reader of a pack's tables
 
-# ---- The capture folder: the format of tools/oracle/reference_oracle.py ---------------------------------------------
+# ---- The capture folder: the format of tools/models/deepseek_v41_flash/oracle/reference_oracle.py -------------------
 MANIFEST_FILE_NAME = "manifest.json"
 TENSORS_FILE_NAME = "tensors.bin"
 CAPTURE_KIND = "linears"                                   # conditions.capture of the manifest
@@ -82,7 +83,7 @@ ANY_EXPERT = "*"                                           # in place of the num
 WEIGHT_FORMATS = {"float4_e2m1fn_x2": kernel_layouts.WEIGHT_FORMAT_E2M1_SCALED,
                   "float8_e4m3fn": kernel_layouts.WEIGHT_FORMAT_E4M3_SCALED}
 
-# ---- The numbers: include/anemone/weight_format_seam.h, and bfloat16 -------------------------------------------------
+# ---- The numbers: weight_format_seam.h, and bfloat16 -------------------------------------------------
 INPUTS_PER_SCALE = 32
 E4M3_OUTPUTS_PER_SCALE = 32
 E8M0_BIAS = 127                                            # a scale byte c stands for 2^(c - 127)

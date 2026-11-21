@@ -1,9 +1,11 @@
-include/outside_the_engine_directory.h: not a file the build compiles: only include/anemone/<lower_case_underscore name>.c, .h, .cu or .cuh
-include/anemone/one_wide_line.h:1: 121 columns, a line has at most 120
-source/deeper/: a directory the build does not compile
-source/Bad-Name.c: not a file the build compiles: only source/<lower_case_underscore name>.c, .h, .cu or .cuh
-source/table.inc: not a file the build compiles: only source/<lower_case_underscore name>.c, .h, .cu or .cuh
-tests/data/: a directory the build does not compile
-tests/Bad-Test-Name.c: not a file the build compiles: only tests/<lower_case_underscore name>.c, .h, .cu or .cuh
+source/alpha/Bad-Name.c: not a file the build compiles: only source/[<folders>/]<lower_case_underscore name>.c, .h, .cu or .cuh, or module.mk
+source/alpha/one_wide_line.h:1: 121 columns, a line has at most 120
+source/alpha/table.inc: not a file the build compiles: only source/[<folders>/]<lower_case_underscore name>.c, .h, .cu or .cuh, or module.mk
+source/alpha/beta/gamma/delta/too_deep.c: more than 3 folders deep below source/
+source/no_module/outside_a_module.c: in no module: no module.mk in its folder or above it below source/
+tests/Bad-Test-Name.c: not a file the build compiles: only tests/[<folders>/]<lower_case_underscore name>.c, .h, .cu or .cuh
+tests/named_twice.h: the name of source/alpha/named_twice.h: a name is the tree's once
 tests/one_wide_line_test.c:1: 121 columns, a line has at most 120
+generated/not_a_table.h: not a file the build compiles: only generated/[<folders>/]<lower_case_underscore name>.inc
+include/: a top-level directory this tool does not know: nothing checks what it holds
 kernels/: a top-level directory this tool does not know: nothing checks what it holds

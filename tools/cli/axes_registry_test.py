@@ -26,7 +26,7 @@ def registry():
 
 
 def startup_bounds(data):
-    """startup_axes.c's axis_bounds as generate_axes.py writes them, in declared order: a cap one entry a bounded
+    """cli_axes.c's axis_bounds as generate_axes.py writes them, in declared order: a cap one entry a bounded
     knob, at that knob's parser least; a floor one entry, at its own least."""
     return [dict(bound, bounded=keys, least=bound["least"] if bound["kind"] == "floor" else
                  GENERATOR.parser_least(keys[0])) for bound in data["cross_axis_bounds"]
@@ -40,7 +40,7 @@ def leading_number(text):
 
 
 def bound_value(bound, value, bounding, under):
-    """startup_axes.c bound_value: a cap lowers a value to the bounding knob's less the offset, never below its least;
+    """cli_axes.c bound_value: a cap lowers a value to the bounding knob's less the offset, never below its least;
     a floor raises it to its least where the bounding knob holds the floor's value and the under knob is not 0."""
     if bounding is None or not bounding[:1].isdigit():
         return value
@@ -52,7 +52,7 @@ def bound_value(bound, value, bounding, under):
 
 
 def startup_value(row, serving, key, bounds):
-    """The value startup gives an inserted knob of a row without explicit knobs (startup_axes.c bound_setting): the
+    """The value startup gives an inserted knob of a row without explicit knobs (cli_axes.c bound_setting): the
     first bound, in declared order, that changes the composition's unclamped value, each bounding knob read after its
     own first changing bound (bounding_final_value); else that unclamped value."""
     settings = (row["settings"] + "\n" + row["serve_settings"] if serving else
@@ -646,7 +646,7 @@ class AxisNumericalContractTest(unittest.TestCase):
                 for field in ('settings', 'generate_settings')]
 
     def assert_route_envelope(self, rows):
-        baseline = json.loads((HERE / 'axes_route_baseline.json').read_text())
+        baseline = json.loads((HERE.parent / 'models/deepseek_v41_flash/cli/axes_route_baseline.json').read_text())
         previous = {(row['split'], tuple(row['values'])): row for row in baseline['rows']}
         self.assertEqual(len(rows), len(previous))
         for row in rows:
@@ -685,7 +685,7 @@ class AxisNumericalContractTest(unittest.TestCase):
         """Stage 2 re-recorded the envelope: each row it changed keeps its stage-1 values and names a route arm (same
         binary, identical outputs) or unmeasured (covered by the GPU confirmation set). The recipes yield their draft
         knobs, so no recipe row changes without a stage-2 set."""
-        baseline = json.loads((HERE / 'axes_route_baseline.json').read_text())
+        baseline = json.loads((HERE.parent / 'models/deepseek_v41_flash/cli/axes_route_baseline.json').read_text())
         arms = baseline['route_arms']
         for arm in arms.values():
             self.assertTrue(arm['outputs_identical'] and arm['scope'] and arm['knobs'])
@@ -712,10 +712,10 @@ class AxisNumericalContractTest(unittest.TestCase):
         """Stage 3 re-recorded the envelope: each row it changed keeps its stage-2 values and names its basis: q4 on
         (TP4_EXL3's exact-shaping set, the measured exact-FP32 arm), r7c g3
         (PP5 single with focus=decode), the same parsed configuration (TP4_EXL3's single rows, whose base parses as
-        the measured recipe did, startup_axes_test's raw_default_cases, and whose serve at 1M fits one session and
+        the measured recipe did, cli_axes_test's raw_default_cases, and whose serve at 1M fits one session and
         takes --session_slots=1's defaults, single_session_cases), or unmeasured (the owner's balanced rule, PP5's
         other single rows and TP4_PRO's single rows, which serve the most sessions that fit; U6)."""
-        baseline = json.loads((HERE / 'axes_route_baseline.json').read_text())
+        baseline = json.loads((HERE.parent / 'models/deepseek_v41_flash/cli/axes_route_baseline.json').read_text())
         changed = [row for row in baseline['rows'] if 'stage2' in row]
         self.assertTrue(all('stage3_basis' not in row for row in baseline['rows'] if 'stage2' not in row))
         counts = {}
@@ -740,7 +740,7 @@ class AxisNumericalContractTest(unittest.TestCase):
         concurrency=balanced rows (the owner's rule is the raw defaults), PP5 single and multiple (no inserted 8 slots)
         and TP4_EXL3 multiple (8 slots dropped; BATCH only at exactly 8 on serve) changed. Each keeps its stage-3 values
         and names unbounded_defaults, unmeasured until U6; exact and held rows did not change."""
-        baseline = json.loads((HERE / 'axes_route_baseline.json').read_text())
+        baseline = json.loads((HERE.parent / 'models/deepseek_v41_flash/cli/axes_route_baseline.json').read_text())
         changed = [row for row in baseline['rows'] if 'stage3' in row]
         self.assertTrue(all('unbounded_basis' not in row for row in baseline['rows'] if 'stage3' not in row))
         counts = {}
@@ -1117,7 +1117,8 @@ def keep_owned_yields(data, split):
 
 
 FOLDED_LABEL = re.compile(r"(?<![A-Za-z0-9_])(PP8|serial2)(?![A-Za-z0-9_])")
-ROUTE_TABLES = ("tools/cli/AXES.md", "tools/cli/KNOBS.md", "docs/USAGE.md", "docs/SERVER_PROFILES.md")
+ROUTE_TABLES = ("tools/cli/AXES.md", "tools/cli/KNOBS.md", "docs/USAGE.md",
+                "docs/models/deepseek_v41_flash/SERVER_PROFILES.md")
 
 
 def last_value(arguments, key):
@@ -1176,7 +1177,7 @@ class RouteParameterTest(unittest.TestCase):
         all-balanced row would insert (9 Nov: pinned, not --axes=off)."""
         rows = {(row['split'], row['values']): row for row in
                 GENERATOR.make_choices(GENERATOR.validate_registry(registry()))}
-        text = (ROOT / 'docs/SERVER_PROFILES.md').read_text()
+        text = (ROOT / 'docs/models/deepseek_v41_flash/SERVER_PROFILES.md').read_text()
         recipes = [block for block in re.findall(r'```sh\n(.*?)```', text, re.S) if 'anemone serve' in block]
         checked = 0
         for block in recipes:

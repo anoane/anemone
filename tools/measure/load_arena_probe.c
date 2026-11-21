@@ -32,13 +32,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "anemone/pack.h"
-#include "anemone/replicas.h"
-#include "anemone/storage_exl3.h"
-#include "anemone/storage_profile.h"
-#include "anemone/tp_load.h"
-#include "storage_autotune.h"
-#include "storage_prepare.h"
+#include "engine/formats/pack/pack.h"
+#include "engine/storage/replicas/replicas.h"
+#include "engine/storage/io/storage_exl3.h"
+#include "engine/storage/profile/storage_profile.h"
+#include "engine/storage/load/tp_load.h"
+#include "engine/storage/autotune/storage_autotune.h"
+#include "engine/storage/replicas/storage_prepare.h"
 
 #define ARMS_MOST 8u
 #define ARM_NAME_BYTES 9u

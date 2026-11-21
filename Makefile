@@ -6,7 +6,8 @@
 #   make profile    the flags of release, with the timing hooks (timers, counters, their report) left in
 #   make release    optimised and hardened, every hook compiled out: what ships
 #   make check      lint + header_check + analysis + tests + self_test; each target below says what it proves
-#   make card_tests the tests that need the cards (tests/*_card_test.c): run from a batch, with nothing else on them
+#   make card_tests the tests that need the cards (each <name>_card_test.c below tests/): run from a batch, with
+#                   nothing else on them
 #   make clean
 
 SHELL := /bin/sh
@@ -23,23 +24,43 @@ STRIP := strip
 
 # ---- What is built ---------------------------------------------------------------------------------------------
 # Found, never listed: a file in these directories is compiled, analysed and tested, and layout_lint.py refuses an
-# engine or test file anywhere else. source/main.c is the program, build/<build>/anemone; every other source/*.c is
-# linked into it and into every test program. tests/<name>_test.c holds a main and becomes the test program
-# <name>_test; any other tests/*.c is linked into every test program. A test named <name>_card_test needs the
-# cards: `make tests` builds it and `make card_tests` runs it.
-HEADERS := $(sort $(wildcard include/anemone/*.h source/*.h tests/*.h))
+# engine or test file anywhere else. Engine files lie in the module folders below source/, each with a module.mk
+# that says what the layout cannot (the modules its files may include; its kernels' build classes, required traps
+# and checked instances); generated/ holds the pinned generated tables, included where they are used. A basename
+# is the tree's once, and every list is in the order of the names (by_name; a renamed source, kernel or test file
+# sorts by the name it had, tools/build/link_order.mk), so that the link, the kernel table and what a file's
+# name names (a kernel module, a test program) depend on neither its folder nor a rename. source/main.c is the
+# program, $(BUILD)/<build>/anemone; every other .c below source/ is linked into it and into every test program.
+# A <name>_test.c below tests/ holds a main and becomes the test program <name>_test; any other .c below tests/ is
+# linked into every test program. A test named <name>_card_test needs the cards: `make tests` builds it and
+# `make card_tests` runs it. tests/check_cases/ holds the checks' own cases, which these lists leave out.
+BUILD ?= build
+CASES := tests/check_cases
+find_files = $(sort $(foreach entry,$(wildcard $(1)/*),$(call find_files,$(entry),$(2)) $(filter $(2),$(entry))))
+include tools/build/link_order.mk
+# a file's key: the basename it had before a rename (tools/build/link_order.mk), else its own, then '!', which sorts
+# before every character of a name, and its path
+link_key = $(or $(LINK_NAME_$(notdir $(1))),$(notdir $(1)))!$(1)
+by_name = $(foreach key,$(sort $(foreach path,$(1),$(call link_key,$(path)))),$(lastword $(subst !, ,$(key))))
+# What each module.mk adds to (see Kernels).
+NATIVE_KERNEL_SOURCES :=
+SM_80_ONLY_KERNEL_SOURCES :=
+NATIVE_ONLY_KERNEL_SOURCES :=
+REGISTER_CHECKED_INSTANCES :=
+WIDE_SLICE_INSTANCES :=
+include $(call find_files,source,%/module.mk)
+HEADERS := $(call by_name,$(call find_files,source,%.h) $(filter-out $(CASES)/%,$(call find_files,tests,%.h)))
 PROGRAM_SOURCE := source/main.c
-HOST_SOURCES := $(filter-out $(PROGRAM_SOURCE),$(sort $(wildcard source/*.c)))
-TEST_PROGRAM_SOURCES := $(sort $(wildcard tests/*_test.c))
-TEST_SUPPORT_SOURCES := $(filter-out $(TEST_PROGRAM_SOURCES),$(sort $(wildcard tests/*.c)))
-KERNEL_SOURCES := $(sort $(wildcard source/*.cu))
+HOST_SOURCES := $(call by_name,$(filter-out $(PROGRAM_SOURCE),$(call find_files,source,%.c)))
+TEST_PROGRAM_SOURCES := $(call by_name,$(filter-out $(CASES)/%,$(call find_files,tests,%_test.c)))
+TEST_SUPPORT_SOURCES := $(call by_name,$(filter-out $(TEST_PROGRAM_SOURCES) $(CASES)/%,$(call find_files,tests,%.c)))
+KERNEL_SOURCES := $(call by_name,$(call find_files,source,%.cu))
 # The kernel modules as one C table (tools/build/embed_kernel_images.c), linked into every program: the release set
 # into profile and release, the checked set into debug and thread (see Kernels).
 KERNEL_SET_debug := kernels_checked
 KERNEL_SET_thread := kernels_checked
 KERNEL_SET_profile := kernels
 KERNEL_SET_release := kernels
-CASES := tests/check_cases
 CANARY_SOURCE := $(CASES)/sanitizers/sanitizer_canary.c
 ifeq ($(and $(HEADERS),$(HOST_SOURCES),$(TEST_PROGRAM_SOURCES)),)
 $(error no header, source or test program found: make runs in the engine directory)
@@ -53,9 +74,11 @@ WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wdouble-promotion -Wshadow -W
             -Wformat-signedness -Wswitch-enum -Wvla -Walloca -Wnull-dereference -Wundef -Werror
 # Linux is the only platform: direct reads and what the kernel tells about a drive are behind this level.
 SYSTEM_LEVEL := -D_GNU_SOURCE
-# -iquote source: a header private to the engine's sources. -isystem: the CUDA driver interface, a C header that
-# only source/backend_cuda.c includes.
-INCLUDE_FLAGS := -Iinclude -iquote source -isystem $(CUDA_DIRECTORY)/include
+# The include roots: an engine header is spelled from source/ (engine/runtime/step/step.h), a generated table from
+# generated/, and in a test's object a test header from tests/ (support/step_fixture.h); a header beside its
+# includer is spelled bare. -isystem: the CUDA driver interface, a C header that only backend_cuda.c includes.
+INCLUDE_FLAGS := -iquote source -iquote generated -isystem $(CUDA_DIRECTORY)/include
+TEST_INCLUDE_FLAGS := -iquote tests
 # -ffp-contract=off: a result never depends on what the compiler chose to fuse. A fused multiply-add is written
 # fma() where it is wanted.
 COMMON_FLAGS := -std=c11 $(SYSTEM_LEVEL) $(INCLUDE_FLAGS) -march=$(HOST_ARCHITECTURE) -ffp-contract=off -pthread \
@@ -64,7 +87,7 @@ DEPENDENCY_FLAGS := -MMD -MP
 # The CUDA driver library: part of the driver, not of the toolkit.
 LIBRARIES := -lcuda -lm
 
-# The two hook switches of include/anemone/hooks.h. Checking hooks: assertions, fault points, and the information,
+# The two hook switches of hooks.h. Checking hooks: assertions, fault points, and the information,
 # debug and trace logs. Timing hooks: timers, counters and their report. Either switch enables logging;
 # both zero compile out error/warning logs too. thread has the switches of debug, so
 # debug, profile and release are every combination a build uses.
@@ -115,32 +138,42 @@ all: release
 # An object depends on its source, on every header it included (the .d file the compiler writes beside it) and on
 # this Makefile: a changed flag rebuilds everything, and no check passes on objects of the flags before.
 define BUILD_RULES
-ENGINE_OBJECTS_$(1) := $$(patsubst %.c,build/$(1)/%.o,$$(HOST_SOURCES) build/$$(KERNEL_SET_$(1))/kernel_images.c)
-TEST_SUPPORT_OBJECTS_$(1) := $$(patsubst %.c,build/$(1)/%.o,$$(TEST_SUPPORT_SOURCES))
-TEST_PROGRAMS_$(1) := $$(patsubst tests/%.c,build/$(1)/%,$$(TEST_PROGRAM_SOURCES))
-PROGRAM_$(1) := build/$(1)/anemone
+ENGINE_OBJECTS_$(1) := $$(patsubst %.c,$(BUILD)/$(1)/%.o,$$(HOST_SOURCES) $(BUILD)/$$(KERNEL_SET_$(1))/kernel_images.c)
+TEST_SUPPORT_OBJECTS_$(1) := $$(patsubst %.c,$(BUILD)/$(1)/%.o,$$(TEST_SUPPORT_SOURCES))
+TEST_PROGRAMS_$(1) := $$(foreach test,$$(TEST_PROGRAM_SOURCES),$(BUILD)/$(1)/$$(basename $$(notdir $$(test))))
+PROGRAM_$(1) := $(BUILD)/$(1)/anemone
 $(1): $$(TEST_PROGRAMS_$(1)) $$(PROGRAM_$(1))
-build/$(1)/source/startup_axes.o: source/cli_axes_data.h
-build/$(1)/%.o: %.c Makefile
+$(BUILD)/$(1)/source/engine/cli/cli_axes.o: generated/engine/cli/cli_axes.inc
+$(BUILD)/$(1)/%.o: %.c Makefile
 	@mkdir -p $$(dir $$@)
 	$$(CC) $$(COMMON_FLAGS) $$(COMPILE_$(1)) $$(DEPENDENCY_FLAGS) -c $$< -o $$@
-$$(TEST_PROGRAMS_$(1)): build/$(1)/%: build/$(1)/tests/%.o $$(ENGINE_OBJECTS_$(1)) $$(TEST_SUPPORT_OBJECTS_$(1)) Makefile
+$(BUILD)/$(1)/tests/%.o: tests/%.c Makefile
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(COMMON_FLAGS) $$(TEST_INCLUDE_FLAGS) $$(COMPILE_$(1)) $$(DEPENDENCY_FLAGS) -c $$< -o $$@
+$$(PROGRAM_$(1)): $(BUILD)/$(1)/$$(PROGRAM_SOURCE:.c=.o) $$(ENGINE_OBJECTS_$(1)) Makefile
 	$$(CC) $$(COMMON_FLAGS) $$(COMPILE_$(1)) $$(LINK_$(1)) $$(filter %.o,$$^) $$(LIBRARIES) -o $$@
-$$(PROGRAM_$(1)): build/$(1)/$$(PROGRAM_SOURCE:.c=.o) $$(ENGINE_OBJECTS_$(1)) Makefile
-	$$(CC) $$(COMMON_FLAGS) $$(COMPILE_$(1)) $$(LINK_$(1)) $$(filter %.o,$$^) $$(LIBRARIES) -o $$@
-build/$(1)/check_cases/sanitizer_canary: build/$(1)/$$(CANARY_SOURCE:.c=.o) Makefile
+$(BUILD)/$(1)/check_cases/sanitizer_canary: $(BUILD)/$(1)/$$(CANARY_SOURCE:.c=.o) Makefile
 	@mkdir -p $$(dir $$@)
 	$$(CC) $$(COMMON_FLAGS) $$(COMPILE_$(1)) $$(LINK_$(1)) $$< -o $$@
 endef
 $(foreach build_type,$(BUILD_TYPES),$(eval $(call BUILD_RULES,$(build_type))))
+# A test program is named by its file's name: $(BUILD)/<build>/<name>_test, wherever below tests/ it lies.
+define TEST_PROGRAM_RULE
+$(BUILD)/$(1)/$(basename $(notdir $(2))): $(BUILD)/$(1)/$(2:.c=.o) $$(ENGINE_OBJECTS_$(1)) \
+    $$(TEST_SUPPORT_OBJECTS_$(1)) Makefile
+	$$(CC) $$(COMMON_FLAGS) $$(COMPILE_$(1)) $$(LINK_$(1)) $$(filter %.o,$$^) $$(LIBRARIES) -o $$@
+endef
+$(foreach build_type,$(BUILD_TYPES),$(foreach test,$(TEST_PROGRAM_SOURCES),\
+    $(eval $(call TEST_PROGRAM_RULE,$(build_type),$(test)))))
 TEST_PROGRAMS := $(foreach build_type,$(BUILD_TYPES),$(TEST_PROGRAMS_$(build_type)))
--include $(foreach build_type,$(BUILD_TYPES),$(patsubst %.c,build/$(build_type)/%.d,\
-    $(HOST_SOURCES) $(PROGRAM_SOURCE) build/$(KERNEL_SET_$(build_type))/kernel_images.c $(TEST_PROGRAM_SOURCES) \
+-include $(foreach build_type,$(BUILD_TYPES),$(patsubst %.c,$(BUILD)/$(build_type)/%.d,\
+    $(HOST_SOURCES) $(PROGRAM_SOURCE) $(BUILD)/$(KERNEL_SET_$(build_type))/kernel_images.c $(TEST_PROGRAM_SOURCES) \
     $(TEST_SUPPORT_SOURCES) $(CANARY_SOURCE)))
 
 # ---- Kernels ---------------------------------------------------------------------------------------------------
-# Device code only. Each source/*.cu becomes one module per architecture, which the backend loads when it opens a
-# card. --fmad=false: as on the host, nothing is fused unless the source says so. Two sets: build/kernels/ with the
+# Device code only. Each .cu below source/ becomes one module per architecture, named by its file's name
+# (build/<set>/<architecture>/<name>.cubin, found through vpath), which the backend loads when it opens a card.
+# --fmad=false: as on the host, nothing is fused unless the source says so. Two sets: build/kernels/ with the
 # device checks compiled out (CHECKING_HOOKS_ENABLED=0), for profile and release, and build/kernels_checked/
 # with them, for debug and thread. Each set is written into one C table of the same name, so that a program carries
 # its kernels and reads none from a path. Beside every module lies the assembler's report (.report); a spill, any
@@ -149,82 +182,69 @@ KERNEL_ARCHITECTURES := sm_80 sm_120a
 KERNEL_SETS := kernels kernels_checked
 KERNEL_HOOKS_kernels := -DCHECKING_HOOKS_ENABLED=0 -DNDEBUG
 KERNEL_HOOKS_kernels_checked := -DCHECKING_HOOKS_ENABLED=1
-NVCC_FLAGS := -O3 -std=c++17 -Iinclude --fmad=false -Werror all-warnings \
+vpath %.cu $(sort $(dir $(KERNEL_SOURCES)))
+NVCC_FLAGS := -O3 -std=c++17 -Isource -Igenerated --fmad=false -Werror all-warnings \
               -Xcompiler -Wall,-Wextra,-Wconversion,-Wshadow,-Werror \
               -Xptxas -v,--warn-on-spills,--warn-on-local-memory-usage,--warning-as-error
-# The PRO's own arithmetic (class 120 native, backend_seam.h; commands.c's default): the kernel files whose sums
-# emulate class 80 on class 120 are built a second time for sm_120a with LINEAR_CLASS_FORMS, as <file>_native,
-# the module a card of that class takes (linear.c, attention_core.c, exl3.c). The plain sm_120a builds stay class
-# 120's emulation (--pro_emulation=1), the sm_80 builds class 80's own.
-NATIVE_KERNEL_SOURCES := source/kernel_trunk_linear.cu source/kernel_expert_linear.cu source/kernel_attention_core.cu \
-                         source/kernel_index_scan.cu source/kernel_attention_output.cu source/kernel_exl3.cu \
-                         source/kernel_exl3_wide.cu
-# The trunk and expert ordered/relaxed modules use class 80's operands and are never selected on the PRO. The EXL3
-# tensor-parallel products (kernel_exl3_product) serve only the CMP ranks of TP4_EXL3: a PRO in a tensor-parallel
-# stage would need them converted to kernel_exl3_mma.cuh as kernel_exl3.cu is.
-SM_80_ONLY_KERNEL_SOURCES := source/kernel_trunk_relaxed.cu source/kernel_expert_relaxed.cu source/kernel_exl3_tc.cu source/kernel_exl3_tcp.cu \
-                            source/kernel_exl3_product.cu source/kernel_head_mma.cu source/kernel_trunk_mma.cu
-# kernel_exl3_wide's products do not fit class 120's emulation of class 80 without local memory: class 120 takes them
-# in its own arithmetic only (*_native), and its emulation kernel_exl3's retained products, the same words (exl3.c).
-NATIVE_ONLY_KERNEL_SOURCES := source/kernel_exl3_wide.cu
+# The build classes of the kernel files, which each module.mk gives its own:
+# - NATIVE_KERNEL_SOURCES: the PRO's own arithmetic (class 120 native, backend_seam.h; commands.c's default): the
+#   kernel files whose sums emulate class 80 on class 120 are built a second time for sm_120a with
+#   LINEAR_CLASS_FORMS, as <file>_native, the module a card of that class takes (linear.c, ds41f_attention_core.c,
+#   exl3.c). The plain sm_120a builds stay class 120's emulation (--pro_emulation=1), the sm_80 builds class 80's own.
+# - SM_80_ONLY_KERNEL_SOURCES: the trunk and expert ordered/relaxed modules use class 80's operands and are never
+#   selected on the PRO. The EXL3 tensor-parallel products (kernel_exl3_product) serve only the CMP ranks of
+#   TP4_EXL3: a PRO in a tensor-parallel stage would need them converted to kernel_exl3_mma.cuh as kernel_exl3.cu is.
+# - NATIVE_ONLY_KERNEL_SOURCES: kernel_exl3_wide's products do not fit class 120's emulation of class 80 without
+#   local memory: class 120 takes them in its own arithmetic only (*_native), and its emulation kernel_exl3's
+#   retained products, the same words (exl3.c).
 KERNEL_SOURCES_OF = $(if $(filter sm_80,$(1)),$(KERNEL_SOURCES),\
     $(filter-out $(SM_80_ONLY_KERNEL_SOURCES) $(NATIVE_ONLY_KERNEL_SOURCES),$(KERNEL_SOURCES)))
 KERNEL_MODULES_OF = $(foreach architecture,$(KERNEL_ARCHITECTURES),\
-    $(patsubst source/%.cu,build/$(1)/$(architecture)/%.cubin,$(call KERNEL_SOURCES_OF,$(architecture)))) \
-    $(patsubst source/%.cu,build/$(1)/sm_120a/%_native.cubin,$(NATIVE_KERNEL_SOURCES))
+    $(patsubst %.cu,build/$(1)/$(architecture)/%.cubin,$(notdir $(call KERNEL_SOURCES_OF,$(architecture))))) \
+    $(patsubst %.cu,build/$(1)/sm_120a/%_native.cubin,$(notdir $(NATIVE_KERNEL_SOURCES)))
 KERNEL_MODULES := $(foreach kernel_set,$(KERNEL_SETS),$(call KERNEL_MODULES_OF,$(kernel_set)))
 # An instance of S slices of a product kernel has a block of 32 S threads (gate with up, the producer and the
-# attention's output groups: 64 S, linear_records.h, expert_fused_records.h, attention_output_records.h; the wide and
-# interleaved trunk instances as the thin ones, the shared join as the trunk's): the registers the assembler gave it,
-# in the register file's units of 8, must fit the file for that block, or every launch of it would fail at run time.
+# attention's output groups: 64 S, linear_records.h, expert_producer_records.h,
+# ds41f_attention_output_records.h; the wide and interleaved trunk instances as the thin ones, the shared join as
+# the trunk's): the registers the assembler gave it, in the register file's units of 8, must fit the file for
+# that block, or every launch of it would fail at run time.
 # registers_fit reads a report and fails naming each instance that does not.
 REGISTER_FILE := 65536
 REGISTER_UNIT := 8
 THREADS_PER_SLICE := 32
 GATE_UP_THREADS_PER_SLICE := 64
-PRODUCT_NAMES := expert_(gate_up(_quantize)?|down|shared_join)|trunk_linear_(quantized|bfloat16)(_wide|_interleaved)?
-INSTANCE_NAME := ^($(PRODUCT_NAMES)|attention_(groups|projection))_[0-9]+$$
+# The instance families come from the module.mk files: REGISTER_CHECKED_INSTANCES (extended regular expressions)
+# and WIDE_SLICE_INSTANCES (those of 64 threads a slice).
+empty :=
+space := $(empty) $(empty)
+INSTANCE_NAME := ^($(subst $(space),|,$(strip $(REGISTER_CHECKED_INSTANCES))))_[0-9]+$$
+WIDE_SLICE_NAME := $(subst $(space),|,$(strip $(WIDE_SLICE_INSTANCES)))
 registers_fit = awk '/Function properties for/ { name = $$NF } /Used [0-9]+ registers/ && name ~ /$(INSTANCE_NAME)/ { \
     for (field = 1; field < NF; field++) if ($$field == "Used") registers = $$(field + 1); \
     registers = int((registers + $(REGISTER_UNIT) - 1) / $(REGISTER_UNIT)) * $(REGISTER_UNIT); \
     threads = substr(name, match(name, /[0-9]+$$/)) * \
-              (name ~ /gate_up|attention_groups/ ? $(GATE_UP_THREADS_PER_SLICE) : $(THREADS_PER_SLICE)); \
+              (name ~ /$(WIDE_SLICE_NAME)/ ? $(GATE_UP_THREADS_PER_SLICE) : $(THREADS_PER_SLICE)); \
     if (registers * threads > $(REGISTER_FILE)) { print name " takes " registers " registers in a block of " threads; \
                                                  wrong = 1 } } END { exit wrong }' $(1)
 define KERNEL_RULES
-build/$(1)/$(2)/%.cubin: source/%.cu Makefile
+build/$(1)/$(2)/%.cubin: %.cu Makefile
 	@mkdir -p $$(dir $$@)
-	$$(NVCC) $$(NVCC_FLAGS) $$(KERNEL_HOOKS_$(1)) -arch=$(2) -cubin -MMD -MF $$(@:.cubin=.d) $$< -o $$@ \
+	$$(NVCC) $$(NVCC_FLAGS) $$(KERNEL_HOOKS_$(1)) -arch=$(2) -cubin -MMD -MP -MF $$(@:.cubin=.cubin.d) $$< -o $$@ \
 	    > $$(@:.cubin=.report) 2>&1 || { cat $$(@:.cubin=.report); exit 1; }
 	@$$(call registers_fit,$$(@:.cubin=.report))
 endef
 $(foreach kernel_set,$(KERNEL_SETS),$(foreach architecture,$(KERNEL_ARCHITECTURES),\
     $(eval $(call KERNEL_RULES,$(kernel_set),$(architecture)))))
-# Only the vision CUDA module consumes this generated numeric initializer.
-VISION_ROPE_CORRECTION_DATA := generated/vision_rope_corrections.h
-VISION_ROPE_CORRECTION_INCLUDE := build/vision_rope_corrections.inc
-VISION_ROPE_CORRECTION_KERNELS := $(foreach kernel_set,$(KERNEL_SETS),$(foreach architecture,$(KERNEL_ARCHITECTURES),\
-    build/$(kernel_set)/$(architecture)/kernel_vision.cubin))
-$(VISION_ROPE_CORRECTION_INCLUDE): $(VISION_ROPE_CORRECTION_DATA) Makefile
-	@mkdir -p $(dir $@)
-	cp $(VISION_ROPE_CORRECTION_DATA) $@
-$(VISION_ROPE_CORRECTION_KERNELS): $(VISION_ROPE_CORRECTION_INCLUDE)
-$(VISION_ROPE_CORRECTION_KERNELS): private NVCC_FLAGS += -Ibuild
-
-# The hand-written GEMM policy consumes declarations built from measured numeric tables.
-VISION_GEMM_POLICY_DATA := generated/vision_gemm_policy.h
-VISION_GEMM_POLICY_INCLUDE := build/vision_gemm_policy.inc
-VISION_GEMM_POLICY_OBJECTS := $(foreach build_type,$(BUILD_TYPES),build/$(build_type)/source/vision_gemm_policy.o)
-$(VISION_GEMM_POLICY_INCLUDE): $(VISION_GEMM_POLICY_DATA) Makefile
-	@mkdir -p $(dir $@)
-	cp $(VISION_GEMM_POLICY_DATA) $@
-$(VISION_GEMM_POLICY_OBJECTS): $(VISION_GEMM_POLICY_INCLUDE)
+# The pinned generated tables lie in generated/ (make regenerate writes them, make check_generated compares them) and
+# are included in place through -iquote generated and -Igenerated: the vision kernel's RoPE corrections and the
+# vision GEMM policy's splits.
 
 define NATIVE_KERNEL_RULES
-build/$(1)/sm_120a/%_native.cubin: source/%.cu Makefile
+build/$(1)/sm_120a/%_native.cubin: %.cu Makefile
 	@mkdir -p $$(dir $$@)
 	$$(NVCC) $$(NVCC_FLAGS) $$(KERNEL_HOOKS_$(1)) -DLINEAR_CLASS_FORMS -arch=sm_120a -cubin \
-	    -MMD -MF $$(@:.cubin=.d) $$< -o $$@ > $$(@:.cubin=.report) 2>&1 || { cat $$(@:.cubin=.report); exit 1; }
+	    -MMD -MP -MF $$(@:.cubin=.cubin.d) $$< -o $$@ \
+	    > $$(@:.cubin=.report) 2>&1 || { cat $$(@:.cubin=.report); exit 1; }
 	@$$(call registers_fit,$$(@:.cubin=.report))
 endef
 $(foreach kernel_set,$(KERNEL_SETS),$(eval $(call NATIVE_KERNEL_RULES,$(kernel_set))))
@@ -233,23 +253,25 @@ $(EMBED_KERNEL_IMAGES): tools/build/embed_kernel_images.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror $< -o $@
 define KERNEL_IMAGES_RULE
-build/$(1)/kernel_images.c: $(call KERNEL_MODULES_OF,$(1)) $(EMBED_KERNEL_IMAGES) Makefile
+$(BUILD)/$(1)/kernel_images.c: $(call KERNEL_MODULES_OF,$(1)) $(EMBED_KERNEL_IMAGES) Makefile
 	$(EMBED_KERNEL_IMAGES) $$@ $(call KERNEL_MODULES_OF,$(1))
 endef
 $(foreach kernel_set,$(KERNEL_SETS),$(eval $(call KERNEL_IMAGES_RULE,$(kernel_set))))
 kernels: $(KERNEL_MODULES)
--include $(KERNEL_MODULES:.cubin=.d)
+# A cubin's dependency file is <module>.cubin.d, with a phony target a header (-MP): a <module>.d the flat tree
+# wrote names sources that moved, and is never read.
+-include $(KERNEL_MODULES:=.d)
 
 # ---- Snapshot checks ---------------------------------------------------------
 TEST_BUILD ?= release
-HEADER_ALONE := $(CC) $(COMMON_FLAGS) -fsyntax-only -x c
+HEADER_ALONE := $(CC) $(COMMON_FLAGS) $(TEST_INCLUDE_FLAGS) -fsyntax-only -x c
 HOST_FIXTURE_WRITER := build/tools/write_host_fixtures
 .PHONY: host_tests host_test_fixtures lint analysis self_test check
-$(HOST_FIXTURE_WRITER): tools/build/write_host_fixtures.c Makefile
+$(HOST_FIXTURE_WRITER): tools/models/deepseek_v41_flash/vision/write_host_fixtures.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror $< -o $@
 host_test_fixtures: $(HOST_FIXTURE_WRITER)
-	@mkdir -p tools/vision/fixtures
+	@mkdir -p tools/models/deepseek_v41_flash/vision/fixtures
 	$(HOST_FIXTURE_WRITER)
 host_tests: $(TEST_BUILD) host_test_fixtures
 	@set -e; for test_program in $(filter-out %_card_test,$(TEST_PROGRAMS_$(TEST_BUILD))); do \

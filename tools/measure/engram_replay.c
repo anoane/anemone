@@ -10,9 +10,9 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
-#include "anemone/engram_disk.h"
-#include "anemone/pack_digest.h"
-#include "storage_batch.h"
+#include "engine/engram/engram_disk.h"
+#include "engine/formats/digest/pack_digest.h"
+#include "engine/storage/io/storage_batch.h"
 
 #define CASES_MOST 16u
 #define INPUT_FIELDS 4

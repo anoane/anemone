@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
- * sha256_rate.c: how fast the engine's SHA-256 (source/sha256.c) hashes the copier's chunks on this host, one stream a
+ * sha256_rate.c: how fast the engine's SHA-256 (sha256.c) hashes the copier's chunks on this host, one stream a
  * call (sha256_of, as the copier hashes each chunk today) against two streams side by side (sha256_of_two), on 1 to N
  * threads at once.
  *
@@ -24,7 +24,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "sha256.h"
+#include "common/sha256.h"
 
 #define NS_SECOND 1000000000ull
 #define DECIMAL_GB 1e9

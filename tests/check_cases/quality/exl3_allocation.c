@@ -15,7 +15,7 @@ static void *test_case_malloc(size_t bytes)
 int test_embedded_card_main(void);
 #define malloc test_case_malloc
 #define main test_embedded_card_main
-#include "../../exl3_tc_card_test.c"
+#include "../../models/deepseek_v41_flash/moe/ds41f_exl3_tc_card_test.c"
 #undef main
 #undef malloc
 

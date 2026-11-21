@@ -5,7 +5,7 @@
     literal_lint.py <directory or file> [<directory or file> ...]
 
 Reads every .c, .h, .cu and .cuh file (any other file is reported; a directory named check_cases is left alone
-unless it is named on the command line) and reports:
+unless it is named on the command line; a module.mk, a module folder's make fragment, is left alone) and reports:
 
   - A bare number. Only 0 and 1 may appear in code, spelled 0 or 1 with an integer suffix (0u, 1ull), or 0.0 and
     1.0 with an optional f or l. Every other spelling is reported, the ones this tool does not know included:
@@ -30,6 +30,7 @@ import sys
 
 ENGINE_SUFFIXES = (".c", ".h", ".cu", ".cuh")
 CASES_DIRECTORY_NAME = "check_cases"
+MODULE_FRAGMENT = "module.mk"
 EXIT_STATUS_USAGE = 2
 
 # One scanner. A number is tried before a character constant, so a digit separator never opens one; no literal
@@ -200,6 +201,8 @@ def main():
     problems, file_count = [], 0
     for top in tops:
         for path in files_under(top, problems):
+            if os.path.basename(path) == MODULE_FRAGMENT:
+                continue
             if not path.endswith(ENGINE_SUFFIXES):
                 problems.append(f"{path}: not a {' '.join(ENGINE_SUFFIXES)} file: this tool cannot read it")
                 continue

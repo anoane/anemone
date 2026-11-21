@@ -34,7 +34,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "anemone/pack_digest.h"
+#include "engine/formats/digest/pack_digest.h"
 
 #define SUBMIT_BATCH_MOST 256u
 #define REAP_BATCH_MOST 256u

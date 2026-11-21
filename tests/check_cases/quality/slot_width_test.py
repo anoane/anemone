@@ -30,7 +30,7 @@ KINDS = {
     # a /proc/vmstat counter the load stage reads (storage_autotune_load.c's vmstat_read, a bit each): below
     # AUTOTUNE_LOAD_VMSTAT_COUNTERS (5)
     'load stage page counter': ('counter',),
-    'model layer or unit': ('layer', 'units[unit].layer_index', 'MODEL_DECODER_FIRST_LAYER'),
+    'model layer or unit': ('layer', 'units[unit].layer_index', 'DS41F_DECODER_FIRST_LAYER'),
     'Engram table': ('table', 'step->blocks[index].table'),
     'row of one step or block': ('row',),
     'GPU lane or key of one warp': ('lane', 'key', 'held'),
@@ -42,7 +42,7 @@ KINDS = {
                                           'RESIZE_COEFFICIENT_BITS', 'HALF_BYTE_BITS', 'E2M1_SIGN_SHIFT',
                                           'E2M1_BFLOAT16_BIT',
                                           # the .cuh kernel headers' number formats (kernel_class_80.cuh,
-                                          # kernel_linear_common.cuh): a field's or a fraction's bits
+                                          # kernel_mma_common.cuh): a field's or a fraction's bits
                                           'fraction_bits', 'magnitude_bit', 'is_bfloat16',
                                           'CLASS_80_BFLOAT16_FIELD_SHIFT',
                                           # a lane's not-finite marks: a bit for each output half's row of A, then
@@ -54,13 +54,15 @@ KINDS = {
 }
 SESSION_SLOT = ('slot', 'session_slot', 'row->session_slot', 'owner')
 # The session-slot shifts allowed: BATCH round tables only (slot < STEP_BATCH_MAXIMUM_SESSIONS <= 32), by file.
-BATCH_SITES = Counter({('source/engine.c', 'row->session_slot'): 1, ('source/engine.c', 'slot'): 1,
-                       ('source/step.c', 'session_slot'): 1, ('source/step_rounds.c', 'slot'): 1,
-                       ('source/step_sessions.c', 'session_slot'): 1})
+BATCH_SITES = Counter({('source/engine/runtime/scheduler/scheduler.c', 'row->session_slot'): 1,
+                       ('source/engine/runtime/scheduler/scheduler.c', 'slot'): 1,
+                       ('source/engine/runtime/step/step.c', 'session_slot'): 1,
+                       ('source/engine/runtime/step/step_rounds.c', 'slot'): 1,
+                       ('source/engine/runtime/step/step_sessions.c', 'session_slot'): 1})
 classified = {amount: kind for kind, amounts in KINDS.items() for amount in amounts}
 problems, sites, session_sites = [], 0, Counter()
-for directory in ('source', 'include/anemone'):
-    for path in sorted(Path(directory).iterdir()):
+for directory in ('source', ):
+    for path in sorted(Path(directory).rglob('*')):
         if path.suffix not in ('.c', '.h', '.cu', '.cuh'):
             continue
         clean = LITERALS.sub(lambda match: ''.join('\n' if c == '\n' else ' ' for c in match[0]), path.read_text())

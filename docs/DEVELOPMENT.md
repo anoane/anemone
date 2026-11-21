@@ -1,9 +1,13 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Development
 
-The engine is C11 host code and C-like CUDA. `include/anemone/` holds public
-interfaces, `source/` the implementation, `tests/` native tests, and `generated/`
-pinned generated inputs. [STYLE.md](STYLE.md) and the root `.clang-format`
+The engine is C11 host code and C-like CUDA. `source/` holds it in module
+folders, each with its headers beside its sources and a `module.mk`: `common/`
+(what everything shares), `engine/` (every model-independent component: formats,
+backend, program ABI, kernel library, storage, Engram, input, runtime, server,
+command line) and `models/` (the model contract, the registry and one folder per
+model architecture). `tests/` mirrors it with the native tests (`support/` for
+what every test links), and `generated/` holds pinned generated inputs. [STYLE.md](STYLE.md) and the root `.clang-format`
 define formatting. Build artifacts are written under `build/`.
 
 ## Build and host checks

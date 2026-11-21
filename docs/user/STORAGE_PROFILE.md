@@ -148,8 +148,8 @@ anemone autotune /srv/model.anemone --stage=engram --tokens=/srv/prompt1_ids.u32
   share is never tuned: where the tables go is the RAM fit's decision.
 - **The trace.** `--tokens=FILE` (at most 16 files, 1 MiB together) gives real prompts as little-endian uint32 token
   ids, a case a file; there is no synthetic input. Make them from public prompts with
-  `tools/measure/engram_trace tokenize TOKENIZER_TABLES MESSAGES_JSON OUTPUT_U32` (`make -f
-  tools/measure/engram_trace.mk`), for example the prompts of the golden dataset
+  `tools/models/deepseek_v41_flash/measure/engram_trace tokenize TOKENIZER_TABLES MESSAGES_JSON OUTPUT_U32` (`make -f
+  tools/models/deepseek_v41_flash/measure/engram_trace.mk`), for example the prompts of the golden dataset
   ([anoane/anemone-ds41f1017-golden](https://huggingface.co/datasets/anoane/anemone-ds41f1017-golden)), one
   messages file a prompt. The rows come from the pack's hashing constants, as serving computes them. The profile
   records the files' digest, cases, tokens, rows and distinct blocks, never a token.
@@ -418,16 +418,16 @@ device's silent corruption) are caught only when a spot chunk lands on them or b
 Serving never trusts a replica's bytes on its receipt: every read is checked against the pack's own digests and
 falls back to another copy, so a receipt only spares autotune's verification pass.
 - Turbo load (PP): each extent that arrives, on a card or in host memory, is digested and compared with the pack's
-  extent digest (source/loader.c:443); an extent that differs is read again alone from each live copy in turn until
-  its digest is the pack's, else the load fails with "has the digest of the pack on no copy" (source/loader.c:461,
+  extent digest (source/engine/storage/load/loader.c:443); an extent that differs is read again alone from each live copy in turn until
+  its digest is the pack's, else the load fails with "has the digest of the pack on no copy" (source/engine/storage/load/loader.c:461,
   496).
-- Turbo load (TP): each extent is digested before it is staged (source/tp_load.c:374); a wrong digest faults that
-  copy and the next is read (source/tp_load.c:379), and no matching copy fails the load (source/tp_load.c:381).
+- Turbo load (TP): each extent is digested before it is staged (source/engine/storage/load/tp_load.c:374); a wrong digest faults that
+  copy and the next is read (source/engine/storage/load/tp_load.c:379), and no matching copy fails the load (source/engine/storage/load/tp_load.c:381).
 - Engram on disk: at open each table is read from one copy and accepted only if its digest is the pack's table digest,
-  else the next copy is read (source/engram_disk.c:173); the per-block digests come from that verified read. Every
+  else the next copy is read (source/engine/engram/engram_disk.c:173); the per-block digests come from that verified read. Every
   later block read is compared with its block digest and falls back to the next copy, healthy copies first
-  (source/engram_disk.c:354); the batched io_uring path checks each block the same way and repairs a mismatch through
-  that read (source/engram_disk.c:475), and the bounded cache holds only blocks that passed (source/engram_disk.c:493,
+  (source/engine/engram/engram_disk.c:354); the batched io_uring path checks each block the same way and repairs a mismatch through
+  that read (source/engine/engram/engram_disk.c:475), and the bounded cache holds only blocks that passed (source/engine/engram/engram_disk.c:493,
   559). The RAM prefix is copied from the verified open read. Each copy also
 prints where its time went: one `storage: copy stage <name>` line per stage (source read and hash, target read and
 hash, write, flush, readback read and hash, journal) with its busy seconds summed over the workers and its bytes per

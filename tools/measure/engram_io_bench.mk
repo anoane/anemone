@@ -5,10 +5,12 @@ include Makefile
 .DEFAULT_GOAL := engram_io_bench
 ENGRAM_IO_BENCH_SOURCES := tools/measure/engram_io_bench.c tools/measure/engram_io_engines.c \
                            tools/measure/engram_io_characterise.c
-ENGRAM_IO_ENGINE_SOURCES := source/engram.c source/engram_disk.c source/storage_direct_linux.c source/pack.c \
-                            source/pack_digest.c source/status.c source/hooks.c \
-                            source/weight_format.c source/exl3.c source/exl3_layout.c source/prepare_common.c \
-                            source/engram_hot.c source/sha256.c
+ENGRAM_IO_ENGINE_SOURCES := source/engine/engram/engram.c source/engine/engram/engram_disk.c \
+                            source/engine/storage/io/storage_direct_linux.c source/engine/formats/pack/pack.c \
+                            source/engine/formats/digest/pack_digest.c source/common/status.c source/common/hooks.c \
+                            source/engine/formats/weights/weight_format.c source/engine/library/exl3/exl3.c \
+                            source/engine/library/exl3/exl3_layout.c source/engine/library/prepare_checks.c \
+                            source/engine/engram/engram_hot.c source/common/sha256.c
 ENGRAM_IO_BENCH_OBJECTS := $(patsubst %.c,build/release/%.o,$(ENGRAM_IO_BENCH_SOURCES) $(ENGRAM_IO_ENGINE_SOURCES))
 build/release/tools/measure/%.o: tools/measure/%.c tools/measure/engram_io_bench.h Makefile \
     tools/measure/engram_io_bench.mk
@@ -19,8 +21,8 @@ engram_io_bench: build/release/engram_io_bench
 build/release/engram_io_bench: $(ENGRAM_IO_BENCH_OBJECTS)
 	$(CC) $(COMMON_FLAGS) $(COMPILE_release) $(LINK_release) $^ -lm -o $@
 # The step I/O stress (tools/measure/engram_step_stress.c): serving's engram_steps over real pack copies at peak load.
-ENGRAM_STEP_STRESS_SOURCES := tools/measure/engram_step_stress.c source/engram_step.c source/storage_flight_linux.c \
-                              $(ENGRAM_IO_ENGINE_SOURCES)
+ENGRAM_STEP_STRESS_SOURCES := tools/measure/engram_step_stress.c source/engine/engram/engram_step.c \
+                              source/engine/storage/io/storage_flight_linux.c $(ENGRAM_IO_ENGINE_SOURCES)
 ENGRAM_STEP_STRESS_OBJECTS := $(patsubst %.c,build/release/%.o,$(ENGRAM_STEP_STRESS_SOURCES))
 .PHONY: engram_step_stress
 engram_step_stress: build/release/engram_step_stress
@@ -28,7 +30,7 @@ build/release/engram_step_stress: $(ENGRAM_STEP_STRESS_OBJECTS)
 	$(CC) $(COMMON_FLAGS) $(COMPILE_release) $(LINK_release) $^ -lm -lpthread -o $@
 # The SHA-256 rate probe (tools/measure/sha256_rate.c): the copier's chunk hash, one stream a call against two side by
 # side, on 1 to N threads.
-SHA256_RATE_SOURCES := tools/measure/sha256_rate.c source/sha256.c source/hooks.c source/status.c
+SHA256_RATE_SOURCES := tools/measure/sha256_rate.c source/common/sha256.c source/common/hooks.c source/common/status.c
 SHA256_RATE_OBJECTS := $(patsubst %.c,build/release/%.o,$(SHA256_RATE_SOURCES))
 .PHONY: sha256_rate
 sha256_rate: build/release/sha256_rate

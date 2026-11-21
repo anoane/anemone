@@ -11,7 +11,7 @@ static void *test_snapshot_malloc(size_t bytes)
 }
 
 #define malloc test_snapshot_malloc
-#include "../../../source/server_sessions.c"
+#include "../../../source/engine/server/server_sessions.c"
 #undef malloc
 
 #define TEST_PATH_BYTES 4096u

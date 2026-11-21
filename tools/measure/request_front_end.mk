@@ -5,9 +5,10 @@ include Makefile
 
 .DEFAULT_GOAL := request_front_end
 .PHONY: request_front_end
-REQUEST_FRONT_END_SOURCES := tools/measure/request_front_end.c source/tokenizer.c source/json.c \
-                            source/chat_template.c source/chat_completions.c source/chat_images.c \
-                            source/status.c source/hooks.c
+REQUEST_FRONT_END_SOURCES := tools/measure/request_front_end.c source/engine/input/tokenizer/tokenizer.c \
+                             source/common/json.c source/models/deepseek_v41_flash/prompt/ds41f_chat_template.c \
+                             source/engine/server/api/chat_completions.c source/engine/input/image/request_images.c \
+                             source/common/status.c source/common/hooks.c
 REQUEST_FRONT_END_OBJECTS := $(patsubst %.c,build/release/%.o,$(REQUEST_FRONT_END_SOURCES))
 -include $(REQUEST_FRONT_END_OBJECTS:.o=.d)
 

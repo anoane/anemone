@@ -15,11 +15,11 @@
 #include <string.h>
 #include <time.h>
 
-#include "anemone/chat_completions.h"
-#include "anemone/chat_template.h"
-#include "anemone/tokenizer.h"
-#include "json.h"
-#include "serving_cursor.h"
+#include "engine/server/api/chat_completions.h"
+#include "models/deepseek_v41_flash/prompt/ds41f_chat_template.h"
+#include "engine/input/tokenizer/tokenizer.h"
+#include "common/json.h"
+#include "engine/runtime/scheduler/serving_cursor.h"
 
 #define CONTEXT_TOKENS 1048576u
 #define PROMPT_CAPACITY CHAT_MOST_OUTPUT_BYTES
@@ -257,14 +257,14 @@ static bool measure(struct benchmark *benchmark, struct body body,
 		return false;
 	}
 	const double parsed = milliseconds();
-	const struct chat_template_options options = {
+	const struct model_prompt_options options = {
 		.reasoning_effort = request.reasoning_effort != 0 ?
 					    request.reasoning_effort :
-					    CHAT_TEMPLATE_HIGHEST_EFFORT,
+					    DS41F_CHAT_TEMPLATE_HIGHEST_EFFORT,
 		.is_thinking = request.reasoning_effort != 0,
 		.drops_thinking = true
 	};
-	if (chat_template_render(body.bytes + request.messages_begin,
+	if (ds41f_chat_template_render(body.bytes + request.messages_begin,
 				 request.messages_end - request.messages_begin,
 				 request.tools_end > request.tools_begin ?
 					 body.bytes + request.tools_begin :

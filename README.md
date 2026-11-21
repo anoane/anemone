@@ -1,4 +1,4 @@
-# Anemone v0.0.5-alpha
+# Anemone v0.0.6-alpha
 
 SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -20,12 +20,12 @@ recipe is text-only. See the [user manual](docs/USAGE.md) for input and profile 
   with O_DIRECT and io_uring, checking each chunk's digest as it is read. The engine finds the copies by their
   receipts, so there is no RAID to set up. A prepared model is serving in **30 s (EXL3 TP4) and 48 s (original PP5)**,
   against about 205 s to 10 minutes for the vLLM-based engines on the same cards
-  ([A11](docs/results/COMPARISON_MATRIX.md#a-identity-provenance-packaging)).
+  ([A11](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md#a-identity-provenance-packaging)).
 - **Turbo Engram.** The 189 GiB of Engram n-gram tables stay in host RAM by default. When they don't fit, the engine
   keeps the largest share that does, reads the rest from NVMe and prints why. Disk tables are read a whole step at a
   time on io_uring threads for each copy, with every block verified and a stalled read retried on another copy.
   Serving PP5 from disk, a 131K-token cold prefill took **27.4 s against 27.2 s from RAM**. Decode was 2.2 % slower
-  at one session and equal at four and eight ([ENGRAM_PLACEMENT.md](docs/user/ENGRAM_PLACEMENT.md)).
+  at one session and equal at four and eight ([ENGRAM_PLACEMENT.md](docs/models/deepseek_v41_flash/ENGRAM_PLACEMENT.md)).
 - **Mining cards plus one workstation card.** The original FP8/FP4 weights run as a five-stage pipeline over four CMP
   170HX and one RTX PRO 6000 Blackwell, with native Blackwell arithmetic on the PRO. In the comparison below it has
   the fastest strict cold prefill (**4,436 tok/s**) and the highest Fraser aggregates at four and eight users. EXL3
@@ -36,10 +36,10 @@ recipe is text-only. See the [user manual](docs/USAGE.md) for input and profile 
   34,000,640 full-vocabulary F32 logits match (XR57, the exact recipe's qualification,
   [original_reference_serial_m1](tools/cli/AXES.md#original_reference_serial_m1)). It is the reference the golden
   scores compare against: over all 435 golden cases (66,409 positions) the default routes reach 98.01 % (PP5),
-  98.01 % (TP4_PRO) and 96.20 % (TP4_EXL3) top-1 agreement with it ([GOLDEN_METRICS.md](docs/results/GOLDEN_METRICS.md)). Four profile axes
+  98.01 % (TP4_PRO) and 96.20 % (TP4_EXL3) top-1 agreement with it ([GOLDEN_METRICS.md](docs/models/deepseek_v41_flash/results/GOLDEN_METRICS.md)). Four profile axes
   (category, exactness, concurrency, focus) pick the rest.
 - **Lossless, compact state.** FP16 state carriers at about 3,200 bytes per token per card: the smallest lossless
-  footprint in the comparison ([H7](docs/results/COMPARISON_MATRIX.md#h-kv-cache-and-state-memory)).
+  footprint in the comparison ([H7](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md#h-kv-cache-and-state-memory)).
 - **Storage autotune.** `anemone autotune` prepares and verifies the copies and tunes the load and the Engram step
   I/O for each machine, in separate stages with their own parameters: the copy stage records its decisions beside the
   profile, the load stage writes the profile's load section, and the Engram stage, replaying real prompts, its engram
@@ -77,7 +77,7 @@ ready in about 24 s, loading 195 GiB of host
 memory at 16.6 GiB/s from three verified copies. That start read each copy with 2 PP loader readers; the default is now
 4, which loaded real PP5 serves in 16.42 s against 17.03 s with 2
 ([`--reader_threads_per_copy`](docs/USAGE.md#knob-reader_threads_per_copy)). The benchmark recipes in
-[SERVER_PROFILES.md](docs/SERVER_PROFILES.md) pin 65,536 tokens × 8 sessions for the comparison runs: drop those two
+[SERVER_PROFILES.md](docs/models/deepseek_v41_flash/SERVER_PROFILES.md) pin 65,536 tokens × 8 sessions for the comparison runs: drop those two
 options to serve 1M sessions. More memory per card, or a smaller context, fits more sessions.
 
 To trade context for sessions by hand:
@@ -86,14 +86,14 @@ To trade context for sessions by hand:
 - `--session_slots=N`: a fixed count. A count the cards cannot hold is refused before the load, with the most that
   fit.
 
-See [SERVER_PROFILES.md](docs/SERVER_PROFILES.md#memory-slots-context-and-1m) for the memory options.
+See [SERVER_PROFILES.md](docs/models/deepseek_v41_flash/SERVER_PROFILES.md#memory-slots-context-and-1m) for the memory options.
 
 ## First-time setup: replicas and autotune
 
 Run this once per machine, and again after adding or replacing a drive.
 [STORAGE_PROFILE.md](docs/user/STORAGE_PROFILE.md) has every option.
 
-1. **Prepare the model packs** ([MODEL_DATA.md](docs/user/MODEL_DATA.md)) and build ([BUILD.md](BUILD.md)).
+1. **Prepare the model packs** ([MODEL_DATA.md](docs/models/deepseek_v41_flash/MODEL_DATA.md)) and build ([BUILD.md](BUILD.md)).
 2. **Copy the pack to your other NVMe drives.** The copy stage finds the local drives, copies the pack and verifies
    every chunk. It writes the receipts that serving uses to find the copies:
    ```sh
@@ -113,7 +113,7 @@ Run this once per machine, and again after adding or replacing a drive.
    stage replays real prompts through serving's step I/O on these copies and writes a candidate section into the
    profile; `--qualify` enables it. Make its token files from the prompts of the public golden dataset
    ([anoane/anemone-ds41f1017-golden](https://huggingface.co/datasets/anoane/anemone-ds41f1017-golden)), one
-   messages file a prompt, with `tools/measure/engram_trace` (`make -f tools/measure/engram_trace.mk`):
+   messages file a prompt, with `tools/models/deepseek_v41_flash/measure/engram_trace` (`make -f tools/models/deepseek_v41_flash/measure/engram_trace.mk`):
    ```sh
    build/release/engram_trace tokenize tokenizer.bin prompt1.json /srv/prompt1_ids.u32
    anemone autotune /srv/model.anemone --stage=engram --tokens=/srv/prompt1_ids.u32 --tokens=/srv/prompt2_ids.u32 --profile=/srv/runtime/storage-profile.json
@@ -121,7 +121,7 @@ Run this once per machine, and again after adding or replacing a drive.
    ```
    `anemone autotune /srv/model.anemone --tokens=... --profile=...` without `--stage` runs steps 2, 3 and 4 in order
    and skips a stage whose section already names this pack and these copies (`--retune` measures it again).
-5. **Serve** with a command from [SERVER_PROFILES.md](docs/SERVER_PROFILES.md). Turbo load opens the verified copies
+5. **Serve** with a command from [SERVER_PROFILES.md](docs/models/deepseek_v41_flash/SERVER_PROFILES.md). Turbo load opens the verified copies
    by itself: the startup lines `turbo load: copy N <path>` name them. The Engram fit prints where the tables go
    (`engram ram percent: …`). The engine numbers the visible cards by PCI address itself, whatever the order of a
    `CUDA_VISIBLE_DEVICES` list (`--card_order` orders them); every command still sets `CUDA_DEVICE_ORDER=PCI_BUS_ID`,
@@ -168,11 +168,11 @@ The current recipes use these model sources:
 
 EXL3 still requires the original pack for shared tensors, vision, DSpark and Engram.
 
-[MODEL_DATA.md](docs/user/MODEL_DATA.md) gives the public Hugging Face repositories,
+[MODEL_DATA.md](docs/models/deepseek_v41_flash/MODEL_DATA.md) gives the public Hugging Face repositories,
 exact revisions, source manifests and tokenizer/pack/EXL3-map commands.
 [INSTALL.md](INSTALL.md) explains installation, authentication and HTTP use.
 
-Choose a complete launch command from [SERVER_PROFILES.md](docs/SERVER_PROFILES.md):
+Choose a complete launch command from [SERVER_PROFILES.md](docs/models/deepseek_v41_flash/SERVER_PROFILES.md):
 
 | Profile | Scope |
 | --- | --- |
@@ -193,8 +193,8 @@ or API key.
 Retained **6 November 2026** measurements. Donor decode permits prefix reuse;
 conditional-head quality covers all 435 cases and 66,409 positions (18 Nov 2026), with exact quality
 reported as reference self-comparison. Current reruns,
-protocols and qualification limits are in the [full matrix](docs/results/COMPARISON_MATRIX.md),
-[benchmark methods](docs/results/BENCHMARKS.md) and [golden metrics](docs/results/GOLDEN_METRICS.md).
+protocols and qualification limits are in the [full matrix](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md),
+[benchmark methods](docs/models/deepseek_v41_flash/results/BENCHMARKS.md) and [golden metrics](docs/models/deepseek_v41_flash/results/GOLDEN_METRICS.md).
 
 | 6 November 2026 measurement | TP4 EXL3 balanced | Original PP5 balanced | Original exact |
 | --- | ---: | ---: | ---: |
@@ -206,7 +206,7 @@ protocols and qualification limits are in the [full matrix](docs/results/COMPARI
 
 ## Engine comparison
 
-A compact view of the configurations recorded in the [full matrix](docs/results/COMPARISON_MATRIX.md).
+A compact view of the configurations recorded in the [full matrix](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md).
 Original PP5 uses native PRO arithmetic; outputs depend on assigned layers.
 
 | Property | Anemone EXL3 balanced | Anemone original PP5 weights balanced | Curtis | Morrow | GNmac |
@@ -220,18 +220,18 @@ Original PP5 uses native PRO arithmetic; outputs depend on assigned layers.
 
 ## Benchmark comparison
 
-[C1/C8 donor decode](docs/results/COMPARISON_MATRIX.md#v1-11-donor-decode-gnmacs-pinned-client-180-w-aggregate-toks-c1-per-stream)
+[C1/C8 donor decode](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md#v1-11-donor-decode-gnmacs-pinned-client-180-w-aggregate-toks-c1-per-stream)
 uses Anemone's **6 November, `6b9e276/spdx_02`** epoch, with prefix reuse allowed.
-[Cold prefill](docs/results/COMPARISON_MATRIX.md#v2-prefill) uses current Anemone
+[Cold prefill](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md#v2-prefill) uses current Anemone
 **`1b073/spdx_04`** results.
 Peer values retain their recorded dates and recipes; Curtis uses the speed lane.
 Power settings and sample counts are recorded in the full matrix. These are point estimates.
 
-Anemone's [startup times (A11)](docs/results/COMPARISON_MATRIX.md#a-identity-provenance-packaging)
+Anemone's [startup times (A11)](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md#a-identity-provenance-packaging)
 run from a fresh process to serving readiness, with model files and optional NVMe
 replicas already prepared. Anemone excludes the one-time NVMe replica creation/copy;
 OS/storage caches were not cleared. Peer measurements retain their process/container
-boundaries and startup gates. [Fraser C1 TTFT](docs/results/COMPARISON_MATRIX.md#v3-fraser-27k-prompt-thinking-off-2048-token-cap-t0)
+boundaries and startup gates. [Fraser C1 TTFT](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md#v3-fraser-27k-prompt-thinking-off-2048-token-cap-t0)
 measures time to first token for the 2.7K-token prompt.
 
 | Metric | Anemone EXL3 balanced | Anemone original PP5 weights balanced | Curtis | Morrow | GNmac |
@@ -248,7 +248,7 @@ measures time to first token for the 2.7K-token prompt.
 
 ## Fraser comparison
 
-[Fraser protocol](docs/results/COMPARISON_MATRIX.md#v3-fraser-27k-prompt-thinking-off-2048-token-cap-t0):
+[Fraser protocol](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md#v3-fraser-27k-prompt-thinking-off-2048-token-cap-t0):
 2.7K-token prompt, thinking off, 2,048-token output cap and T=0. Anemone uses
 **6 November, `1b073/spdx_04`** results; peer measurements retain their recorded dates
 and recipes. Curtis uses the speed lane. C1, C4 and C8 mean one, four and eight concurrent users.
@@ -272,7 +272,7 @@ Original PP5 uses native PRO arithmetic, so outputs depend on assigned layers.
 A large R&D pipeline remains to improve kernels, loading, memory use, parallelism,
 scheduling, long-context handling, vision and numerical qualification. Help, reviews,
 feedback, bug and issue reports, and pull requests are all appreciated.
-See the [full matrix](docs/results/COMPARISON_MATRIX.md) for remaining work and
+See the [full matrix](docs/models/deepseek_v41_flash/results/COMPARISON_MATRIX.md) for remaining work and
 [development guide](docs/DEVELOPMENT.md) for contributing and validation commands.
 [CONTRIBUTING.md](CONTRIBUTING.md) sets the bar for pull requests and issues: one change at a time, only the code
 that is needed, every linter clean, long testing on all four builds, and evidence for every claim.

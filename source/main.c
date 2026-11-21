@@ -4,8 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "startup_axes.h"
-#include "commands.h"
+#include "engine/cli/cli_axes.h"
+#include "engine/cli/commands.h"
 
 /* anemone help TOPIC [PREFIX]: the arguments' places and counts */
 #define HELP_TOPIC 2

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /* Refused preparations must never have their unwritten launch output read. */
 #include <string.h>
-#include "anemone/router.h"
+#include "models/deepseek_v41_flash/moe/ds41f_router.h"
 
 static unsigned test_comparisons;
 static int test_unwritten_compare(const void *first, const void *second,
@@ -31,7 +31,7 @@ int test_embedded_router_main(void);
 #define memcmp test_unwritten_compare
 #define router_wide_small_prepare test_prepare_failure
 #define main test_embedded_router_main
-#include "../../router_wide_test.c"
+#include "../../engine/library/moe/moe_dispatch_test.c"
 #undef main
 #undef router_wide_small_prepare
 #undef memcmp

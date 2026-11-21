@@ -460,19 +460,35 @@ class MessagesContract(unittest.TestCase):
                 self.assertEqual(value['usage']['input_tokens'] + value['usage']['output_tokens'], 16384)
 
     def test_tool_suffix_stays_replayable(self):
-        with fixture('tool_suffix') as port:
-            for streamed in (False, True):
-                for maximum in (210, 1024):
-                    status, _, wire = request(port, dict(BASE, max_tokens=maximum, tools=[TOOL], stream=streamed))
-                    self.assertEqual(status, 200)
-                    value = reconstruct(wire) if streamed else json.loads(wire)
-                    self.assertEqual([item['type'] for item in value['content']], ['tool_use'])
-                    self.assertNotIn(b'DSML', wire)
-                    self.assertIn(value['stop_reason'], ('tool_use', 'max_tokens'))
-                    calls = value['content']
-                    history = BASE['messages'] + [{'role': 'assistant', 'content': calls}, {'role': 'user', 'content': [
-                        {'type': 'tool_result', 'tool_use_id': item['id'], 'content': 'ok'} for item in calls]}]
-                    self.assertEqual(request(port, dict(BASE, max_tokens=1, messages=history, tools=[TOOL]))[0], 200)
+        """A second invoke cut at the end. At the end token the tolerant reading closes it there and gives it too (the
+        contract's implied closings); at the 210-token limit it is no call but text (a cut value never goes out
+        as an executable call); --dsml_parsing=reference gives the closed call alone (v0.0.5-alpha). The turn's
+        calls replay; the cut text after them is text after tool_use, which the adapter's input refuses (as before)."""
+        for mode in ('tool_suffix', 'tool_suffix_reference'):
+            with self.subTest(mode=mode), fixture(mode) as port:
+                for streamed in (False, True):
+                    for maximum in (210, 1024):
+                        status, _, wire = request(port, dict(BASE, max_tokens=maximum, tools=[TOOL], stream=streamed))
+                        self.assertEqual(status, 200)
+                        value = reconstruct(wire) if streamed else json.loads(wire)
+                        kinds = ['tool_use'] if mode == 'tool_suffix_reference' else \
+                            ['tool_use', 'text'] if maximum == 210 else ['tool_use', 'tool_use']
+                        self.assertEqual([item['type'] for item in value['content']], kinds)
+                        self.assertEqual(value['content'][0]['input'], {'city': 'Rome'})
+                        if kinds[1:] == ['tool_use']:
+                            self.assertEqual(value['content'][1]['input'], {'city': 'bad'})
+                            self.assertNotIn(b'DSML', wire)
+                        if kinds[1:] == ['text']:
+                            self.assertTrue(value['content'][1]['text'].startswith('<\uff5cDSML\uff5c invoke'))
+                        if mode == 'tool_suffix_reference':
+                            self.assertNotIn(b'DSML', wire)
+                        self.assertIn(value['stop_reason'], ('tool_use', 'max_tokens'))
+                        calls = [item for item in value['content'] if item['type'] == 'tool_use']
+                        history = BASE['messages'] + [{'role': 'assistant', 'content': calls}, {'role': 'user',
+                            'content': [{'type': 'tool_result', 'tool_use_id': item['id'], 'content': 'ok'}
+                                        for item in calls]}]
+                        self.assertEqual(request(port, dict(BASE, max_tokens=1, messages=history, tools=[TOOL]))[0],
+                                         200)
 
     def test_oversized_input_is_client_error(self):
         with fixture() as port:

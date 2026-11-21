@@ -5,7 +5,7 @@
     embed_kernel_images.py <output .c> <build/kernels/<architecture>/<kernel name>.cubin> ...
 
 Every module becomes one array of bytes and one entry of cuda_kernel_images, the table declared in
-source/backend_cuda_kernel_images.h: architecture is the name of the module's directory, kernel_name its file name
+backend_cuda_kernel_images.h: architecture is the name of the module's directory, kernel_name its file name
 without the suffix. The output is a build product (it lies under build/ and never enters the repository); it is
 written to a temporary file first, so that a failed run leaves no half table.
 
@@ -29,7 +29,7 @@ def main():
     lines = ["/* SPDX-License-Identifier: AGPL-3.0-or-later */",
              # REUSE-IgnoreEnd
              "/* Written by tools/build/embed_kernel_images.py: a build product, never edited. */",
-             '#include "backend_cuda_kernel_images.h"', ""]
+             '#include "engine/backend/cuda/backend_cuda_kernel_images.h"', ""]
     entries = []
     for index, path in enumerate(module_paths):
         architecture = os.path.basename(os.path.dirname(path))

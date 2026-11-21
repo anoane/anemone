@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The tokenizer's tables of Anemone's front end, from a checkpoint's tokenizer.json: what include/anemone/tokenizer.h
+"""The tokenizer's tables of Anemone's front end, from a checkpoint's tokenizer.json: what tokenizer.h
 reads, and the step of make_pack.py's convert that puts them into the pack.
 
     front_end_tables.py write <tokenizer.json> <output file> [--overwrite]
@@ -56,7 +56,7 @@ EXIT_STATUS_FAILURE, EXIT_STATUS_USAGE = 1, 2
 LETTER, MARK, NUMBER, SYMBOL, WHITESPACE, SECOND_SPLIT = (1 << bit for bit in range(6))
 THIRD_SPLIT_CLASSES = ((LETTER, r"\p{L}"), (MARK, r"\p{M}"), (SYMBOL, r"[\p{P}\p{S}]"), (WHITESPACE, r"\s"))
 
-# The one form this file converts. The third split is rewritten by hand in source/tokenizer.c; the patterns of the
+# The one form this file converts. The third split is rewritten by hand in tokenizer.c; the patterns of the
 # first two are read from here, the first must group at most three of its matches as tokenizer.c does.
 THIRD_SPLIT_PATTERN = ("[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|"
                        "[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+|"

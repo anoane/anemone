@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 /*
- * emulation_check.cu: the engine's linear_tensor_core (kernel_linear_common.cuh) over random operands, chained: on a
+ * emulation_check.cu: the engine's linear_tensor_core (kernel_mma_common.cuh) over random operands, chained: on a
  * card of class 80 the tensor cores, on class 120 in the exact profile the emulation of class 80's sums. The host
  * (cross_class_math.c, CROSS_CLASS_MMA_ONLY with this module) compares the warps' hashes of the two cards.
  */
 #define CHECKING_HOOKS_ENABLED 0
-#include "kernel_linear_common.cuh"
+#include "engine/library/kernel_mma_common.cuh"
 
 #define CHECK_ITERATIONS 64u
 #define CHECK_MIXING 0x9E3779B97F4A7C15ull

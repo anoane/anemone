@@ -21,7 +21,7 @@ def block_after(text, marker):
 
 def check(root):
     failures = []
-    engine = (root / 'source/engine.c').read_text()
+    engine = (root / 'source/engine/runtime/scheduler/scheduler.c').read_text()
     worker = block_after(engine, 'static void *stepping_thread(void *argument)\n{')
     for marker in ('if (restoring < slot_count)', 'if (pending < slot_count)',
                    'while (engine->flight_count != 0)'):
@@ -32,11 +32,11 @@ def check(root):
             failures.append(f'metrics-off publication changed in {marker}')
         if marker.startswith('while') and 'if (observe_metrics)' not in branch:
             failures.append('metrics-off image drain acquires extra publication locks')
-    server = (root / 'source/server.c').read_text()
+    server = (root / 'source/engine/server/server.c').read_text()
     tokens = block_after(server, 'if (!is_final && server->metrics.enabled)')
     if 'event_seconds' not in tokens or 'monotonic_seconds()' in tokens:
         failures.append('token observation must reuse the single event clock read')
-    metrics = (root / 'source/server_metrics.c').read_text()
+    metrics = (root / 'source/engine/server/server_metrics.c').read_text()
     observed = block_after(metrics, 'static void observed(')
     if 'bounds_for(' in observed or 'memcpy(' in observed or 'token_bounds(' in observed:
         failures.append('observation rebuilds or copies histogram bounds')
