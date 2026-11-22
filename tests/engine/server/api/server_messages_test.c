@@ -23,6 +23,15 @@
 #define TOOL_PREFIX \
 	"\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"city\" " \
 	"string=\"true\">Rome</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>"
+#define CUT_INVOKE \
+	"\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"city\" string=\"true\">bad"
+#define CUT_TOOLS \
+	"\"tools\":[{\"name\":\"lookup\",\"input_schema\":{\"type\":\"object\"}}]"
+#define CUT_ANSWER_IDENTIFIER "msg_cut"
+#define CUT_PROMPT_TOKENS 3u
+#define HEAD_END "\r\n\r\n"
+#define TEXT_AFTER_CALLS "text after tool_use is unsupported"
+#define CUT_ANSWER_BLOCKS 2u /* the whole call, then the cut one as text */
 #define PORT_ARGUMENT 2
 #define MODE_ARGUMENT 3
 #define FIXTURE_ARGUMENTS 4
@@ -47,6 +56,7 @@
 static struct json_scratch reader_workspace = { .bytes = reader_bytes,
 						.capacity =
 							sizeof(reader_bytes) };
+_Alignas(struct json_bytes) static char answer_scratch[RENDER_BYTES];
 static int failures;
 static const struct chat_request defaults = { .max_tokens = OUTPUT_LIMIT,
 					      .top_p = 1.0f,
@@ -289,6 +299,169 @@ static void review_regressions(void)
 	}
 }
 
+/* A member of an object, or an empty span. */
+static struct json_value member_of(struct json_value object, const char *name)
+{
+	struct json_value key = { 0 }, value = { 0 };
+	for (size_t cursor = object.begin;
+	     object.text != NULL && object.text[object.begin] == '{' &&
+	     json_next(object, &cursor, &key, &value);) {
+		if (json_string_is(&reader_workspace, key, name))
+			return value;
+	}
+	return (struct json_value){ 0 };
+}
+
+/* A replay of a turn whose content is assistant (a JSON array) and whose next user turn is user, read as the server
+ * reads it. */
+static uint32_t replay_read(const char *assistant, const char *user,
+			    struct chat_buffer *converted,
+			    struct chat_refusal *refusal)
+{
+	static char body[RENDER_BYTES];
+	struct chat_request request = { 0 };
+	const int length = snprintf(
+		body, sizeof(body),
+		"{\"model\":\"anemone\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"q\"},"
+		"{\"role\":\"assistant\",\"content\":%s},{\"role\":\"user\",\"content\":%s}]," CUT_TOOLS
+		"}",
+		assistant, user);
+	return length > 0 && (size_t)length < sizeof(body) ?
+		       server_messages_read(body, (size_t)length, true,
+					    &defaults, &request, converted,
+					    &reader_workspace, refusal) :
+		       HTTP_SERVER_ERROR;
+}
+
+/* v0.0.6's R13: at a request limit a cut call goes out as text after the whole calls (the fixture's tool_suffix). A
+ * verbatim replay of that answer reads as the same turn with its text first, the Chat form of the answer; any other
+ * block after such text is refused at the text, as before. */
+static void cut_turn_replay_tests(void)
+{
+	static const char asked[] =
+		"{\"model\":\"anemone\",\"max_tokens\":210,"
+		"\"messages\":[{\"role\":\"user\",\"content\":\"q\"}]," CUT_TOOLS
+		"}";
+	static char stream[RENDER_BYTES], verbatim[RENDER_BYTES],
+		text_first[RENDER_BYTES], results[RENDER_BYTES],
+		refused[RENDER_BYTES];
+	static const char *const after_text[] = {
+		",{\"type\":\"tool_use\",\"id\":\"toolu_2\",\"name\":\"lookup\",\"input\":{}}",
+		",{\"type\":\"thinking\",\"thinking\":\"t\"}",
+		",{\"type\":\"image\"}", ",\"text\""
+	};
+	struct chat_buffer asked_body = { 0 }, names = { 0 };
+	struct chat_request request = { 0 };
+	struct chat_refusal refusal = { 0 };
+	struct chat_answer answer = { 0 };
+	const char *const close = strstr(TOOL_PREFIX, "\n</｜DSML｜ calls>");
+	const int length = snprintf(stream, sizeof(stream), "%.*s%s",
+				    (int)(close - TOOL_PREFIX), TOOL_PREFIX,
+				    CUT_INVOKE);
+	expect(length > 0 && (size_t)length < sizeof(stream) &&
+		       server_messages_read(asked, sizeof(asked) - 1u, true,
+					    &defaults, &request, &asked_body,
+					    &reader_workspace, &refusal) == 0,
+	       "the cut turn's request is read");
+	chat_tool_names_kept(asked_body.bytes + request.tools_begin,
+			     request.tools_end - request.tools_begin, &names);
+	chat_answer_begin(&answer, &request, MESSAGES_MODEL,
+			  CUT_ANSWER_IDENTIFIER, 0, CUT_PROMPT_TOKENS);
+	answer.tool_names = &names;
+	answer.messages.scratch = answer_scratch;
+	answer.messages.scratch_capacity = sizeof(answer_scratch);
+	(void)chat_answer_token(&answer, stream, (uint32_t)length);
+	chat_answer_finish(&answer, "length");
+	const char *const head_end =
+		answer.output.bytes != NULL ?
+			memmem(answer.output.bytes + answer.output.sent,
+			       answer.output.count - answer.output.sent,
+			       HEAD_END, strlen(HEAD_END)) :
+			NULL;
+	struct json_value document = { 0 }, call = { 0 }, cut = { 0 },
+			  block = { 0 };
+	if (head_end != NULL &&
+	    json_read_document(head_end + strlen(HEAD_END),
+			       (size_t)(answer.output.bytes +
+					answer.output.count - head_end) -
+				       strlen(HEAD_END),
+			       &document) != JSON_DOCUMENT_VALID)
+		document = (struct json_value){ 0 };
+	const struct json_value content = member_of(document, "content");
+	uint32_t blocks = 0;
+	for (size_t cursor = content.begin;
+	     content.text != NULL && json_next(content, &cursor, NULL, &block);
+	     blocks++)
+		*(blocks == 0 ? &call : &cut) = block;
+	const struct json_value cut_text = member_of(cut, "text"),
+				id = member_of(call, "id");
+	expect(blocks == CUT_ANSWER_BLOCKS &&
+		       json_string_is(&reader_workspace,
+				      member_of(call, "type"), "tool_use") &&
+		       json_string_is(&reader_workspace, member_of(cut, "type"),
+				      "text") &&
+		       cut_text.text != NULL &&
+		       strncmp(cut_text.text + cut_text.begin,
+			       "\"<｜DSML｜ invoke",
+			       strlen("\"<｜DSML｜ invoke")) == 0,
+	       "R13's answer: the whole call, then the cut call as text");
+	const int formed[] = {
+		snprintf(verbatim, sizeof(verbatim), "%.*s",
+			 (int)(content.end - content.begin),
+			 content.text != NULL ? content.text + content.begin :
+						""),
+		snprintf(text_first, sizeof(text_first), "[%.*s,%.*s]",
+			 (int)(cut.end - cut.begin),
+			 cut.text != NULL ? cut.text + cut.begin : "",
+			 (int)(call.end - call.begin),
+			 call.text != NULL ? call.text + call.begin : ""),
+		snprintf(
+			results, sizeof(results),
+			"[{\"type\":\"tool_result\",\"tool_use_id\":%.*s,\"content\":\"ok\"}]",
+			(int)(id.end - id.begin),
+			id.text != NULL ? id.text + id.begin : "")
+	};
+	for (size_t index = 0; index < sizeof(formed) / sizeof(formed[0]);
+	     index++)
+		expect(formed[index] > 0 &&
+			       (size_t)formed[index] < sizeof(verbatim),
+		       "the replays are formed");
+	struct chat_buffer replayed = { 0 }, reordered = { 0 };
+	expect(replay_read(verbatim, results, &replayed, &refusal) == 0 &&
+		       replay_read(text_first, results, &reordered, &refusal) ==
+			       0 &&
+		       replayed.count == reordered.count &&
+		       memcmp(replayed.bytes, reordered.bytes,
+			      replayed.count) == 0,
+	       "a verbatim replay reads as the turn with its text first");
+	chat_buffer_free(&replayed);
+	chat_buffer_free(&reordered);
+	expect(replay_read(verbatim, "\"next\"", &replayed, &refusal) ==
+			       HTTP_BAD_REQUEST &&
+		       strcmp(refusal.message,
+			      "missing immediate tool_result") == 0,
+	       "the replayed calls still need their results");
+	chat_buffer_free(&replayed);
+	for (size_t index = 0;
+	     index < sizeof(after_text) / sizeof(after_text[0]); index++) {
+		const int count = snprintf(
+			refused, sizeof(refused), "%.*s%s]",
+			(int)(content.end - content.begin) - 1,
+			content.text != NULL ? content.text + content.begin :
+					       "",
+			after_text[index]);
+		expect(count > 0 && (size_t)count < sizeof(refused) &&
+			       replay_read(refused, results, &replayed,
+					   &refusal) == HTTP_BAD_REQUEST &&
+			       strcmp(refusal.message, TEXT_AFTER_CALLS) == 0,
+		       "a block after the text after the calls is refused at the text");
+		chat_buffer_free(&replayed);
+	}
+	chat_answer_free(&answer);
+	chat_buffer_free(&names);
+	chat_buffer_free(&asked_body);
+}
+
 static int fixture(int argc, char **argv)
 {
 	char *end = NULL;
@@ -343,8 +516,7 @@ static int fixture(int argc, char **argv)
 		const char *const close =
 			strstr(TOOL_PREFIX, "\n</｜DSML｜ calls>");
 		const size_t prefix = (size_t)(close - TOOL_PREFIX);
-		static const char suffix[] =
-			"\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"city\" string=\"true\">bad";
+		static const char suffix[] = CUT_INVOKE;
 		for (size_t index = 0; index < prefix + sizeof(suffix) - 1u;
 		     index++)
 			script[index] =
@@ -458,6 +630,7 @@ int main(int argc, char **argv)
 	conversion_tests();
 	stable_history_tests();
 	signature_effort_tests();
+	cut_turn_replay_tests();
 	allocation_refusal();
 	review_regressions();
 	(void)printf("Messages conversion: %d failures\n", failures);

@@ -463,7 +463,7 @@ class MessagesContract(unittest.TestCase):
         """A second invoke cut at the end. At the end token the tolerant reading closes it there and gives it too (the
         contract's implied closings); at the 210-token limit it is no call but text (a cut value never goes out
         as an executable call); --dsml_parsing=reference gives the closed call alone (v0.0.5-alpha). The turn's
-        calls replay; the cut text after them is text after tool_use, which the adapter's input refuses (as before)."""
+        calls replay, and so does the turn verbatim: the cut text after them joins the turn's text, before its calls."""
         for mode in ('tool_suffix', 'tool_suffix_reference'):
             with self.subTest(mode=mode), fixture(mode) as port:
                 for streamed in (False, True):
@@ -484,11 +484,12 @@ class MessagesContract(unittest.TestCase):
                             self.assertNotIn(b'DSML', wire)
                         self.assertIn(value['stop_reason'], ('tool_use', 'max_tokens'))
                         calls = [item for item in value['content'] if item['type'] == 'tool_use']
-                        history = BASE['messages'] + [{'role': 'assistant', 'content': calls}, {'role': 'user',
-                            'content': [{'type': 'tool_result', 'tool_use_id': item['id'], 'content': 'ok'}
-                                        for item in calls]}]
-                        self.assertEqual(request(port, dict(BASE, max_tokens=1, messages=history, tools=[TOOL]))[0],
-                                         200)
+                        for turn in (calls, value['content']):
+                            history = BASE['messages'] + [{'role': 'assistant', 'content': turn}, {'role': 'user',
+                                'content': [{'type': 'tool_result', 'tool_use_id': item['id'], 'content': 'ok'}
+                                            for item in calls]}]
+                            self.assertEqual(request(port, dict(BASE, max_tokens=1, messages=history,
+                                                                tools=[TOOL]))[0], 200)
 
     def test_oversized_input_is_client_error(self):
         with fixture() as port:

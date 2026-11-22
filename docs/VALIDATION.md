@@ -2,19 +2,30 @@
 # Validation and evidence boundaries
 
 The reference platform is Linux x86-64, CUDA 13.5 V13.5.37, GCC 14.2.0 and GNU Make 4.4.1. The engine targets the GPU
-configurations in [README](../README.md). The v0.0.6-alpha release executable, built from
-source `5047a717778210bd09277902b8d2bff895572d9b`, has SHA256:
+configurations in [README](../README.md). The v0.0.7-alpha release executable, built from
+source `440bba129eb83e62dcb12d97c5296bf7cd1e70ff`, has SHA256:
 
 ```text
-ec209bdc264b611fafa3e9c7622260e7a1ceee7ab21dc12a83646aed809d3d6a
+ce55b8f898dc077bb201d0ca33b1300db1c7a680ed0f843de2bea0a7e0d7ff13
 ```
 
 A clean build of a `git archive` export of that source runs the [BUILD.md](../BUILD.md)
 commands with an empty environment (`HOME` an empty folder) and no visible GPU. It
 compiles all 119 CUDA modules of the release kernel set, whose 119 assembler reports
-hold no warning, runs 165 native host programs and 681 header compilations, and its
+hold no warning, runs 165 native host programs and 723 header compilations, and its
 executable has the SHA256 above. Source hashes are checked before and after. Host
 tests use loopback fixtures; no model is loaded.
+
+The v0.0.6-alpha record is kept as history. Its executable, built from source
+`5047a717778210bd09277902b8d2bff895572d9b` with CUDA 13.5 V13.5.37, GCC 14.2.0 and
+GNU Make 4.4.1, has SHA256:
+
+```text
+ec209bdc264b611fafa3e9c7622260e7a1ceee7ab21dc12a83646aed809d3d6a
+```
+
+Its clean build compiled all 119 CUDA modules, whose 119 assembler reports held no warning,
+ran 165 native host programs and 681 header compilations.
 
 The v0.0.5-alpha record is kept as history. Its executable, built from source
 `d208e0150c639f4412e0b508618a073ccef29383` with CUDA 13.5 V13.5.37, GCC 14.2.0 and
@@ -64,13 +75,21 @@ empty HOME, private networking and no GPU device nodes. Host tests used private
 loopback fixtures; no model was loaded. The separate optional instrumentation
 audits use the source programs in `tools/check/`.
 
-v0.0.6-alpha is published as one source snapshot commit, tagged `v0.0.6-alpha`,
-on top of the v0.0.5-alpha snapshot. Its tree is release source
-`5047a717778210bd09277902b8d2bff895572d9b` with this record and the other documentation (the
-release notes, BUILD, INSTALL, USAGE and the server-profile page) and the parser-check data
+v0.0.7-alpha is published as one source snapshot commit, tagged `v0.0.7-alpha`,
+on top of the v0.0.6-alpha snapshot. Its tree is release source
+`440bba129eb83e62dcb12d97c5296bf7cd1e70ff` with this record and the other documentation (the
+release notes, BUILD, INSTALL, USAGE, the server-profile page and the benchmark page) and the parser-check data
 `docs/models/deepseek_v41_flash/SERVER_PROFILE_COMMANDS.json` changed. The BUILD.md
 commands read none of these files, so a build of the snapshot has the same inputs, and its
 executable is the release executable above.
+
+v0.0.6-alpha was published as one source snapshot commit, tagged `v0.0.6-alpha`,
+on top of the v0.0.5-alpha snapshot. Its tree is release source
+`5047a717778210bd09277902b8d2bff895572d9b` with its record and the other documentation (the
+release notes, BUILD, INSTALL, USAGE and the server-profile page) and the parser-check data
+`docs/models/deepseek_v41_flash/SERVER_PROFILE_COMMANDS.json` changed. The BUILD.md
+commands read none of these files, so a build of the snapshot had the same inputs, and its
+executable was v0.0.6-alpha's above.
 
 v0.0.5-alpha was published as one source snapshot commit, tagged `v0.0.5-alpha`,
 on top of the v0.0.4-alpha snapshot. Its tree is release source
@@ -111,8 +130,8 @@ measured quality subset, with its own scope, are in [GOLDEN_METRICS.md](models/d
 Every shipped file states its copyright and licence, in its own header or through
 `REUSE.toml` (strict-format data and deliberately malformed test fixtures through
 `REUSE.toml` alone), and every licence text is in `LICENSES/`. `reuse lint` 5.0.2
-reports the tree compliant with version 3.3 of the REUSE Specification: 1065 of
-1065 files with copyright and licence information; the licences AGPL-3.0-or-later,
+reports the tree compliant with version 3.3 of the REUSE Specification: 1113 of
+1113 files with copyright and licence information; the licences AGPL-3.0-or-later,
 Apache-2.0 and GPL-2.0-only used; none missing, unused or deprecated. The two
 third-party files keep their own: the Linux kernel's `.clang-format` (GPL-2.0-only,
 its header verbatim) and the vLLM dashboard's queries (Apache-2.0). The original

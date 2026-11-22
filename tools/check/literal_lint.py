@@ -12,7 +12,8 @@ unless it is named on the command line; a module.mk, a module folder's make frag
     4096, 0x40, 0x1.8p4, 0b101, 1'000, 1e9, 2.5f32. A character constant spelled as a number ('\\x14') is one.
     A number is allowed where it gets its name, and only there: in an object-like #define of a constant (a macro
     with parameters, or one whose text is a statement, is code); between the braces of an enum definition (enum,
-    an optional tag, the brace); between the braces of a `static const` table. Even there a template argument
+    an optional tag, the brace); between the braces of a `static const` table, or of a `const` array at file scope
+    (a line that starts with const: an array a split shares between units). Even there a template argument
     (stamp<8>) is reported, and so is a table this tool cannot follow: one that never closes, that opens inside
     another, or that a preprocessor line cuts.
   - A comment, string or character constant that does not close (no literal crosses a line end), and a character
@@ -56,7 +57,7 @@ SIDE_EFFECT = re.compile(r"\+\+|--|<<=|>>=|(?<![=!<>])[-+*/%&|^]?=(?!=)")
 NOT_A_CONSTANT = re.compile(r"[;{}\[\]]|\b(?:return|if|else|while|for|do|switch|case|goto|break|continue)\b|"
                             + SIDE_EFFECT.pattern, re.ASCII)
 ENUMERATION_START = re.compile(r"\benum\b\s*(?:[A-Za-z_]\w*\s*)?\{", re.ASCII)
-CONSTANT_TABLE_START = re.compile(r"\bstatic\s+const\b[^;{}=]*=\s*\{", re.ASCII)
+CONSTANT_TABLE_START = re.compile(r"(?:\bstatic\s+const\b[^;{}=]*|^const\b[^;{}=]*\]\s*)=\s*\{", re.ASCII | re.MULTILINE)
 PREPROCESSOR_LINE = re.compile(r"^[ \t]*#", re.MULTILINE)
 TEMPLATE_ARGUMENTS = re.compile(r"\w\s*<(?![<=])(?P<arguments>[\w\s,.:+*/'-]*)>", re.ASCII)
 

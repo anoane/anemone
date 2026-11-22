@@ -160,7 +160,7 @@ were corrected in the published matrix. No archived operator instructions are re
 
 At the 6 Nov audit, the runtime notice and actual clean-build/opening identities contradicted a4d19/tcb80 as the current identity.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-a2"></a>
 
@@ -170,7 +170,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 v0.0.2-alpha was the program version at the 6 Nov audit. Historical tcb build timestamps do not define a public release cadence.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-a3"></a>
 
@@ -190,7 +190,7 @@ Implementation: [Makefile](../../../../Makefile), [source/engine/backend/cuda/ba
 
 Prepared THIN/WIDE/CONE/FULL/BATCH programs use the shared step driver; step_graphs chooses graph replay and raw default is 0. Published recipes explicitly choose 1.
 
-Implementation: [source/engine/program/model_seam.h](../../../../source/engine/program/model_seam.h), [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/program/model_seam.h](../../../../source/engine/program/model_seam.h), [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-a5"></a>
 
@@ -210,7 +210,7 @@ Implementation: [Makefile](../../../../Makefile).
 
 Existing project license is AGPL-3.0-or-later, with SPDX metadata and version/startup attribution. The current project is not accurately described as private-license code.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-a7"></a>
 
@@ -230,7 +230,7 @@ Implementation: [source/engine/backend/cuda/backend_cuda_launch.c](../../../../s
 
 Current opening canonical checks cover both widths2048/1024 and complete 8/256 controls; the current TP4 donor suite matched 423 same-job C1 text/count/finish signatures. No official/full-state or stochastic equivalence follows.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/formats/digest/pack_digest.h](../../../../source/engine/formats/digest/pack_digest.h).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/formats/digest/pack_digest.h](../../../../source/engine/formats/digest/pack_digest.h).
 
 <a id="source-audit-a-a9"></a>
 
@@ -240,7 +240,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Current workflow uses immutable absolute guarded scripts with recorded argv. Public setup has explicit recipes/four axes; no named --profile switch is admitted.
 
-Implementation: [source/engine/cli/cli_axes.c](../../../../source/engine/cli/cli_axes.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/cli_axes.c](../../../../source/engine/cli/cli_axes.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-a10"></a>
 
@@ -250,7 +250,7 @@ Implementation: [source/engine/cli/cli_axes.c](../../../../source/engine/cli/cli
 
 Actual peer qualification and drain contracts are narrower than a blanket count of 115 weight digests or all kernel forms.
 
-Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_peer.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_peer.h), [source/engine/cli/cli_policy.c](../../../../source/engine/cli/cli_policy.c), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c).
+Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_peer.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_peer.h), [source/engine/cli/cli_policy.c](../../../../source/engine/cli/cli_policy.c), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/).
 
 <a id="source-audit-a-a11"></a>
 
@@ -260,7 +260,7 @@ Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_peer.
 
 Current admitted TP4 default boot-to-ready is 30.130703687667847s. Fresh process; OS/storage caches were not cleared; loader-only time is not isolated.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-a12"></a>
 
@@ -270,7 +270,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Loader workers, replica discovery and automatic direct/dropped reads exist; no process-surviving persistent host-arena cache is exposed. Warm-restart gain is not isolated.
 
-Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/storage/io/storage_exl3_linux.c](../../../../source/engine/storage/io/storage_exl3_linux.c).
+Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c), [source/engine/cli/](../../../../source/engine/cli/), [source/engine/storage/io/storage_exl3_linux.c](../../../../source/engine/storage/io/storage_exl3_linux.c).
 
 <a id="source-audit-a-a13"></a>
 
@@ -290,7 +290,7 @@ Implementation: [source/engine/server/api/chat_completions.c](../../../../source
 
 Omitted axes select no implicit tuple. The literal all-balanced tuple refuses; explicit EXL3 balanced recipe remains separate from axis admission and default mixed identity failure.
 
-Implementation: [source/engine/cli/cli_axes.c](../../../../source/engine/cli/cli_axes.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/cli_axes.c](../../../../source/engine/cli/cli_axes.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-a15"></a>
 
@@ -300,7 +300,7 @@ Implementation: [source/engine/cli/cli_axes.c](../../../../source/engine/cli/cli
 
 Current serve guide enumerates 169 accepted spellings:149 numeric/array and 20 special. Catalog has 196 records/180 CLI names; branch-only catalog entries are not parser options.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/cli/cli_axes.c](../../../../source/engine/cli/cli_axes.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/cli/cli_axes.c](../../../../source/engine/cli/cli_axes.c).
 
 <a id="source-audit-a-a16"></a>
 
@@ -320,7 +320,7 @@ Implementation: [source/engine/server/server_head.c](../../../../source/engine/s
 
 External Nsight tracing can observe release execution, but optional timing/checking hooks compile out of release. draft_trace=1 refuses in release; no current ANEMONE_DIAG API is established by the old claim.
 
-Implementation: [source/common/hooks.h](../../../../source/common/hooks.h), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
+Implementation: [source/common/hooks.h](../../../../source/common/hooks.h), [source/engine/cli/](../../../../source/engine/cli/), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
 
 <a id="source-audit-a-a18"></a>
 
@@ -330,7 +330,7 @@ Implementation: [source/common/hooks.h](../../../../source/common/hooks.h), [sou
 
 Raw CLI temperature0/top_p=1 defaults remain and HTTP can override them. Public operating recipes explicitly set startup T1/top_p=1; deterministic fixture requests explicitly use T0.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/server/api/chat_completions.c](../../../../source/engine/server/api/chat_completions.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/server/api/chat_completions.c](../../../../source/engine/server/api/chat_completions.c).
 
 <a id="source-audit-a-a19"></a>
 
@@ -360,7 +360,7 @@ Implementation: [source/engine/backend/cuda/backend_cuda_launch.c](../../../../s
 
 TP4 EXL3 chooses four CMP cards; current opening receipt leaves physical PRO 2 idle.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_peer.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_peer.h).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_peer.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_peer.h).
 
 <a id="source-audit-a-b2"></a>
 
@@ -450,7 +450,7 @@ Implementation: [Makefile](../../../../Makefile).
 
 Current opening window records CMP 180 W and restores saved caps; PRO is idle400 W under TP4, not retuned.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-b11"></a>
 
@@ -460,7 +460,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Existing guard locks the CMP clock policy; current opening readiness records CMP 1455–1485 MHz, rather than assuming the requested 1695 MHz is achieved.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-b12"></a>
 
@@ -470,7 +470,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Current TP4 opening readiness uses55197/64508/53684/64508 MiB on physical 0/1/3/4 for 65536 context×8 slots; this is total device use, not isolated weights.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/).
 
 <a id="source-audit-a-b13"></a>
 
@@ -500,7 +500,7 @@ Implementation: [source/engine/backend/cuda/backend_cuda.c](../../../../source/e
 
 EXL3 map supplies quantized routed experts while retaining original non-routed, vision, draft and Engram tensors; public producer manifests pin both source families.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/storage/io/storage_exl3_linux.c](../../../../source/engine/storage/io/storage_exl3_linux.c).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/storage/io/storage_exl3_linux.c](../../../../source/engine/storage/io/storage_exl3_linux.c).
 
 <a id="source-audit-a-c2"></a>
 
@@ -510,7 +510,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 EXL3 loader admits mul1 K2/K3 trellis weights;2.9 bpw is the pinned public checkpoint family label, not one uniform integer width.
 
-Implementation: [source/engine/library/exl3/exl3_records.h](../../../../source/engine/library/exl3/exl3_records.h), [source/engine/library/exl3/exl3_layout.h](../../../../source/engine/library/exl3/exl3_layout.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c).
+Implementation: [source/engine/library/exl3/exl3_records.h](../../../../source/engine/library/exl3/exl3_records.h), [source/engine/library/exl3/exl3_layout.h](../../../../source/engine/library/exl3/exl3_layout.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/).
 
 <a id="source-audit-a-c3"></a>
 
@@ -520,7 +520,7 @@ Implementation: [source/engine/library/exl3/exl3_records.h](../../../../source/e
 
 The EXL3_K2_LAYERS mask0x7c0000 selects target layers 18–22 as K2; the other target layers are K3. Loader validates per-tensor bit widths.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/library/exl3/exl3_records.h](../../../../source/engine/library/exl3/exl3_records.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/library/exl3/exl3_records.h](../../../../source/engine/library/exl3/exl3_records.h).
 
 <a id="source-audit-a-c4"></a>
 
@@ -530,7 +530,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Shared-expert tensors remain original E4M3_SCALED with block scales; the tensor rules validate their format/shapes before loading. Decode/math order is selected separately.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../../../source/engine/library/bf16_linear/kernel_trunk_mma.cu).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../../../source/engine/library/bf16_linear/kernel_trunk_mma.cu).
 
 <a id="source-audit-a-c5"></a>
 
@@ -540,7 +540,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 wq_a/wkv/wq_b/wo_a/wo_b retain original E4M3_SCALED tensors with their declared shapes. Tensor format does not alone qualify accumulation order.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../../../source/engine/library/bf16_linear/kernel_trunk_mma.cu).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../../../source/engine/library/bf16_linear/kernel_trunk_mma.cu).
 
 <a id="source-audit-a-c6"></a>
 
@@ -550,7 +550,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Original quantized dense weights retain their codes/scales; prepared BF16-row MMA paths and alternate class/order forms are explicit. This is not every dense tensor: some model tensors are BF16/FP32.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../../../source/engine/library/bf16_linear/kernel_trunk_mma.cu), [source/engine/library/bf16_linear/dense_linear_records.h](../../../../source/engine/library/bf16_linear/dense_linear_records.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../../../source/engine/library/bf16_linear/kernel_trunk_mma.cu), [source/engine/library/bf16_linear/dense_linear_records.h](../../../../source/engine/library/bf16_linear/dense_linear_records.h).
 
 <a id="source-audit-a-c7"></a>
 
@@ -560,7 +560,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Target head has 129280×5120 BF16 weights; tp_head_shards cuts 32320 vocabulary rows per rank when selected.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/library/bf16_linear/kernel_head_mma.cu](../../../../source/engine/library/bf16_linear/kernel_head_mma.cu).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/library/bf16_linear/kernel_head_mma.cu](../../../../source/engine/library/bf16_linear/kernel_head_mma.cu).
 
 <a id="source-audit-a-c8"></a>
 
@@ -570,7 +570,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Embedding weights are BF16. EXL3 replicated_embedding may copy them per TP rank; that is an explicit placement optimization, not a new weight family.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
 
 <a id="source-audit-a-c9"></a>
 
@@ -580,7 +580,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Checkpoint DSpark has three stages 40–42, original FP8 dense/FP4 experts and a BF16 draft head. The published EXL3 BATCH recipe enables sharded draft head/layers.
 
-Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
+Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
 
 <a id="source-audit-a-c10"></a>
 
@@ -590,7 +590,7 @@ Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../
 
 Indexer wq_b is E4M3 but wk and weights_proj rules are BF16. Balanced index keys/queries use FP16 carriers; calling all indexer weights FP8 is inaccurate.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h), [source/models/deepseek_v41_flash/indexer/ds41f_index_scan_records.h](../../../../source/models/deepseek_v41_flash/indexer/ds41f_index_scan_records.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h), [source/models/deepseek_v41_flash/indexer/ds41f_index_scan_records.h](../../../../source/models/deepseek_v41_flash/indexer/ds41f_index_scan_records.h).
 
 <a id="source-audit-a-c11"></a>
 
@@ -600,7 +600,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Compressor wkv/wgate/norm rules are BF16 at the declared source/pooled layers; loader rejects another element/shape/format.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/plan/model_v41.h](../../../../source/models/deepseek_v41_flash/plan/model_v41.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/plan/model_v41.h](../../../../source/models/deepseek_v41_flash/plan/model_v41.h).
 
 <a id="source-audit-a-c12"></a>
 
@@ -610,7 +610,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Target gate weights are BF16[384][5120], bias FP32; scoring/normalization is FP32. tp_router_mma is an opt-in alternate product order, raw 0.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/moe/ds41f_router_records.h](../../../../source/models/deepseek_v41_flash/moe/ds41f_router_records.h), [source/models/deepseek_v41_flash/moe/ds41f_router.c](../../../../source/models/deepseek_v41_flash/moe/ds41f_router.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/moe/ds41f_router_records.h](../../../../source/models/deepseek_v41_flash/moe/ds41f_router_records.h), [source/models/deepseek_v41_flash/moe/ds41f_router.c](../../../../source/models/deepseek_v41_flash/moe/ds41f_router.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
 
 <a id="source-audit-a-c13"></a>
 
@@ -620,7 +620,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Attention/FFN mHC mix weights are FP32[24][20480], with FP32 bases/scales. These are distinct from BF16 residual streams.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection_records.h](../../../../source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection_records.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection_records.h](../../../../source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection_records.h).
 
 <a id="source-audit-a-c14"></a>
 
@@ -630,7 +630,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 RMS norm weights are BF16 and model norm epsilon1e-20; mHC Sinkhorn epsilon is separately1e-6.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h).
 
 <a id="source-audit-a-c15"></a>
 
@@ -650,7 +650,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.h](../../../../
 
 Load-time EXL3 slice copy preserves codes/scales without FP arithmetic; native tensors are validated/repacked separately. Extent digests detect accidental corruption and are not cryptographic SHA proof.
 
-Implementation: [source/engine/library/exl3/exl3_layout.h](../../../../source/engine/library/exl3/exl3_layout.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/formats/digest/pack_digest.h](../../../../source/engine/formats/digest/pack_digest.h).
+Implementation: [source/engine/library/exl3/exl3_layout.h](../../../../source/engine/library/exl3/exl3_layout.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/formats/digest/pack_digest.h](../../../../source/engine/formats/digest/pack_digest.h).
 
 <a id="source-audit-a-c17"></a>
 
@@ -660,7 +660,7 @@ Implementation: [source/engine/library/exl3/exl3_layout.h](../../../../source/en
 
 Current TP4 process-start to readiness30.130703687667847s is a complete boot measurement, not isolated conversion/read/upload time. Pack/digest checks are separate source gates.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/formats/digest/pack_digest.h](../../../../source/engine/formats/digest/pack_digest.h).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/formats/digest/pack_digest.h](../../../../source/engine/formats/digest/pack_digest.h).
 
 <a id="source-audit-a-c18"></a>
 
@@ -670,7 +670,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Arena planning includes weights, mirrored state, scratch and programs; current readiness memory cannot be labeled weight-only bytes.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c).
 
 <a id="source-audit-a-c19"></a>
 
@@ -690,7 +690,7 @@ Implementation: [source/models/deepseek_v41_flash/vision/ds41f_vision.h](../../.
 
 One engine process drives four qualified CMP ranks under tp4_exl3; optional parallel host launches do not create four model-server processes.
 
-Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-d2"></a>
 
@@ -740,7 +740,7 @@ Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage
 
 Shared/routed expert branches and shared-sum combination are prepared conditionally; graph_branches selects the branch form.
 
-Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-d7"></a>
 
@@ -750,7 +750,7 @@ Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage
 
 Dense attention splits use head/group outputs and input-parallel wo_b; gather_balance is a separate optional distribution policy, raw 0.
 
-Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-d8"></a>
 
@@ -760,7 +760,7 @@ Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage
 
 Published EXL3 recipe enables head_shards/head_stream/head_mma; head rows32320/rank. Raw defaults for these switches are 0.
 
-Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/library/bf16_linear/kernel_head_mma.cu](../../../../source/engine/library/bf16_linear/kernel_head_mma.cu), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/library/bf16_linear/kernel_head_mma.cu](../../../../source/engine/library/bf16_linear/kernel_head_mma.cu), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-d9"></a>
 
@@ -810,7 +810,7 @@ Implementation: [source/engine/cli/cli_policy.c](../../../../source/engine/cli/c
 
 Balanced TP4 decode uses explicitly selected BF16 ring sums; FP32/lossless-gather paths are separate. Target attention/FFN sites communicate under prepared banks.
 
-Implementation: [source/engine/library/rings/exact_ring_records.h](../../../../source/engine/library/rings/exact_ring_records.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/library/rings/exact_ring_records.h](../../../../source/engine/library/rings/exact_ring_records.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-e2"></a>
 
@@ -820,7 +820,7 @@ Implementation: [source/engine/library/rings/exact_ring_records.h](../../../../s
 
 tp_wide_exchange=5 uses CE owner sums at attention and CE owner-ring sums at FFN where dispatch conditions fit. It is not FP32 round-once arithmetic at both sites; mode 7 is the current raw split policy.
 
-Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-e3"></a>
 
@@ -830,7 +830,7 @@ Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage
 
 Prepared split-pipeline gathers distribute selected pool/index/router ranges using disjoint exchange phases; draft sharing has its own prepared ranges.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/engine/library/tensor_parallel/tp_exchange_records.h](../../../../source/engine/library/tensor_parallel/tp_exchange_records.h), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/engine/library/tensor_parallel/tp_exchange_records.h](../../../../source/engine/library/tensor_parallel/tp_exchange_records.h), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
 
 <a id="source-audit-a-e4"></a>
 
@@ -840,7 +840,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 The CE forms insert peer copies and ordered READY/DONE phases for row quarters, with explicit side-run dependencies.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c).
 
 <a id="source-audit-a-e5"></a>
 
@@ -870,7 +870,7 @@ Implementation: [source/engine/library/collectives/ordered_push.h](../../../../s
 
 Prepared target graph has attention/FFN exchange sites plus conditional draft collectives; actual launch counts depend on THIN/BATCH/wide/branch forms.
 
-Implementation: [source/engine/library/tensor_parallel/tp_exchange_records.h](../../../../source/engine/library/tensor_parallel/tp_exchange_records.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/library/tensor_parallel/tp_exchange_records.h](../../../../source/engine/library/tensor_parallel/tp_exchange_records.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-e8"></a>
 
@@ -900,7 +900,7 @@ Implementation: [source/engine/backend/cuda/backend_cuda.c](../../../../source/e
 
 Split-pipeline and shared-expert side branches encode specific overlap opportunities. Raw split_overlap=7 and optional overrides must be distinguished from prior mode 5/6 runs.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c).
 
 <a id="source-audit-a-e11"></a>
 
@@ -920,7 +920,7 @@ Implementation: [source/engine/library/tensor_parallel/tp_exchange_records.h](..
 
 Combination can add routed sums before an in-place BF16 ring; site fronts fuse mix/norm work. Dispatch depends on selected form and routed buffer.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/models/deepseek_v41_flash/hyper_connection/ds41f_site_front.h](../../../../source/models/deepseek_v41_flash/hyper_connection/ds41f_site_front.h).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/models/deepseek_v41_flash/hyper_connection/ds41f_site_front.h](../../../../source/models/deepseek_v41_flash/hyper_connection/ds41f_site_front.h).
 
 <a id="source-audit-a-e13"></a>
 
@@ -980,7 +980,7 @@ Implementation: [source/engine/library/collectives/ordered_push.h](../../../../s
 
 No general compressed-wire optimization is admitted by the balanced recipe. tp_code_wire is a separate original code/scale path; exact_ring lossless sentinel encoding/gather is not a compression-performance claim.
 
-Implementation: [source/engine/library/rings/exact_ring_records.h](../../../../source/engine/library/rings/exact_ring_records.h), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
+Implementation: [source/engine/library/rings/exact_ring_records.h](../../../../source/engine/library/rings/exact_ring_records.h), [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
 
 <a id="source-audit-a-e19"></a>
 
@@ -990,7 +990,7 @@ Implementation: [source/engine/library/rings/exact_ring_records.h](../../../../s
 
 Round-once behavior is form-specific: attention owner sums differ from the default FFN BF16 ring; decode_round_once is an explicit target-bit-changing option, raw 0.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/engine/library/tensor_parallel/tp_exchange.h](../../../../source/engine/library/tensor_parallel/tp_exchange.h).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/engine/library/tensor_parallel/tp_exchange.h](../../../../source/engine/library/tensor_parallel/tp_exchange.h).
 
 <a id="source-audit-a-f1"></a>
 
@@ -1050,7 +1050,7 @@ Implementation: [source/models/deepseek_v41_flash/hyper_connection/ds41f_site_fr
 
 Explicit deterministic mHC arithmetic exists; a blanket bit-identical-front claim needs its original fixture/shape/math-class scope.
 
-Implementation: [source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection_records.h](../../../../source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection_records.h), [source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection.cuh](../../../../source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection.cuh), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection_records.h](../../../../source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection_records.h), [source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection.cuh](../../../../source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_connection.cuh), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-g1"></a>
 
@@ -1060,7 +1060,7 @@ Implementation: [source/models/deepseek_v41_flash/hyper_connection/ds41f_hyper_c
 
 Model masks/constants encode window-only layers 0–1, ratio 2 layers 2–19, ratio 1 layers 20–39 and pool sources 2/8/14/20.
 
-Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/model_v41.h](../../../../source/models/deepseek_v41_flash/plan/model_v41.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c).
+Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/model_v41.h](../../../../source/models/deepseek_v41_flash/plan/model_v41.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/).
 
 <a id="source-audit-a-g2"></a>
 
@@ -1090,7 +1090,7 @@ Implementation: [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../..
 
 Balanced query/index carriers are FP16 with model-specific BF16 rounding/RoPE boundaries and FP32 rotation words. Do not apply that carrier claim to original exact.
 
-Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h), [source/models/deepseek_v41_flash/official/ds41f_official_state_records.h](../../../../source/models/deepseek_v41_flash/official/ds41f_official_state_records.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h), [source/models/deepseek_v41_flash/official/ds41f_official_state_records.h](../../../../source/models/deepseek_v41_flash/official/ds41f_official_state_records.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-g5"></a>
 
@@ -1100,7 +1100,7 @@ Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../
 
 Compressor writes ratio-q pool entry at completed group positions; source rules are BF16 and state producers choose the declared carriers. pool_chunk/pool_gather are conditional preparation policies.
 
-Implementation: [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
+Implementation: [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h).
 
 <a id="source-audit-a-g6"></a>
 
@@ -1130,7 +1130,7 @@ Implementation: [source/models/deepseek_v41_flash/indexer/ds41f_index_scan_recor
 
 EXL3 split-pipeline can partition index/router/pool work and gather selected row ranges under fixed phases; distribution depends on gather and split controls.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/library/tensor_parallel/tp_exchange_records.h](../../../../source/engine/library/tensor_parallel/tp_exchange_records.h).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/engine/library/tensor_parallel/tp_exchange_records.h](../../../../source/engine/library/tensor_parallel/tp_exchange_records.h).
 
 <a id="source-audit-a-g9"></a>
 
@@ -1190,7 +1190,7 @@ Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage
 
 Ordinary THIN core and chunk-wide prefill core are separate prepared forms; fixed/reference/core-chunk controls determine the actual path.
 
-Implementation: [source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-g15"></a>
 
@@ -1240,7 +1240,7 @@ Implementation: [source/engine/program/model_seam.h](../../../../source/engine/p
 
 Balanced window/pool/index-key storage uses FP16 carriers. State 16 is a width selector, not proof that every profile stores IEEE FP16 values.
 
-Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/official/ds41f_official_state_records.h](../../../../source/models/deepseek_v41_flash/official/ds41f_official_state_records.h).
+Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_state_records.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/official/ds41f_official_state_records.h](../../../../source/models/deepseek_v41_flash/official/ds41f_official_state_records.h).
 
 <a id="source-audit-a-h2"></a>
 
@@ -1260,7 +1260,7 @@ Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../
 
 State arrays are arena-relative per-session rings/pools/key tiles with explicit strides and source-layer ownership/mirroring.
 
-Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/plan/model_v41.h](../../../../source/models/deepseek_v41_flash/plan/model_v41.h).
+Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/plan/model_v41.h](../../../../source/models/deepseek_v41_flash/plan/model_v41.h).
 
 <a id="source-audit-a-h4"></a>
 
@@ -1270,7 +1270,7 @@ Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../
 
 Server allocates fixed session slots and static arena state; no vLLM-style block-table paging allocator is selected.
 
-Implementation: [source/engine/program/model_seam.h](../../../../source/engine/program/model_seam.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/server/server.c](../../../../source/engine/server/server.c).
+Implementation: [source/engine/program/model_seam.h](../../../../source/engine/program/model_seam.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/server/server.c](../../../../source/engine/server/server.c).
 
 <a id="source-audit-a-h5"></a>
 
@@ -1280,7 +1280,7 @@ Implementation: [source/engine/program/model_seam.h](../../../../source/engine/p
 
 Prefix reuse and on-disk snapshots are implemented and ordinary serve prefix_reuse defaults 1. Current TP4 warm-cache probe failed identity; do not refresh blanket same-bits or99.1%hit claims.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/server/server_sessions.c](../../../../source/engine/server/server_sessions.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/server/server_sessions.c](../../../../source/engine/server/server_sessions.c).
 
 <a id="source-audit-a-h6"></a>
 
@@ -1290,7 +1290,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Raw model context limit 1048576 and source admission are distinct from actual fit. TP4 current opening used 65536×8; its prior one 1M boot remains dated until the prepared current job executes.
 
-Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-a-h7"></a>
 
@@ -1300,7 +1300,7 @@ Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../
 
 For replicated TP4 source caches, pool/key rules yield 3200 bytes/context-token plus target rings:40×4096×1024 bytes=160 MiB/session before drafts/scratch/other arrays. This is a source derivation, not measured total GPU use.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/plan/model_v41.h](../../../../source/models/deepseek_v41_flash/plan/model_v41.h), [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/plan/model_v41.h](../../../../source/models/deepseek_v41_flash/plan/model_v41.h), [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h).
 
 <a id="source-audit-a-h8"></a>
 
@@ -1310,7 +1310,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 TP4 current opening is 65536×8; the current one 1M readiness job is separate and pending. Earlier one-slot/2 slotOOM evidence retains its epoch.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h).
 
 <a id="source-audit-a-h9"></a>
 
@@ -1330,7 +1330,7 @@ Implementation: [source/engine/server/server.c](../../../../source/engine/server
 
 There is no active host-KV-offload execution mode in these recipes. Session snapshots explicitly serialize state to disk; that is persistence, not token-path KV offload.
 
-Implementation: [source/engine/server/server_sessions.c](../../../../source/engine/server/server_sessions.c), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c).
+Implementation: [source/engine/server/server_sessions.c](../../../../source/engine/server/server_sessions.c), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/).
 
 <a id="source-audit-a-h11"></a>
 
@@ -1360,7 +1360,7 @@ Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../
 
 Current TP4 readiness memory is total device use at 65536×8, including model/state/workspaces, not a fractional allocator target.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/).
 
 <a id="source-audit-a-h14"></a>
 
@@ -1370,7 +1370,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Anemone has explicit static context/session allocations, not one shared paged262K token pool. The recorded default opening allocates 8×65536 per-slot capacities.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/server/server.c](../../../../source/engine/server/server.c).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/server/server.c](../../../../source/engine/server/server.c).
 
 <a id="source-audit-a-i1"></a>
 
@@ -1380,7 +1380,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 Target model constants are 384 routed experts, top-6 and 2304 intermediate width; shared expert tensors are separate from routed expert jobs.
 
-Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/models/deepseek_v41_flash/moe/ds41f_router.c](../../../../source/models/deepseek_v41_flash/moe/ds41f_router.c).
+Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/models/deepseek_v41_flash/moe/ds41f_router.c](../../../../source/models/deepseek_v41_flash/moe/ds41f_router.c).
 
 <a id="source-audit-a-i2"></a>
 
@@ -1450,7 +1450,7 @@ Implementation: [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage
 
 K2/K3 EXL3 formats and mixed-width rotation geometry are explicitly supported. Layer mask18–22 selects K2 in the current target EXL3 map family.
 
-Implementation: [source/engine/library/exl3/exl3_records.h](../../../../source/engine/library/exl3/exl3_records.h), [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/library/exl3/exl3_tc_records.h](../../../../source/engine/library/exl3/exl3_tc_records.h).
+Implementation: [source/engine/library/exl3/exl3_records.h](../../../../source/engine/library/exl3/exl3_records.h), [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/library/exl3/exl3_tc_records.h](../../../../source/engine/library/exl3/exl3_tc_records.h).
 
 <a id="source-audit-a-i9"></a>
 
@@ -1490,7 +1490,7 @@ Implementation: [source/engine/library/exl3/kernel_exl3_tc.cuh](../../../../sour
 
 Prepared expert activation limit is 10: gate is upper-clamped, up is clamped to[-10,10], then SiLU(gate)×up. TC/prefill use their documented precision boundaries.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/engine/library/exl3/kernel_exl3_tc.cuh](../../../../source/engine/library/exl3/kernel_exl3_tc.cuh), [source/engine/library/exl3/kernel_exl3_tcp.cuh](../../../../source/engine/library/exl3/kernel_exl3_tcp.cuh).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/engine/library/exl3/kernel_exl3_tc.cuh](../../../../source/engine/library/exl3/kernel_exl3_tc.cuh), [source/engine/library/exl3/kernel_exl3_tcp.cuh](../../../../source/engine/library/exl3/kernel_exl3_tcp.cuh).
 
 <a id="source-audit-a-i13"></a>
 
@@ -1500,7 +1500,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 EXL3 routed partials combine locally before selected shared-sum/ring dispatch; THIN TC and prefill combination are not both plain FP32.
 
-Implementation: [source/engine/library/exl3/kernel_exl3_tcp.cuh](../../../../source/engine/library/exl3/kernel_exl3_tcp.cuh), [source/engine/library/exl3/kernel_exl3_tc.cuh](../../../../source/engine/library/exl3/kernel_exl3_tc.cuh), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/library/exl3/kernel_exl3_tcp.cuh](../../../../source/engine/library/exl3/kernel_exl3_tcp.cuh), [source/engine/library/exl3/kernel_exl3_tc.cuh](../../../../source/engine/library/exl3/kernel_exl3_tc.cuh), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-i14"></a>
 
@@ -1590,7 +1590,7 @@ Implementation: [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../..
 
 Original output-projection tensors remain checkpoint FP8 codes/scales, decoded for the chosen product. Using a BF16 copy of those weights need not change stored-weight values, but products/orders remain independently qualified.
 
-Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../source/models/deepseek_v41_flash/plan/model_v41.c), [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../../../source/engine/library/bf16_linear/kernel_trunk_mma.cu), [source/engine/library/block_scaled_linear/linear_records.h](../../../../source/engine/library/block_scaled_linear/linear_records.h).
+Implementation: [source/models/deepseek_v41_flash/plan/](../../../../source/models/deepseek_v41_flash/plan/), [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../../../source/engine/library/bf16_linear/kernel_trunk_mma.cu), [source/engine/library/block_scaled_linear/linear_records.h](../../../../source/engine/library/block_scaled_linear/linear_records.h).
 
 <a id="source-audit-a-j4"></a>
 
@@ -1600,7 +1600,7 @@ Implementation: [source/models/deepseek_v41_flash/plan/model_v41.c](../../../../
 
 EXL3 head stores BF16 weights, shards32320 rows/rank when selected, and dispatches explicitTC/dense-stream forms. Weight precision and deterministic output do not themselves make the target head official-exact.
 
-Implementation: [source/engine/library/bf16_linear/kernel_head_mma.cu](../../../../source/engine/library/bf16_linear/kernel_head_mma.cu), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/library/bf16_linear/kernel_head_mma.cu](../../../../source/engine/library/bf16_linear/kernel_head_mma.cu), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-a-j5"></a>
 
@@ -1680,7 +1680,7 @@ Implementation: [source/engine/library/block_scaled_linear/linear.c](../../../..
 
 Chunk programs are selected from prepared row inventories. Eligible THIN wide>=2048 may add the fine ladder; published EXL3 BATCH uses wide 1024, tail 128 and fine 0. A 1024 decoder cap is conditional on prefill_first and the compatible bounded recipe; published prefill_first 0 resolves prefill_decode_rows 0, so the old blanket BATCH default cap is stale. Old planning OOM/headroom observations stay historical.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
 
 <a id="source-audit-b-k2"></a>
 
@@ -1690,7 +1690,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 chunks_in_flight 1 retains the exact chunk planner and its reference-form tail. Tail auto resolution is eligibility-dependent: THIN wide>=2048 gets448; eligible BATCH gets128; incompatible plans get0. Tail sets/overlay/staged dense controls remain selectable. Source arithmetic/planner contracts do not refresh the old first-token timings or establish arbitrary cached seams.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
 
 <a id="source-audit-b-k3"></a>
 
@@ -1700,7 +1700,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Cone/dead-half skipping is implemented, with exact-plan/margin prerequisites. The builder computes whether a decoder half is wholly dead and trims only live rows for dead-halves2; stable-prefix mode disables that bound. The cone is a dependency optimization, not a license to discard needed target rows.
 
-Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-k4"></a>
 
@@ -1710,7 +1710,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 The current EXL3 builder can prepare pool entries/window writes per chunk, compute queries per piece, scan index spans, and write compact half outputs. These controls are wired from the CLI and guarded by applicable chunk/tensor layouts. They are not a single all-40-layer integer-preparation kernel. Historical launch-count/speed savings require their old or fresh traces.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-k5"></a>
 
@@ -1720,7 +1720,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 EXL3 split_overlap defaults to V41_DATA_SPLIT_JOINT_DOWN (mode 7). The builder selects a joint-down phase schedule with SIDE/RESUME/JOIN dependencies and skips dead sums where permitted. Explicit other modes remain parser controls. The timing delta quoted in the old row is historical.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_stage.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-k6"></a>
 
@@ -1730,7 +1730,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Chunk/decode scheduling exists, but the old qualified-recipe default description is not the published current EXL3 default: its prefill_first 0 resolves caps/order 0. The default mixed workload has recorded identity failures; rates must stay withheld. The separate prompt_chunks 1 guard prevents runnable prompt chunks donating rows into ordinary BATCH; its functional/identity scope must not be transferred to the default. Original PP5 and exact C1 have separate qualification.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
 
 <a id="source-audit-b-k7"></a>
 
@@ -1740,7 +1740,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 step_graphs controls startup graph preparation over the prepared programs, including wide/full programs. Raw CLI omission is0; all three published measured launch commands explicitly use1. Graph capture can fall back eagerly at a BUSY graph-capacity boundary, so a parsed1 alone does not prove every program was captured.
 
-Implementation: [source/engine/runtime/step/step_graphs.c](../../../../source/engine/runtime/step/step_graphs.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/runtime/step/step_graphs.c](../../../../source/engine/runtime/step/step_graphs.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-k8"></a>
 
@@ -1750,7 +1750,7 @@ Implementation: [source/engine/runtime/step/step_graphs.c](../../../../source/en
 
 The program builder emits per-slab/chunk launches; source can identify fusion and counts in a prepared inventory, but cannot refresh ~330K executed kernels or 4987 launches for a hardware run.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-k9"></a>
 
@@ -1790,7 +1790,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 Source distinguishes routed experts, dense/trunk work, attention/index and joins; old per-layer wall-time percentages need a new profile trace.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-k13"></a>
 
@@ -1820,7 +1820,7 @@ Implementation: [source/engine/runtime/step/step_pipeline.c](../../../../source/
 
 prefill_margin participates in the exact cone bound; default127 is below the reference cone margin and keeps dependency closure. engine_full_cone_behind returns0 for incompatible/disabled plans. Kept-prefix behavior depends on the restart/cache provenance; old timing and exact-hash evidence stay scoped.
 
-Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-l1"></a>
 
@@ -1830,7 +1830,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 The engine supports THIN and BATCH owners with a prepared row/verifier menu. Current defaults are profile-dependent: published EXL3 uses BATCH, core_once 3, draft_wide 3, pipeline 1 and order 0; original balanced is PP5 THIN with pipeline 5; exact is serial C1 without speculation. The old universal core_once 2/order 2 scheduler text is stale.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
 
 <a id="source-audit-b-l2"></a>
 
@@ -1840,7 +1840,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Current BATCH menu capacity is eight, and the published EXL3 parser snapshot resolves rows8,8,12,12,16,24,32,48 with verifiers1,2,2,4,4,4,8,8. The engine chooses the first menu entry that can hold both live rows and drafting owners. Exact/original published profiles do not enable this EXL3 menu.
 
-Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-l3"></a>
 
@@ -1850,7 +1850,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 Graphs are created from explicit prepared launches and branch dependencies, with SIDE/RESUME/JOIN converted into CUDA graph edges. Native counts depend on the prepared program/shape; source confirms launch trims and graph mechanisms, not the historical 1302→1093 or 2238→1860 runtime counts.
 
-Implementation: [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-l4"></a>
 
@@ -1870,7 +1870,7 @@ Implementation: [source/engine/backend/cuda/backend_cuda_launch.c](../../../../s
 
 Steps in flight are profile-dependent: original balanced serving automatically selects five PP flights when multi-slot THIN DSpark is used and no explicit depth is given; published EXL3 BATCH retains 1; strict exact requires 1. The blanket THIN2/BATCH1 statement omits the current PP5 gate. TP whole flights remain serialized by the group coordinator.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/runtime/step/step_pipeline.c](../../../../source/engine/runtime/step/step_pipeline.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/runtime/step/step_pipeline.c](../../../../source/engine/runtime/step/step_pipeline.c).
 
 <a id="source-audit-b-l6"></a>
 
@@ -1900,7 +1900,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 Global waiting queue defaults 16 and omitted user queue derives half that (8). Ordering modes/cadence are selectable; current published EXL3 resolves order 0 rather than the conditional bounded order 2. session_grace_seconds and namespace-aware cache/session paths are merged, not branch-only. Scheduler mechanics do not erase current default mixed identity failures or establish universal fairness.
 
-Implementation: [source/engine/server/server.c](../../../../source/engine/server/server.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/server/server.c](../../../../source/engine/server/server.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-l9"></a>
 
@@ -1910,7 +1910,7 @@ Implementation: [source/engine/server/server.c](../../../../source/engine/server
 
 session_slots is a startup allocation, not a universal hardcoded8. Published balanced recipes allocate8 × 65536; strict exact allocates C1/512. Separate PP5 two/four × 1M readiness receipts prove allocation only and do not expand full-context inference qualification.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-l10"></a>
 
@@ -1930,7 +1930,7 @@ Implementation: [source/engine/library/sampling/kernel_sampler.cu](../../../../s
 
 The C tokenizer consumes generated binary tables. C HTTP/SSE formatting decodes content, reasoning and tool deltas, buffers stop prefixes and emits completion/usage termination. Four current published-command functional smokes passed; tool/stream edge cases have separate host witnesses.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/server/api/chat_completions.c](../../../../source/engine/server/api/chat_completions.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/server/api/chat_completions.c](../../../../source/engine/server/api/chat_completions.c).
 
 <a id="source-audit-b-l12"></a>
 
@@ -1950,7 +1950,7 @@ Implementation: [source/engine/server/api/chat_completions.c](../../../../source
 
 BATCH per-owner depth can be selected from confidence/costs and menu constraints; depth is not unconditionally five. Current EXL3 core_once default is3, with draft_wide 3; original profile restores core_once 2. Session modes6–11 are current code and optional, not unmerged experiments. The published command resolves session mode 0 and ties 0.
 
-Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-l14"></a>
 
@@ -1960,7 +1960,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 BATCH costs start from supplied/qualified menu prices and move one eighth toward each landed step. Mode11 additionally records executed (rows,verifiers) shape costs for decode-only observations. Modes10/11 are implemented and parser-selectable on current source, not branch-only; neither is the published default or a general speed winner.
 
-Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [tests/engine/runtime/scheduler/draft_session_test.c](../../../../tests/engine/runtime/scheduler/draft_session_test.c), [tests/engine/runtime/scheduler/engine_batch_test.c](../../../../tests/engine/runtime/scheduler/engine_batch_test.c).
+Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/](../../../../source/engine/cli/), [tests/engine/runtime/scheduler/draft_session_test.c](../../../../tests/engine/runtime/scheduler/draft_session_test.c), [tests/engine/runtime/scheduler/engine_batch_test.c](../../../../tests/engine/runtime/scheduler/engine_batch_test.c).
 
 <a id="source-audit-b-m1"></a>
 
@@ -1970,7 +1970,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 DSpark retains three MTP stages40–42, taps37–39, block5, rank256 and confidence output. CLI supports lookup/DSpark/hybrid source selection; published balanced commands choose DSpark, while strict exact disables speculation. Historical hybrid performance/lookup acceptance is retained as historical.
 
-Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-m2"></a>
 
@@ -1980,7 +1980,7 @@ Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../
 
 There is no one global fixed-K5 default: non-EXL3 restores draft_policy_default cost 1; EXL3 omitted policy is rate 2 when BATCH or multi-session and fixed 0 otherwise. The three tested published profiles resolve original policy 1, EXL3 policy 2, exact speculation-off; draft_wide 3 and session_acceptance 0 are independent fields.
 
-Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-m3"></a>
 
@@ -1990,7 +1990,7 @@ Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../s
 
 DSpark uses a five-position block and coupled Markov/sampler passes; source records are linear verifier blocks, not an implemented general branching token tree. Draft depth can be less than five under policy decisions. Strict exact has no speculative chain.
 
-Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../source/models/deepseek_v41_flash/ds41f_geometry.h), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-m4"></a>
 
@@ -2000,7 +2000,7 @@ Implementation: [source/models/deepseek_v41_flash/ds41f_geometry.h](../../../../
 
 Fixed/cost/rate/adaptive policies are implemented, with target-keyed verification and optional per-session modes through 11. Actual omitted policy depends on placement/workload; fixed-five is selectable, not a universal serving default. All modes remain subject to startup and target numerical qualification.
 
-Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-m5"></a>
 
@@ -2010,7 +2010,7 @@ Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../s
 
 Draft acceptance tables have separate greedy/sampled indices, and draft Markov bias feeds the same keyed sampler machinery at positive temperature. This confirms mechanism, not a measured T1 proposal-quality or Pi speed comparison. The strict exact source RNG proof remains T0-only even though native T1 can run.
 
-Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-m6"></a>
 
@@ -2020,7 +2020,7 @@ Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../s
 
 Speculative verification accepts target-keyed matches; saved work depends on drafts, but target results are independent of proposal choice only where the target logits are invariant. Relaxed BATCH/cache paths can change those logits; this conditional statement does not qualify current default mixed execution.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/engine/library/sampling/kernel_sampler.cu](../../../../source/engine/library/sampling/kernel_sampler.cu), [source/engine/library/sampling/sampler_records.h](../../../../source/engine/library/sampling/sampler_records.h), [source/models/deepseek_v41_flash/draft/ds41f_dspark.cu](../../../../source/models/deepseek_v41_flash/draft/ds41f_dspark.cu).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/engine/library/sampling/kernel_sampler.cu](../../../../source/engine/library/sampling/kernel_sampler.cu), [source/engine/library/sampling/sampler_records.h](../../../../source/engine/library/sampling/sampler_records.h), [source/models/deepseek_v41_flash/draft/ds41f_dspark.cu](../../../../source/models/deepseek_v41_flash/draft/ds41f_dspark.cu).
 
 <a id="source-audit-b-m7"></a>
 
@@ -2050,7 +2050,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 The draft program prepares vocabulary-sharded or ordinary head products, Markov bias then coupled sampler passes; the bias and sampler record share per-position result/state slices. Historical serial milliseconds are not refreshed.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-m10"></a>
 
@@ -2060,7 +2060,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 EXL3 draft shards/layers are conditional startup controls: draft_shards requires head_shards, and draft_layers requires EXL3 BF16 wire, shards and compatible BATCH draft/head rows. Published EXL3 enables them; original PP5 uses its native draft placement; strict exact speculation is off.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-m11"></a>
 
@@ -2070,7 +2070,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 BATCH lays out an anchor and consecutive proposed rows per session, validates flags/positions/depth, and selects programs holding rows and verifier count. Whole-block draft preparation exists. Proposal counts and acceptance remain workload measurements rather than source constants.
 
-Implementation: [source/engine/runtime/step/step.c](../../../../source/engine/runtime/step/step.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/runtime/step/step.c](../../../../source/engine/runtime/step/step.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-m12"></a>
 
@@ -2090,7 +2090,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 The draft confidence kernel output is binned by fixed edges, with separate greedy/sampled acceptance tables; cost/rate/adaptive policies consume confidence, and fixed policy returns full permitted depth. There is no blanket confidence gate on all published requests.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c).
 
 <a id="source-audit-b-m14"></a>
 
@@ -2100,7 +2100,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 Draft-layer, Markov, sampler and wait costs are separate runtime categories. Their implementation is present, but the old 1.07/1.62/1.2 ms timings cannot be refreshed from source.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-m15"></a>
 
@@ -2110,7 +2110,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 Draft head uses the same stored BF16 head weights as target head, optionally sharded; head_product writes F32 logits. Current code contains no supplied draft_head_fp8 startup option. The future FP8-head suggestion is a proposal, not a missing release deliverable.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-n1"></a>
 
@@ -2120,7 +2120,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 HTTP requests accept temperature0..2, top_p>0..1 and uint64 seed; GPU positive-temperature scaling floors at 1e-5. CLI temperature has its separately documented wider parser range. Top-k/penalty execution is absent. Unknown truthy members and named unsupported controls refuse, but generic null/false/zero compatibility members may be accepted; the blanket nothing-silently-ignored claim is too broad.
 
-Implementation: [source/engine/server/api/chat_completions.c](../../../../source/engine/server/api/chat_completions.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/library/sampling/sampler_records.h](../../../../source/engine/library/sampling/sampler_records.h), [tests/engine/server/api/chat_completions_test.c](../../../../tests/engine/server/api/chat_completions_test.c).
+Implementation: [source/engine/server/api/chat_completions.c](../../../../source/engine/server/api/chat_completions.c), [source/engine/cli/](../../../../source/engine/cli/), [source/engine/library/sampling/sampler_records.h](../../../../source/engine/library/sampling/sampler_records.h), [tests/engine/server/api/chat_completions_test.c](../../../../tests/engine/server/api/chat_completions_test.c).
 
 <a id="source-audit-b-n2"></a>
 
@@ -2160,7 +2160,7 @@ Implementation: [source/engine/library/sampling/sampler_records.h](../../../../s
 
 The exact chunk planner retains reference-form tails and chooses whole256-row granules from prepared programs. Fresh canonical 2048/1024 checks support the retained selected-record scope; arbitrary cached seams, owner order, forms or full-state equality are separate gates. Strict exact profile itself disables wide chunks.
 
-Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-n6"></a>
 
@@ -2190,7 +2190,7 @@ Implementation: [source/engine/server/api/chat_completions.c](../../../../source
 
 Reference definitions are profile-specific: strict original exact is serial PP5 C1, context<=512, no speculation, official_reference1 and strict controls; original balanced may use numerics exact without exactness exact; EXL3 balanced is relaxed/native reference arithmetic. Native PRO placement changes arithmetic by assigned layer. Existing selected/control evidence is not full official-model equality.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h).
 
 <a id="source-audit-b-o2"></a>
 
@@ -2200,7 +2200,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Bit-identity proof must name its actual scope: selected records, full conditional heads, persisted-state bytes, or text/count/finish are different witnesses. State diagnostic code uses DIAG_STATE_DIGESTS (without ANEMONE_ prefix), emits session 0 ring/compressor/pool/key blocks of 64 KiB, and does not alone prove every state or official equality. Fresh opening own-family identities remain separately scoped.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-o3"></a>
 
@@ -2210,7 +2210,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Arithmetic/order defaults depend on placement and explicit profile controls; EXL3 BF16 wire, relaxed products and TC paths are not universal bit-exact defaults. tp_decode_round_once exists on current main with restrictive admission, so branch-only language is stale. Published recipes/real-parser snapshots define active values; optional availability does not promote experiments.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-o4"></a>
 
@@ -2220,7 +2220,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Zero difference of selected logits does not bound max deviation over all 129280 logits. The shipped scorer validates complete F32 conditional captures and reports full-vocabulary delta metrics; numerical values require executed aligned captures, not source inspection or selected records.
 
-Implementation: [tools/golden_score](../../../../tools/golden_score.py), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [tools/golden_score](../../../../tools/golden_score.py), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-o5"></a>
 
@@ -2260,7 +2260,7 @@ Implementation: [tools/golden_score](../../../../tools/golden_score.py), [tests/
 
 Long-context quality is distinct from parser admission, allocation/readiness, short donor identity and strict exact C1/512. The current source allocates context capacities but cannot establish needle/task quality at 128K/512K/1M. These long-term alpha goals remain honestly deferred unless separately run.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h).
 
 <a id="source-audit-b-o9"></a>
 
@@ -2300,7 +2300,7 @@ Implementation: [tools/golden_score](../../../../tools/golden_score.py).
 
 No universal sensitivity conclusion follows from exactness labels or selected-token identity. Sensitivity must be stated for an explicit precision/order change and aligned fixture with numerical/task outcomes; existing native PRO and EXL3 distinctions remain material.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h](../../../../source/models/deepseek_v41_flash/attention/ds41f_attention_core_records.h).
 
 <a id="source-audit-b-p1"></a>
 
@@ -2340,7 +2340,7 @@ Implementation: [source/engine/runtime/step/step_graphs.c](../../../../source/en
 
 Free headroom is an actual hardware allocation/readiness measurement for an exact profile. Fresh PP5 two/four × 1M readiness is allocation-only; it neither refreshes all old per-card free-MiB cells nor proves full-context numerical/task quality. Strict exact remains C1/512.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c).
 
 <a id="source-audit-b-p5"></a>
 
@@ -2360,7 +2360,7 @@ Implementation: [source/engine/backend/cuda/backend_cuda.c](../../../../source/e
 
 Prepared launches and graph trims exist, but executed kernels per decode step/prefill token depend on chosen shape, branches and profile. Current source cannot refresh historical1225–1345/1093/1860/~330K counts.
 
-Implementation: [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/backend/cuda/backend_cuda_launch.c](../../../../source/engine/backend/cuda/backend_cuda_launch.c), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-q2"></a>
 
@@ -2380,7 +2380,7 @@ Implementation: [source/engine/backend/cuda/backend_cuda_launch.c](../../../../s
 
 Kernel launch geometry is explicit: sampler uses1024 threads, EXL3 prefill operands map tasks to blocks and GEMMs have one/two-block variants. Geometry is source-audited; achieved occupancy, register spills and performance are compiler/device observations, not guaranteed by a comment. Original/exact paths differ from EXL3 TC dispatch.
 
-Implementation: [source/engine/library/sampling/sampler_records.h](../../../../source/engine/library/sampling/sampler_records.h), [source/engine/library/exl3/kernel_exl3_tcp.cu](../../../../source/engine/library/exl3/kernel_exl3_tcp.cu), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/library/sampling/sampler_records.h](../../../../source/engine/library/sampling/sampler_records.h), [source/engine/library/exl3/kernel_exl3_tcp.cu](../../../../source/engine/library/exl3/kernel_exl3_tcp.cu), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-q4"></a>
 
@@ -2390,7 +2390,7 @@ Implementation: [source/engine/library/sampling/sampler_records.h](../../../../s
 
 Current builder fuses eligible site fronts, pool/window work, query/index spans and joint-down schedules; trims and switches are explicit. Fusion applies by format/shape/profile and cannot be stated as one global program shared by exact, original and EXL3. Historical savings remain separately dated.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-q5"></a>
 
@@ -2410,7 +2410,7 @@ Implementation: [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../..
 
 Pack digest kernels validate load-time data. State diagnostics are enabled by DIAG_STATE_DIGESTS, not ANEMONE_DIAG_STATE_DIGESTS, and emit 64 KiB blocks of session 0 ring/compressor/pool/key ranges after generation. Historical counts 115 and diagnostic overhead require the actual program/run, not source inference.
 
-Implementation: [source/engine/backend/cuda/backend_cuda.c](../../../../source/engine/backend/cuda/backend_cuda.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/backend/cuda/backend_cuda.c](../../../../source/engine/backend/cuda/backend_cuda.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-q7"></a>
 
@@ -2450,7 +2450,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 CPU threads depend on mode: loader reader threads transfer/check pieces; engine owns its stepping thread; pipeline may create one TP group worker or one worker per PP card. tp_parallel_launch is an optional control. There is no single fixed thread count for all profiles.
 
-Implementation: [source/engine/storage/load/loader.c](../../../../source/engine/storage/load/loader.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/runtime/step/step_pipeline.c](../../../../source/engine/runtime/step/step_pipeline.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/storage/load/loader.c](../../../../source/engine/storage/load/loader.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/runtime/step/step_pipeline.c](../../../../source/engine/runtime/step/step_pipeline.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-r3"></a>
 
@@ -2460,7 +2460,7 @@ Implementation: [source/engine/storage/load/loader.c](../../../../source/engine/
 
 Runtime uses the project C tokenizer over converted tokenizer.bin/front_end.tables with validated binary header/magic/version/counts. Official tokenizer.json is the producer input, not the file consumed directly by the inference tokenizer. The bounded producer regenerated the actual binary byte-identically.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/input/tokenizer/tokenizer.c](../../../../source/engine/input/tokenizer/tokenizer.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/input/tokenizer/tokenizer.c](../../../../source/engine/input/tokenizer/tokenizer.c).
 
 <a id="source-audit-b-r4"></a>
 
@@ -2480,7 +2480,7 @@ Implementation: [source/engine/server/server.c](../../../../source/engine/server
 
 Release hooks0/0 compile out LOG_ERROR and warning macros as well as diagnostic logs. Explicit product fprintf/fputs startup/version/errors and live stats remain separate code paths; errors never dropped applies only when logging is compiled. Per-program BATCH cost/stat reporting does not change that distinction.
 
-Implementation: [source/common/hooks.h](../../../../source/common/hooks.h), [Makefile](../../../../Makefile), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [tests/common/hooks_test.c](../../../../tests/common/hooks_test.c).
+Implementation: [source/common/hooks.h](../../../../source/common/hooks.h), [Makefile](../../../../Makefile), [source/engine/cli/](../../../../source/engine/cli/), [tests/common/hooks_test.c](../../../../tests/common/hooks_test.c).
 
 <a id="source-audit-b-r6"></a>
 
@@ -2500,7 +2500,7 @@ Implementation: [source/engine/server/api/chat_completions.c](../../../../source
 
 Defaults are selected by placement, axes, compatible recipe and explicit controls; current EXL3 balanced uses relaxed arithmetic. Fastest bit-identical path default is not a universal promise, especially with default mixed identity failure and placement-dependent native PRO arithmetic. Real parser snapshots and strict exact refusals define the contract.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-s1"></a>
 
@@ -2510,7 +2510,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Context/session capacities are startup allocations. Published balanced commands use8 × 65536, strict exact C1/512; current original PP5 two/four × 1048576 readiness receipts expand allocation evidence only. Full-context inference, all-slot quality and arbitrary EXL3 multi-1M capacity remain separate gates.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-s2"></a>
 
@@ -2520,7 +2520,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Exact-prefix modes, stable-prefix controls, namespace scope and session forks are merged current code, not branch-only. Admission restricts stable/exact/fork reuse to compatible EXL3 plans; published balanced uses legacy reuse 1/exact 0/stable 0/fork 0, strict exact disables reuse. Default mixed and arbitrary warm/cold invariance remain unqualified/failing as separately recorded.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/server/server_cache.c](../../../../source/engine/server/server_cache.c), [source/engine/server/server_forks.c](../../../../source/engine/server/server_forks.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/server/server_cache.c](../../../../source/engine/server/server_cache.c), [source/engine/server/server_forks.c](../../../../source/engine/server/server_forks.c).
 
 <a id="source-audit-b-s3"></a>
 
@@ -2530,7 +2530,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Namespace-aware session reuse/snapshot v4, grace controls and save/load thresholds are merged. Snapshots bind model/tokenizer identity, namespace, lengths and payload; old-version files are isolated. Defaults include save 1024/load 256/idle 120. Exact profile remains restricted and measured old transfer latencies remain historical page-cache observations.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/server/server_sessions.c](../../../../source/engine/server/server_sessions.c), [source/engine/server/server_cache.c](../../../../source/engine/server/server_cache.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/server/server_sessions.c](../../../../source/engine/server/server_sessions.c), [source/engine/server/server_cache.c](../../../../source/engine/server/server_cache.c).
 
 <a id="source-audit-b-s4"></a>
 
@@ -2690,7 +2690,7 @@ Implementation: [source/engine/backend/cuda/backend_cuda.c](../../../../source/e
 
 Known limitations must be current and profile-scoped: default EXL3 mixed identity failures remain rates-withheld, while guard and original PP5 results are separate. Cache/namespace/Responses/profile code is now merged, and original PP5 two/four × 1M allocation has new readiness receipts. Historical OOM/headroom and branch-only cells are not a current universal failure list.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/server/api/server_responses_request.c](../../../../source/engine/server/api/server_responses_request.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c), [source/engine/server/api/server_responses_request.c](../../../../source/engine/server/api/server_responses_request.c).
 
 <a id="source-audit-b-u2"></a>
 
@@ -2720,7 +2720,7 @@ Implementation: [source/engine/server/server.c](../../../../source/engine/server
 
 Fresh6 November own-family canonical two-boot selected records and846 donor comparisons retain scoped T0 restart/concurrency evidence. Exact-prefix/stable/namespace controls are merged, so old branch-only phrasing is stale, but arbitrary warm/cold restart invariance and official full-state equality remain unqualified.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/server/server_sessions.c](../../../../source/engine/server/server_sessions.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/server/server_sessions.c](../../../../source/engine/server/server_sessions.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
 
 <a id="source-audit-b-u5"></a>
 
@@ -2820,7 +2820,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 C1 routed MoE cost is a hardware/profile trace metric. Current source has the cited work category, but the old traced/untraced times, call counts, percentages and comparative speed gaps remain dated evidence. This source audit does not rerun, rescale or promote them; competitor historical cells remain intact.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-aa3"></a>
 
@@ -2830,7 +2830,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 C1 all-reduce/wait cost is a hardware/profile trace metric. Current source has the cited work category, but the old traced/untraced times, call counts, percentages and comparative speed gaps remain dated evidence. This source audit does not rerun, rescale or promote them; competitor historical cells remain intact.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-aa4"></a>
 
@@ -2870,7 +2870,7 @@ Implementation: [source/models/deepseek_v41_flash/attention/ds41f_attention_core
 
 C1 head/draft/sampling cost is a hardware/profile trace metric. Current source has the cited work category, but the old traced/untraced times, call counts, percentages and comparative speed gaps remain dated evidence. This source audit does not rerun, rescale or promote them; competitor historical cells remain intact.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-aa8"></a>
 
@@ -2890,7 +2890,7 @@ Implementation: [source/engine/runtime/scheduler/scheduler.c](../../../../source
 
 C8 traced category composition is a hardware/profile trace metric. Current source has the cited work category, but the old traced/untraced times, call counts, percentages and comparative speed gaps remain dated evidence. This source audit does not rerun, rescale or promote them; competitor historical cells remain intact.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-aa10"></a>
 
@@ -2930,7 +2930,7 @@ Implementation: [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../..
 
 30K attention/index time is a hardware/profile trace metric. Current source has the cited work category, but the old traced/untraced times, call counts, percentages and comparative speed gaps remain dated evidence. This source audit does not rerun, rescale or promote them; competitor historical cells remain intact.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-aa14"></a>
 
@@ -2940,7 +2940,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 30K exposed communication/waits is a hardware/profile trace metric. Current source has the cited work category, but the old traced/untraced times, call counts, percentages and comparative speed gaps remain dated evidence. This source audit does not rerun, rescale or promote them; competitor historical cells remain intact.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-aa15"></a>
 
@@ -2950,7 +2950,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 Kernels per prefill token is a hardware/profile trace metric. Current source has the cited work category, but the old traced/untraced times, call counts, percentages and comparative speed gaps remain dated evidence. This source audit does not rerun, rescale or promote them; competitor historical cells remain intact.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-ac1"></a>
 
@@ -2960,7 +2960,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 Current Anemone release packaging is one native executable plus source/docs and separately prepared model/tokenizer/map inputs. A Python-free/Git-free isolated source-export build actually passed; the competitor22GBimage/private-stage cell remains historical external evidence, not re-audited here.
 
-Implementation: [Makefile](../../../../Makefile), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [Makefile](../../../../Makefile), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-ac2"></a>
 
@@ -2970,7 +2970,7 @@ Implementation: [Makefile](../../../../Makefile), [source/engine/cli/commands.c]
 
 Anemone now implements four orthogonal axis controls and explicit original-exact/original-balanced/EXL3-balanced measured recipes; presets planned is stale. Original balanced numerics exact is not strict exactness exact. Strict exact is serial C1/512; native PRO layer placement remains arithmetic-dependent. Historical Curtis lanes are unchanged.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-ac3"></a>
 
@@ -3000,7 +3000,7 @@ Implementation: [source/engine/library/bf16_linear/kernel_trunk_mma.cu](../../..
 
 EXL3 BF16/TC dispatch uses small-row routed TC kernels and separate prefill-sized TC programs when admitted. Anemone does not use TC MoE for every <=64 row call across original/exact profiles; main masks EXL3-only controls and the strict original path uses its own arithmetic. Historical Curtis path table remains unchanged.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-ac6"></a>
 
@@ -3020,7 +3020,7 @@ Implementation: [source/models/deepseek_v41_flash/attention/ds41f_attention_core
 
 Anemone TP uses its own peer exchanges/owner sums/ring variants; reusable ordered collectives separately support explicit direct/host routes. Current EXL3 load still requires qualified peer masks, so a generic no-P2P host fallback cannot be inferred. Historical Curtis transport/NUMA/NCCL description is not requalified.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c), [source/engine/library/collectives/ordered_collective.c](../../../../source/engine/library/collectives/ordered_collective.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c](../../../../source/models/deepseek_v41_flash/tensor_parallel/ds41f_tp_model.c), [source/engine/library/collectives/ordered_collective.c](../../../../source/engine/library/collectives/ordered_collective.c).
 
 <a id="source-audit-b-ac8"></a>
 
@@ -3030,7 +3030,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Current EXL3 exact-plan mechanics include cone/margin127, chunks_in_flight 1, pool/query/index chunk work and split mode 7, not the stale mode 6 current-default text. Published measured BATCH uses wide 1024/tail 128/fine 0; THIN2048 is a separate recipe. Strict original exact disables wide/full prefill. Historical Curtis MOE_RAGGED cell is retained.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-ac9"></a>
 
@@ -3040,7 +3040,7 @@ Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/com
 
 Anemone uses stored BF16 target/draft head weights with optional EXL3 vocabulary shards and Markov-bias/sampler passes. Strict exact has speculation off; original and EXL3 balanced use their own placement. This is not the competitor FP8 draft-head recipe. Historical Curtis/GNmac cell remains unchanged.
 
-Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](../../../../source/models/deepseek_v41_flash/builder/model_v41_program.c).
+Implementation: [source/models/deepseek_v41_flash/builder/](../../../../source/models/deepseek_v41_flash/builder/).
 
 <a id="source-audit-b-ac10"></a>
 
@@ -3050,7 +3050,7 @@ Implementation: [source/models/deepseek_v41_flash/builder/model_v41_program.c](.
 
 Anemone fixed policy 0 is selectable but omitted policy depends on placement/workload: original restores cost 1, EXL3 BATCH/multi-session rate 2, EXL3 single-session/noBATCH fixed 0. Published commands and parser snapshots define actual controls. Historical Curtis fixed 5/controller conclusions remain external historical evidence.
 
-Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c).
+Implementation: [source/engine/runtime/speculation/draft_policy.c](../../../../source/engine/runtime/speculation/draft_policy.c), [source/engine/cli/](../../../../source/engine/cli/).
 
 <a id="source-audit-b-ac11"></a>
 
@@ -3100,7 +3100,7 @@ Implementation: [tests/models/deepseek_v41_flash/builder/ds41f_dspark_program_te
 
 Bitwise identity to the original without scope is too strong. Strict original exact is admitted C1/512/T0 source-fixture scope; original balanced and EXL3 balanced have distinct arithmetic/placement. Selected own-family records, donor text identity and full conditional-head metrics are different witnesses and none creates universal official equality. Historical Curtis precision evaluation is retained unchanged.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [tools/golden_score](../../../../tools/golden_score.py).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [tools/golden_score](../../../../tools/golden_score.py).
 
 <a id="source-audit-b-ac16"></a>
 
@@ -3120,5 +3120,5 @@ Implementation: [source/engine/engram/engram.c](../../../../source/engine/engram
 
 This historical competitor weak-spots row has no Anemone comparison text to validate. Current Anemone caveats remain explicit elsewhere: default mixed identity rates withheld, strict exact C1/512 only, and1M allocation/readiness not full-context quality. No claim is made about current competitor rates, topology, private controls or regressions.
 
-Implementation: [source/engine/cli/commands.c](../../../../source/engine/cli/commands.c), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
+Implementation: [source/engine/cli/](../../../../source/engine/cli/), [source/engine/runtime/scheduler/scheduler.c](../../../../source/engine/runtime/scheduler/scheduler.c).
 

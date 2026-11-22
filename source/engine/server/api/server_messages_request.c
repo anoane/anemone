@@ -212,6 +212,18 @@ static void plain_content(struct reader *reader, struct chat_buffer *target,
 	if (count == 0)
 		refuse(reader, "content arrays must be nonempty");
 }
+/* Whether only text blocks, within the block limit, follow cursor in a turn: the text a turn cut at a request limit
+ * gives out after its calls (its cut call, as text), which a verbatim replay sends back. */
+static bool only_text_follows(struct reader *reader, struct json_value content,
+			      size_t cursor, uint32_t blocks)
+{
+	struct json_value block = { 0 };
+	bool only_text = true;
+	while (only_text && json_next(content, &cursor, NULL, &block))
+		only_text = ++blocks <= CHAT_MOST_MESSAGES &&
+			    word(reader, member(reader, block, "type"), "text");
+	return only_text;
+}
 static void start_message(struct reader *reader)
 {
 	text(reader, reader->body, reader->has_message ? "," : "");
@@ -266,7 +278,7 @@ static void message(struct reader *reader, struct json_value item,
 	struct json_value signature = { 0 };
 	bool has_thinking = false;
 	uint32_t blocks = 0, results = 0, call_count = 0;
-	bool has_text = false;
+	bool has_text = false, is_tail_text = false;
 	if (kind(content, '"')) {
 		append_string(reader, &flattened, content);
 		has_text = true;
@@ -290,7 +302,15 @@ static void message(struct reader *reader, struct json_value item,
 				    !empty_array(citations))
 					refuse(reader,
 					       "citations are unsupported");
-				if (call_count != 0)
+				/* text after the calls joins the turn's text, before them, as Chat carries
+				 * the answer; any other block after it is refused, at this text */
+				is_tail_text =
+					is_tail_text ||
+					(call_count != 0 &&
+					 reader->refusal->status == 0 &&
+					 only_text_follows(reader, content,
+							   cursor, blocks));
+				if (call_count != 0 && !is_tail_text)
 					refuse(reader,
 					       "text after tool_use is unsupported");
 				append_string(reader, &flattened,

@@ -49,7 +49,23 @@ void prepare_decision_json(FILE *output, const struct prepare_target *target);
 MUST_CHECK result_status
 prepare_destination_device(const char *mount_table, const char *directory,
 			   struct local_device_description *device);
-int storage_autotune_cli(int count, char **arguments);
+/* A stage after the copy: the run without --stage runs each in its table's order, --stage=NAME (its option) runs
+ * one alone. Its name (at most AUTOTUNE_STAGE_NAME_MOST bytes), its option, whether its profile section is current,
+ * its run, its lease's most seconds and whether it replays the --tokens cases. The composition root gives the table
+ * (the cli: the load stage, then the Engram stage, the owner's split of 9 Nov 2026); the dispatch is the table's, so
+ * storage_autotune.c names no stage. The Engram stage's declarations below stay in this header until P4b. */
+#define AUTOTUNE_STAGE_NAME_MOST 15u
+struct storage_autotune_stage {
+	const char *name, *option;
+	bool (*current)(const char *source, const char *profile, bool external,
+			char reason[STORAGE_PROFILE_REASON_BYTES]);
+	int (*run)(int count, char **arguments);
+	uint32_t seconds_most;
+	bool takes_tokens;
+};
+int storage_autotune_cli(int count, char **arguments,
+			 const struct storage_autotune_stage *stages,
+			 size_t stage_count);
 /* The combined tuning's --prompt, retired with it (v0.0.4): every stage refuses it by name, with this reason. */
 #define AUTOTUNE_PROMPT_RETIRED \
 	"--prompt went with the combined tuning: the Engram stage replays every --tokens case whole"

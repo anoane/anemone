@@ -1,6 +1,66 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Release notes
 
+## v0.0.7-alpha
+
+Anemone v0.0.7-alpha lets an Anthropic Messages client replay a turn that a token limit cut, and continues the
+reorganisation: the largest source files are split into units by whole items, and the model's split policy, its
+measured schedules and its help and usage texts move out of the cli. Every reorganisation step builds programs whose
+hot paths are instruction-identical to the step before it in a one-partition build; the shipped build differs only
+in classified link-time layout.
+
+### Fixes
+- **Anthropic Messages replay.** A turn cut at `max_tokens`, whose cut call went out as text after the whole calls,
+  now replays verbatim: text blocks that end an assistant turn after its tool_use blocks join the turn's text, before
+  its calls, as Chat carries the same answer. Its tool results are required as before; any other block after such
+  text is refused as before.
+
+### Reorganisation
+- The scheduler (engine.c), the cli (commands.c) and the model's plan and program builder (model_v41.c,
+  model_v41_program.c) are split into units by whole items, each with its leading comment, in its order; no logic is
+  edited. The scheduler's stepping thread, its per-step functions and the engine's thread start are one unit.
+- storage_autotune's stage table is a parameter the cli passes; the load and Engram stages stay apart.
+- The model's split policy (which GPU splits it admits, with exact numerics and at which CMP order), its measured
+  ladder and BATCH programs, its knob help paragraphs and its usage lines are the model's
+  (`source/models/deepseek_v41_flash/options/`); the cli reads them, and every text is byte for byte as before.
+- Each step was checked on x86-64 against the step before it: the hot functions instruction-identical (the split
+  through a build with one link-time partition; the shipped build with only the classified link-time differences),
+  the 238 kernel modules and both kernel tables byte-identical, the program dumps identical, the serve start identical
+  (5,351,055 runs), and every resolver dry run, help, knob and usage text byte-identical.
+- The remaining splits (P4b) and the move of the model's option state out of the cli (P5d2) follow in v0.0.8.
+
+### Upgrade from v0.0.6-alpha
+Replace the executable. The model data, the EXL3 maps and their descriptors, the storage profiles and the serve
+commands of v0.0.6-alpha are unchanged.
+
+### Limits
+- Alpha software. The exact profile stays bounded to one session of 512 tokens. Vision is experimental. The comparison
+  tables in the README keep their 6 November measurements, within the v0.0.2-alpha [measured scope](#measured-scope).
+- The 2.68 bpw EXL3 map serves only on `--exl3_unrated_map=1`; its golden numbers are recorded, not a quality claim.
+
+### Release check
+The release executable ([VALIDATION.md](docs/VALIDATION.md)) was checked on the reference machine before the tag, on
+22 Nov 2026.
+- **CPU:** the full build in release, debug, thread and profile; the lints, cppcheck, clang-tidy and `make analysis`
+  clean; every host suite in the four builds, the header check, the python tests and the release audit; the release
+  objects equal the previous build's but for the two version texts; every resolver dry run equal but for the version
+  (1,614 runs). The Messages replay: the adapter's 13 neighbouring suites in the four builds and its contract test in
+  release and debug, the cut turn's verbatim replay included; against v0.0.6-alpha's reader, 2,000,000 generated
+  requests in each of release and debug, 0 differences: each read alike or, where v0.0.6-alpha refused the text
+  after a tool_use, as v0.0.6-alpha reads the same turn with its text first.
+- **Identity:** on PP5, TP4_PRO and TP4_EXL3 (the 2.9 bpw map), one user and 15 streams a route, with each serve's
+  given copies kept (`--turbo_load=0`), its outputs matched v0.0.6-alpha (source `5047a71`): PP5 15/15,
+  TP4_PRO 15/15, TP4_EXL3 15/15.
+- **1M sessions:** on a PP5 serve with `--session_slots=max`, `--context_tokens=1048576`, `--generated_tokens=1048576`,
+  `--temperature=1` and `--top_p=1` (the requests at T=0), the startup fit admitted 6 session slots of
+  1,048,576 tokens each. Served: one fresh 1M-token session, HTTP 200, the needle found, prefill 3074 tok/s (1,022,969 prompt tokens in 332.7 s), decode 12.9 ms/token; four at once,
+  HTTP 200 for all 8 requests, all 4 needles found, prefill about 766 tok/s each (1333.3 to 1336.7 s), decode 237.2 tok/s in all (4.22 ms/token).
+- **Fraser:** the same serve with `--context_tokens=524288` and `--generated_tokens=524288`, T=0, thinking off, 2,048
+  tokens, 1 user, 10 repetitions: median 171.4 tok/s
+  (5.83 ms/token), best 181.0 tok/s (5.52 ms/token).
+  v0.0.6-alpha in the same window, with the CPU quiet: median 170.8 tok/s
+  (5.85 ms/token); v0.0.7-alpha runs at 1.00 times its speed.
+
 ## v0.0.6-alpha
 
 Anemone v0.0.6-alpha makes the DSML tool-call parser tolerant, so that a tool call the model writes in any spelling

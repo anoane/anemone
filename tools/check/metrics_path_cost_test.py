@@ -21,7 +21,7 @@ def block_after(text, marker):
 
 def check(root):
     failures = []
-    engine = (root / 'source/engine/runtime/scheduler/scheduler.c').read_text()
+    engine = (root / 'source/engine/runtime/scheduler/scheduler_flights.c').read_text()
     worker = block_after(engine, 'static void *stepping_thread(void *argument)\n{')
     for marker in ('if (restoring < slot_count)', 'if (pending < slot_count)',
                    'while (engine->flight_count != 0)'):

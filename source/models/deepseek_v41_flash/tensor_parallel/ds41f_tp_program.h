@@ -92,4 +92,14 @@ MUST_CHECK result_status ds41f_tp_program_prepare(
 	struct execution_program **program_out,
 	struct step_companion_program *companions_out);
 
+struct ds41f_builder;
+struct ds41f_tp2_layer_plan;
+void ds41f_tp2_program_tensor_fill(
+	const struct ds41f_builder *build,
+	const struct ds41f_tp2_program_description *description,
+	struct ds41f_tp2_layer_plan *tensor, uint32_t card, uint32_t layer);
+MUST_CHECK result_status
+ds41f_tp2_program_tensor_kernels(struct ds41f_builder *build, uint32_t card,
+				 const struct ds41f_tp2_layer_plan *tensor);
+
 #endif

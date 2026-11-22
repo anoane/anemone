@@ -18,26 +18,26 @@ env -i PATH=/usr/local/cuda/bin:/usr/bin:/bin make -j32 header_check
 sha256sum build/release/anemone
 ```
 
-The release executable is `build/release/anemone`. The v0.0.6-alpha reference
-executable SHA256 (source `5047a717778210bd09277902b8d2bff895572d9b`) with the
+The release executable is `build/release/anemone`. The v0.0.7-alpha reference
+executable SHA256 (source `440bba129eb83e62dcb12d97c5296bf7cd1e70ff`) with the
 recorded toolchain and flags is:
 
 ```text
-ec209bdc264b611fafa3e9c7622260e7a1ceee7ab21dc12a83646aed809d3d6a
+ce55b8f898dc077bb201d0ca33b1300db1c7a680ed0f843de2bea0a7e0d7ff13
 ```
 
 Compilation and native host/header checks need no weights or GPU context.
 Release compilation uses native C/CUDA helpers and pinned inputs, with no Python,
 Git checkout, package download or code-generation overlay prerequisite. It
 compiles 119 CUDA modules for the selected class-80/class-120 targets; host tests
-run 165 programs excluding `_card_test`, and header checks cover 681 compilations.
+run 165 programs excluding `_card_test`, and header checks cover 723 compilations.
 The command above gives `make host_tests` an empty `HOME`, so that no test reads
 or writes the operator's own. The suite also passes without one: `anemone
 autotune` names a missing default profile (no `XDG_CONFIG_HOME` or `HOME`) and its
 own option refusals first, where v0.0.3-alpha printed the usage alone and a case of
 `replica_prepare_test` failed under `env -i`.
-The `v0.0.6-alpha` tag marks the published source snapshot. Its build inputs are
-those of the development source `5047a71` named above, which is not in the
+The `v0.0.7-alpha` tag marks the published source snapshot. Its build inputs are
+those of the development source `440bba1` named above, which is not in the
 published repository; [VALIDATION.md](docs/VALIDATION.md) gives the scope.
 
 `CUDA_DIRECTORY` defaults to `/usr/local/cuda`; override it for another installed
@@ -65,7 +65,7 @@ included in both the public checkout and source archive. They are described in
 [DEVELOPMENT.md](docs/DEVELOPMENT.md) and [the tools index](tools/README.md).
 Optional checks have their own dependencies. `make check` runs lint, header_check,
 analysis, the host suites in all four builds, python_tests, release_audit and
-self_test, and must pass clean. For v0.0.6-alpha every part but self_test was run
+self_test, and must pass clean. For v0.0.7-alpha every part but self_test was run
 on the reference machine and passed: the lints and `make analysis` report nothing,
 and every host suite passes in release, debug, thread and profile.
 

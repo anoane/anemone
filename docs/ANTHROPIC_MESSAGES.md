@@ -20,7 +20,14 @@ Require `model: "anemone"`, a positive integer `max_tokens`, and a nonempty
 `messages` array beginning and ending with a user turn. Accept string or
 text-block content, a top-level string/text-block `system`, assistant
 `tool_use` object inputs, and immediately matching user `tool_result` blocks.
-Text precedes calls; results precede ordinary user text. Results may contain
+Text precedes calls, except that text blocks may end a turn after its calls: a
+turn cut at `max_tokens` gives its cut call out as text there, and a verbatim
+replay of it reads as the same turn with that text before its calls (the Chat
+form of the answer). A turn whose text lies between two calls (`tool_use`,
+text, `tool_use`: an answer with text between two invokes) is still refused on
+a verbatim replay ("text after tool_use is unsupported"); joining every text
+block ahead of the calls, as Chat does, comes in v0.0.8. Results precede
+ordinary user text. Results may contain
 strings or text blocks; `is_error:true` adds `Error: ` to the model-facing
 result. IDs must be unique within a pending turn and 1–128 ASCII letters,
 digits, underscores or hyphens. Names use the same alphabet, at most 64 bytes.
@@ -75,7 +82,7 @@ Responses contain Message thinking/text/tool_use blocks and stop reasons `end_tu
 `max_tokens`, `model_context_window_exceeded`, `tool_use` or `stop_sequence`, with the matched string for the
 last case. Usage reports local rendered prompt and actual generated token
 counts, including EOS and tool delimiters. It omits Anthropic billing/cache
-fields. Malformed generated tool JSON produces `api_error` if no complete call exists. Once a valid call is complete, a malformed or trailing DSML suffix is discarded; completed calls remain replayable and the reason is tool_use at EOS or max_tokens at the output limit. Context exhaustion uses model_context_window_exceeded. These reasons are accepted for both supported versions.
+fields. Malformed generated tool JSON produces `api_error` if no complete call exists. Once a valid call is complete, the rest of its block is read by the tolerant grammar (`--dsml_parsing=tolerant`, the default): an invoke still open at the end token closes there and is a call; an invoke cut by `max_tokens` goes out as a text block after the calls, never as a call (a verbatim replay reads it, as above); text between tags goes out as text. Under `--dsml_parsing=reference` a malformed or trailing suffix is discarded, as before. Completed calls remain replayable and the reason is tool_use at EOS or max_tokens at the output limit. Context exhaustion uses model_context_window_exceeded. These reasons are accepted for both supported versions.
 
 SSE uses named message/content-block events, text or JSON deltas, cumulative
 output usage in `message_delta` and terminal `message_stop`; there is no

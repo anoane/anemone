@@ -54,8 +54,8 @@ KINDS = {
 }
 SESSION_SLOT = ('slot', 'session_slot', 'row->session_slot', 'owner')
 # The session-slot shifts allowed: BATCH round tables only (slot < STEP_BATCH_MAXIMUM_SESSIONS <= 32), by file.
-BATCH_SITES = Counter({('source/engine/runtime/scheduler/scheduler.c', 'row->session_slot'): 1,
-                       ('source/engine/runtime/scheduler/scheduler.c', 'slot'): 1,
+BATCH_SITES = Counter({('source/engine/runtime/scheduler/scheduler_flights.c', 'row->session_slot'): 1,
+                       ('source/engine/runtime/scheduler/scheduler_flights.c', 'slot'): 1,
                        ('source/engine/runtime/step/step.c', 'session_slot'): 1,
                        ('source/engine/runtime/step/step_rounds.c', 'slot'): 1,
                        ('source/engine/runtime/step/step_sessions.c', 'session_slot'): 1})

@@ -46,10 +46,10 @@ tests/check_cases/literal_lint/hook_arguments.c:11: += in the argument of a hook
 tests/check_cases/literal_lint/hook_arguments.c:12: <<= in the argument of a hook: a build without the hook does not evaluate it
 tests/check_cases/literal_lint/hook_arguments.c:13: -- in the argument of a hook: a build without the hook does not evaluate it
 tests/check_cases/literal_lint/hook_arguments.c:16: the argument list of a hook never closes
-tests/check_cases/literal_lint/not_a_constant_table.c:2: bare number 256
-tests/check_cases/literal_lint/not_a_constant_table.c:4: bare number 256
-tests/check_cases/literal_lint/not_a_constant_table.c:5: bare number 4
-tests/check_cases/literal_lint/not_a_constant_table.c:5: bare number 8
+tests/check_cases/literal_lint/not_a_constant_table.c:3: bare number 256
+tests/check_cases/literal_lint/not_a_constant_table.c:5: bare number 256
+tests/check_cases/literal_lint/not_a_constant_table.c:10: bare number 4
+tests/check_cases/literal_lint/not_a_constant_table.c:10: bare number 8
 tests/check_cases/literal_lint/number_spellings.c:2: bare number 20
 tests/check_cases/literal_lint/number_spellings.c:3: bare number 4096
 tests/check_cases/literal_lint/number_spellings.c:4: bare number 5

@@ -14,14 +14,14 @@ one messages file a prompt, with `tools/models/deepseek_v41_flash/measure/engram
 
 See [the release notes](../RELEASE_NOTES.md) for each release's changes and limits, and their [measured scope](../RELEASE_NOTES.md#measured-scope) (the v0.0.2-alpha section's: the comparison tables keep their 6 November measurements) for the verified benchmark scope and explicit deferred work; [the matrix](models/deepseek_v41_flash/results/COMPARISON_MATRIX.md) preserves dated results and individual dispositions.
 
-For **v0.0.6-alpha** setup and the three release serve recipes, use
+For **v0.0.7-alpha** setup and the three release serve recipes, use
 [SERVER_PROFILES.md](models/deepseek_v41_flash/SERVER_PROFILES.md). It maps the serve options of the dated
 6 November version source `6b9e276fe4da6750be46c874e5fb5c0ee2a46871` to that
 parser's defaults and resolved profile values, adds `--metrics`, and marks `C` the
 rows that give the current parser's values; later options (Engram, storage,
 Messages and others) are documented below and in [the knob catalogue](../tools/cli/KNOBS.md).
-Its command arrays passed the v0.0.6-alpha parser at source
-`5047a717778210bd09277902b8d2bff895572d9b`. The detailed definitions and dated
+Its command arrays passed the v0.0.7-alpha parser at source
+`440bba129eb83e62dcb12d97c5296bf7cd1e70ff`. The detailed definitions and dated
 example receipts below retain their original numerical-engine epoch; current
 GPU execution results are in [the comparison matrix](models/deepseek_v41_flash/results/COMPARISON_MATRIX.md).
 

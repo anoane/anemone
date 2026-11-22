@@ -35,8 +35,6 @@
  * (stages_after_copy); the earlier combined tuning is retired (v0.0.4). */
 enum autotune_stage { AUTOTUNE_STAGE_ALL, AUTOTUNE_STAGE_COPY };
 static const char *const stage_names[] = { "all", "copy" };
-#define LOAD_STAGE_OPTION AUTOTUNE_STAGE_OPTION "load"
-#define ENGRAM_STAGE_OPTION AUTOTUNE_STAGE_OPTION "engram"
 #define TOKENS_OPTION "--tokens="
 #define RETUNE_OPTION "--retune"
 #define RETUNE_SERIES_SUFFIX ".retune-series"
@@ -447,24 +445,10 @@ struct stage_run {
 	uint32_t token_count;
 	uint64_t deadline_ns;
 	bool external, retune, plan;
+	const struct storage_autotune_stage
+		*stages; /* the composition root's, in their order */
+	size_t stage_count;
 };
-struct later_stage {
-	const char *name, *option;
-	bool (*current)(const char *source, const char *profile, bool external,
-			char reason[STORAGE_PROFILE_REASON_BYTES]);
-	int (*run)(int count, char **arguments);
-	uint32_t seconds_most;
-	bool takes_tokens;
-};
-static const struct later_stage later_stages[] = {
-	{ "load", LOAD_STAGE_OPTION, storage_autotune_load_current,
-	  storage_autotune_load_cli, AUTOTUNE_SECONDS_MOST, false },
-	{ "engram", ENGRAM_STAGE_OPTION, storage_autotune_engram_current,
-	  storage_autotune_engram_cli, AUTOTUNE_ENGRAM_SECONDS_MOST, true }
-};
-#define LATER_STAGES (sizeof(later_stages) / sizeof(later_stages[0]))
-_Static_assert(sizeof(ENGRAM_STAGE_OPTION) >= sizeof(LOAD_STAGE_OPTION),
-	       "a later stage's option fits the Engram stage's room");
 
 /* The --retune series (storage_autotune.h): whether <profile>.retune-series, a regular file of this user's alone,
  * names the stage on a line of its own; series_record appends the stage's line once it finished. */
@@ -514,8 +498,9 @@ static void series_record(const char *series, const char *name)
  * AUTOTUNE_RETRY_EXIT (the lease, a stop signal), and the same command resumes it, or a failure. */
 static int stages_after_copy(const struct stage_run *run)
 {
-	for (uint32_t index = 0; index < LATER_STAGES; index++) {
-		const struct later_stage *const stage = &later_stages[index];
+	for (size_t index = 0; index < run->stage_count; index++) {
+		const struct storage_autotune_stage *const stage =
+			&run->stages[index];
 		char reason[STORAGE_PROFILE_REASON_BYTES] = RETUNE_OPTION;
 		if (stage->takes_tokens && run->token_count == 0) {
 			(void)fprintf(
@@ -566,7 +551,9 @@ static int stages_after_copy(const struct stage_run *run)
 		(void)fprintf(stderr, "storage: autotune stage=%s runs (%s)\n",
 			      stage->name, reason);
 		char program[] = "anemone", command[] = "autotune",
-		     source[PATH_MAX], option[sizeof(ENGRAM_STAGE_OPTION)],
+		     source[PATH_MAX],
+		     option[sizeof(AUTOTUNE_STAGE_OPTION) +
+			    AUTOTUNE_STAGE_NAME_MOST],
 		     profile[PATH_MAX + sizeof("--profile=")],
 		     seconds[sizeof("--seconds=") + DECIMAL_DIGITS_MOST],
 		     external[sizeof("--replica_external=") +
@@ -574,7 +561,8 @@ static int stages_after_copy(const struct stage_run *run)
 		const int profile_length = snprintf(
 			profile, sizeof(profile), "--profile=%s", run->profile);
 		(void)snprintf(source, sizeof(source), "%s", run->source);
-		(void)snprintf(option, sizeof(option), "%s", stage->option);
+		const int option_length =
+			snprintf(option, sizeof(option), "%s", stage->option);
 		(void)snprintf(seconds, sizeof(seconds), "--seconds=%" PRIu64,
 			       remaining < stage->seconds_most ?
 				       remaining :
@@ -592,7 +580,9 @@ static int stages_after_copy(const struct stage_run *run)
 		     stage->takes_tokens && token < run->token_count; token++)
 			arguments[count++] = run->tokens[token];
 		if (profile_length <= 0 ||
-		    (size_t)profile_length >= sizeof(profile))
+		    (size_t)profile_length >= sizeof(profile) ||
+		    option_length <= 0 ||
+		    (size_t)option_length >= sizeof(option))
 			return EXIT_FAILURE;
 		const int exited = stage->run((int)count, arguments);
 		if (exited != EXIT_SUCCESS)
@@ -603,16 +593,17 @@ static int stages_after_copy(const struct stage_run *run)
 	return EXIT_SUCCESS;
 }
 
-int storage_autotune_cli(int count, char **arguments)
+int storage_autotune_cli(int count, char **arguments,
+			 const struct storage_autotune_stage *stages,
+			 size_t stage_count)
 {
-	/* the load and Engram stages have their own options, mechanism, state and section: storage_autotune_load.c,
-	 * engram_autotune.c */
-	for (int index = AUTOTUNE_FIRST_OPTION; index < count; index++) {
-		if (strcmp(arguments[index], LOAD_STAGE_OPTION) == 0)
-			return storage_autotune_load_cli(count, arguments);
-		if (strcmp(arguments[index], ENGRAM_STAGE_OPTION) == 0)
-			return storage_autotune_engram_cli(count, arguments);
-	}
+	/* the stages after the copy have their own options, mechanism, state and section: the composition root's
+	 * table, in its order */
+	for (int index = AUTOTUNE_FIRST_OPTION; index < count; index++)
+		for (size_t listed = 0; listed < stage_count; listed++)
+			if (strcmp(arguments[index], stages[listed].option) ==
+			    0)
+				return stages[listed].run(count, arguments);
 	struct prepare_target *const decisions =
 		calloc(LOCAL_DEVICE_CANDIDATES_MOST, sizeof(*decisions));
 	struct prepare_manifest *const manifest = calloc(1, sizeof(*manifest));
@@ -1056,6 +1047,8 @@ int storage_autotune_cli(int count, char **arguments)
 			token_bytes += (uint64_t)token_file.st_size;
 	}
 	struct stage_run run = { .source = real_source,
+				 .stages = stages,
+				 .stage_count = stage_count,
 				 .profile = profile_path,
 				 .series = series,
 				 .tokens = tokens,

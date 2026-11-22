@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Server profiles for Anemone v0.0.6-alpha
+# Server profiles for Anemone v0.0.7-alpha
 
 The default-off [Messages adapter](../../ANTHROPIC_MESSAGES.md) and shared HTTP
 `top_k` extension are newer than the `6b9e276` option-map snapshots and functional
@@ -10,7 +10,7 @@ enables nor exercises them.
 Use this page for the three release launch recipes: original exact, original
 balanced and EXL3 balanced. Each complete command below passed the real axis
 resolver and argument parser at source
-`5047a717778210bd09277902b8d2bff895572d9b` (v0.0.6-alpha). Four separate functional
+`440bba129eb83e62dcb12d97c5296bf7cd1e70ff` (v0.0.7-alpha). Four separate functional
 smokes, at source `6b9e276fe4da6750be46c874e5fb5c0ee2a46871` and with that source's
 arrays, started these three servers plus the optional guard: all 12 health, model-listing
 and tiny T0 Chat requests returned HTTP 200. Every Chat request completed eight
@@ -37,7 +37,7 @@ numerical controls when comparing a measurement.
 
 1. Follow [BUILD.md](../../../BUILD.md) from a fresh release export on Linux x86-64.
    The tested CUDA 13.5 V13.5.37 and GCC 14.2.0 release build needs neither Git nor Python nor
-   GPU devices. Check `./build/release/anemone --version` for `v0.0.6-alpha`.
+   GPU devices. Check `./build/release/anemone --version` for `v0.0.7-alpha`.
 2. Follow [MODEL_DATA.md](MODEL_DATA.md) for the separate CPU Python
    environment, all 112 pinned input files, SHA256 verification and every
    producer command. The official source is
@@ -712,7 +712,7 @@ their resolved values. Its snapshot and complete command were checked separately
 
 ## Evidence and limits of this setup check
 
-At source `5047a717778210bd09277902b8d2bff895572d9b` (v0.0.6-alpha), the release
+At source `440bba129eb83e62dcb12d97c5296bf7cd1e70ff` (v0.0.7-alpha), the release
 executable itself ran the four arrays of [SERVER_PROFILE_COMMANDS.json](SERVER_PROFILE_COMMANDS.json)
 with nonexistent data paths: each parsed and stopped with exit 1 at its first
 front-end step, `open the tables and the socket`, before any model, socket or GPU

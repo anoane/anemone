@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# Install and serve Anemone v0.0.6-alpha
+# Install and serve Anemone v0.0.7-alpha
 
 The owner recommends running `anemone autotune` once before serving, and again
 after hardware changes. Engine-native preparation copies replicas, tunes load
@@ -13,7 +13,7 @@ and configuration example on this page is not run in the snapshot test.**
 That test compiles and runs host tests only; it does not load model weights,
 start a model-serving endpoint, install a service or run the HTTP examples below.
 In the v0.0.2-alpha snapshot test, host tests exercised synthetic HTTP fixtures
-inside an isolated network namespace; the v0.0.6-alpha reference build runs the
+inside an isolated network namespace; the v0.0.7-alpha reference build runs the
 [BUILD.md](BUILD.md) commands directly on the host, where they use loopback.
 The listed serving recipes were checked through the real axis resolver/parser;
 that check does not start a model, allocate its memory or install a service.
@@ -25,9 +25,9 @@ depend on assigned layers. The serve-only prompt-chunk identity result is
 separate from the measured solo golden baseline and has no independent golden
 quality score. The [snapshot record](docs/VALIDATION.md) identifies current packaging
 and the versioned build/source identities; previous measurements retain their dates.
-The v0.0.6-alpha release executable is built from source
-`5047a717778210bd09277902b8d2bff895572d9b`; [BUILD.md](BUILD.md) records its expected
-SHA256. The v0.0.5-alpha executable (source `d208e01`), the v0.0.4-alpha executable (source `6ecf1bb`), the v0.0.3-alpha executable (source `f57d813`), the v0.0.2-alpha `spdx_04`
+The v0.0.7-alpha release executable is built from source
+`440bba129eb83e62dcb12d97c5296bf7cd1e70ff`; [BUILD.md](BUILD.md) records its expected
+SHA256. The v0.0.6-alpha executable (source `5047a71`), the v0.0.5-alpha executable (source `d208e01`), the v0.0.4-alpha executable (source `6ecf1bb`), the v0.0.3-alpha executable (source `f57d813`), the v0.0.2-alpha `spdx_04`
 executable (engine/help source `1b0731a36b7482477b96d7a28b27c93e4dd49e3f`) and the
 earlier parser and benchmark receipts retain their own epochs.
 

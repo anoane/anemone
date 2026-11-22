@@ -5,6 +5,7 @@
 #include "models/deepseek_v41_flash/attention/ds41f_attention_core_records.h"
 #include "engine/backend/backend_seam.h"
 #include "cli_policy.h"
+#include "models/deepseek_v41_flash/options/ds41f_splits.h"
 
 #define TENSOR_HIDDEN_WIDTH 5120u
 #define TENSOR_ATTENTION_HEADS 64u
@@ -101,22 +102,16 @@ startup_policy_prepare(const struct startup_policy_request *request,
 	     request->cmp_order != CMP_ORDER_RELAXED)) {
 		return STATUS_INVALID_ARGUMENT;
 	}
+	const struct ds41f_split_support *support =
+		&ds41f_splits[request->placement];
 	struct startup_policy policy = {
 		.numerics = request->numerics,
 		.placement = request->placement,
-		.cmp_order =
-			request->cmp_order_was_given ? request->cmp_order :
-			request->numerics == NUMERICS_EXACT ||
-					request->placement ==
-						GPU_SPLIT_TP2_PP2_PRO ||
-					request->placement ==
-						GPU_SPLIT_TP4_PRO ||
-					request->placement ==
-						GPU_SPLIT_TP4_EXL3 ||
-					request->placement ==
-						GPU_SPLIT_TP2_SINGLE_SINGLE_PRO ?
-						       CMP_ORDER_REFERENCE :
-						       CMP_ORDER_RELAXED
+		.cmp_order = request->cmp_order_was_given ?
+				     request->cmp_order :
+			     request->numerics == NUMERICS_EXACT ?
+				     CMP_ORDER_REFERENCE :
+				     support->cmp_order_default
 	};
 	if (!request->numerics_was_given &&
 	    policy.cmp_order == CMP_ORDER_RELAXED) {
@@ -125,10 +120,7 @@ startup_policy_prepare(const struct startup_policy_request *request,
 	if (!policy_valid(&policy)) {
 		return STATUS_INVALID_ARGUMENT;
 	}
-	if (policy.placement != GPU_SPLIT_PP5 &&
-	    policy.numerics == NUMERICS_EXACT &&
-	    policy.placement != GPU_SPLIT_TP4_PRO &&
-	    policy.placement != GPU_SPLIT_TP4_EXL3) {
+	if (policy.numerics == NUMERICS_EXACT && !support->admits_exact) {
 		return STATUS_UNSUPPORTED;
 	}
 	*policy_out = policy;
@@ -141,18 +133,14 @@ result_status startup_policy_admit(const struct startup_policy *policy)
 		return STATUS_INVALID_ARGUMENT;
 	}
 	/* Experimental placements; main separately enforces native PRO, text, state and scheduling limits. */
+	const struct ds41f_split_support *support =
+		&ds41f_splits[policy->placement];
 	const bool tensor_pair =
-		(policy->placement == GPU_SPLIT_TP2_PP2_PRO ||
-		 policy->placement == GPU_SPLIT_TP4_PRO ||
-		 policy->placement == GPU_SPLIT_TP4_EXL3 ||
-		 policy->placement == GPU_SPLIT_TP2_SINGLE_SINGLE_PRO) &&
-		(policy->numerics != NUMERICS_EXACT ||
-		 policy->placement == GPU_SPLIT_TP4_PRO ||
-		 policy->placement == GPU_SPLIT_TP4_EXL3) &&
+		support->admitted_at_reference &&
+		(policy->numerics != NUMERICS_EXACT || support->admits_exact) &&
 		policy->cmp_order == CMP_ORDER_REFERENCE;
-	return policy->placement == GPU_SPLIT_PP5 || tensor_pair ?
-		       STATUS_OK :
-		       STATUS_UNSUPPORTED;
+	return support->admitted || tensor_pair ? STATUS_OK :
+						  STATUS_UNSUPPORTED;
 }
 
 result_status ds41f_tensor_placement_design_prepare(

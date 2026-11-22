@@ -9,7 +9,7 @@ static const struct cli_knob_help cli_knobs[] = {
 	{ "--version",
 	  "  values: standalone flag\n"
 	  "  default: absent\n"
-	  "  meaning: Print v0.0.6-alpha, author attribution and the existing license identifier, then "
+	  "  meaning: Print v0.0.7-alpha, author attribution and the existing license identifier, then "
 	  "exit without loading a model.\n"
 	  "  commands: standalone\n"
 	  "  placement/recipe: no model, weights or cards\n"

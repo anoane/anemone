@@ -1,4 +1,4 @@
-# Anemone v0.0.6-alpha
+# Anemone v0.0.7-alpha
 
 SPDX-License-Identifier: AGPL-3.0-or-later
 

@@ -62,15 +62,9 @@ struct slot_fit {
 };
 
 /* Measured TP4 BF16 programs, sorted by rows then verifiers. Other layouts need explicit prices. */
-static const uint32_t ds41f_default_batch_rows[MOST_BATCH_PROGRAMS] = {
-	8, 8, 12, 12, 16, 24, 32, 48
-};
-static const uint32_t ds41f_default_batch_verifiers[MOST_BATCH_PROGRAMS] = {
-	1, 2, 2, 4, 4, 4, 8, 8
-};
-static const uint32_t ds41f_default_batch_step_us[MOST_BATCH_PROGRAMS] = {
-	19500, 21500, 28600, 30000, 32000, 39000, 46000, 58000
-};
+extern const uint32_t ds41f_default_batch_rows[MOST_BATCH_PROGRAMS];
+extern const uint32_t ds41f_default_batch_verifiers[MOST_BATCH_PROGRAMS];
+extern const uint32_t ds41f_default_batch_step_us[MOST_BATCH_PROGRAMS];
 /* the bounded defaults, names rather than macros: each equals its unbounded fallback, which the conditional keeps */
 static const unsigned int prefill_decode_default_rounds = 1u;
 static const unsigned int prefill_decode_default_waiters = 0u;

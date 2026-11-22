@@ -20,6 +20,7 @@
  *     wait) and the selection, and matches only this pack and these copies.
  */
 #include "engine/storage/autotune/storage_autotune.h"
+#include "engine/cli/cli_autotune.h"
 #include "engine/engram/engram.h"
 #include "common/hooks.h"
 #include "engine/formats/pack/pack.h"
@@ -179,7 +180,9 @@ static int autotune_captured(int count, char **arguments,
 	int status = -1;
 	if (capture >= 0 && saved >= 0 &&
 	    dup2(capture, STDERR_FILENO) == STDERR_FILENO) {
-		status = storage_autotune_cli(count, arguments);
+		status = storage_autotune_cli(count, arguments,
+					      cli_autotune_stages,
+					      CLI_AUTOTUNE_STAGES);
 		(void)fflush(stderr);
 		if (dup2(saved, STDERR_FILENO) != STDERR_FILENO ||
 		    test_log_capture_read(capture, text, capacity) < 0)

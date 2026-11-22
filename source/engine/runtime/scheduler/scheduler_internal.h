@@ -201,4 +201,22 @@ void engine_flight_landed(struct inference_engine *engine);
 void engine_session_advanced(struct inference_engine *engine,
 			     struct command_cursor *cursor);
 
+#define OK STATUS_OK
+#define PREFILL_CONE_UNTRIMMED \
+	3u /* prefill_cone_skip: 1's cone, the wide trunk products every row (51cd081's 1) */
+#define EXACT_PLAN_GRANULE \
+	256u /* the exact plan (exact_chunk_rows_of): the reference ladder's middle program */
+#define EXACT_PLAN_TAIL_ROWS \
+	128u /* prefill_tail_rows: the tail program every one takes (two 64-row chunks) */
+
+/* prefill_dead_halves (front_end_seam.h): the exact plan's full chunks of whole STEP_FULL_GRANULE_ROWS-row
+ * granules (a 320-row tail program's are not) lie before a tail of at least EXACT_PLAN_GRANULE rows, so each one's
+ * last row lies at least EXACT_PLAN_GRANULE - kept rows before its prompt's cone end's last row (cone_end_of). */
+_Static_assert(EXACT_PLAN_GRANULE == STEP_FULL_GRANULE_ROWS,
+	       "a full chunk of whole granules lies before a tail");
+
+struct generation_command_record;
+bool is_cancelled(struct inference_engine *engine, uint32_t session_slot);
+uint32_t command_end(const struct generation_command_record *command);
+
 #endif
